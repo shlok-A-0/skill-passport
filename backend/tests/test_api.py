@@ -110,14 +110,23 @@ def passport_with_fraud_signals(passport_id: str) -> dict:
     passport["rejected_claims"] = [
         {"claim": {"skill_id": "flask", "repo": "demo", "file_path": "x.py"}, "failed_checks": ["lines_valid"],
          "reason": "Failed verification checks: lines_valid.", "kind": "unsupported"},
-        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "copied.py"}, "failed_checks": ["not_copied"],
+        # Legacy stored format ("copied"), as written before the earlier-source rename.
+        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "legacy.py", "start_line": 1, "end_line": 9},
+         "failed_checks": ["not_copied"],
          "reason": "Same code found in someone/original, created 2020-01-01, before this repository (created 2024-01-01).",
          "source_url": "https://github.com/someone/original/blob/main/a.py", "kind": "copied"},
-        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "copied2.py"}, "failed_checks": ["not_copied"],
-         "reason": "Same code found in someone/original.", "source_url": "https://github.com/someone/original",
-         "kind": "copied"},
+        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "helpers.py", "start_line": 3, "end_line": 7},
+         "failed_checks": ["earlier_source"],
+         "reason": "Matches code that appeared in someone/original on 2020-01-01, before this file's first commit here.",
+         "url": "https://github.com/demo-user/demo/blob/abc123/helpers.py#L3-L7",
+         "source_repo": "someone/original", "source_url": "https://github.com/someone/original",
+         "source_first_seen": "2020-01-01T00:00:00Z", "candidate_first_seen": "2024-01-01T00:00:00Z",
+         "kind": "earlier_source"},
     ]
     return passport
+
+
+EXCLUDED_KEY = "python:demo:helpers.py:3-7"
 
 
 def _keys_and_values(data: object) -> tuple[set, list]:
@@ -145,28 +154,108 @@ def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient
     return TestClient(main_module.app)
 
 
-def test_student_endpoints_hide_fraud_signals(tmp_path, monkeypatch) -> None:
+STUDENT_WORDS_NOT_ALLOWED = ("fraud", "fake", "copied", "cheat")
+
+
+def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review").json(), client.get("/passports").json()):
         keys, values = _keys_and_values(body)
-        assert not {"integrity", "good_answer_mentions", "source_url"} & keys
-        assert "copied" not in values
-        assert not any("someone/original" in str(value) for value in values)
+        # Detector internals stay hidden...
+        assert not {"integrity", "good_answer_mentions", "source_first_seen", "candidate_first_seen",
+                    "source_repo"} & keys
+        assert not any(isinstance(value, str) and word in value.lower()
+                       for value in values for word in STUDENT_WORDS_NOT_ALLOWED)
     rejected = client.get("/passport/p-review").json()["rejected_claims"]
-    assert [item["kind"] for item in rejected] == ["unsupported", "review"]
-    assert rejected[1] == {"kind": "review", "count": 2, "reason": "2 citations were not counted after authorship review."}
+    # ...but every outcome is shown: one item per excluded citation (legacy and new kinds alike).
+    assert [item["kind"] for item in rejected] == ["unsupported", "earlier_source", "earlier_source"]
+    excluded = rejected[2]
+    assert excluded == {
+        "kind": "earlier_source",
+        "citation_key": EXCLUDED_KEY,
+        "claim": {"skill_id": "python", "repo": "demo", "file_path": "helpers.py", "start_line": 3, "end_line": 7},
+        "url": "https://github.com/demo-user/demo/blob/abc123/helpers.py#L3-L7",
+        "source_url": "https://github.com/someone/original",
+        "reason": main_module.STUDENT_EXCLUDED_REASON,
+        "review_request": None,
+    }
+    assert rejected[1]["citation_key"] == "python:demo:legacy.py:1-9"
 
 
 def test_new_and_legacy_earlier_source_kinds_are_both_handled(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
-    passport = passport_with_fraud_signals("p-kinds")
-    passport["rejected_claims"][2]["kind"] = "earlier_source"  # one new-style, one legacy "copied"
-    storage.save_passport(passport)
-    rejected = client.get("/passport/p-kinds").json()["rejected_claims"]
-    assert [item["kind"] for item in rejected] == ["unsupported", "review"]
-    assert rejected[1]["count"] == 2
-    review = client.get("/passport/p-kinds/review").json()["rejected_claims"]
+    review = client.get("/passport/p-review/review").json()["rejected_claims"]
     assert {item["kind"] for item in review} == {"unsupported", "copied", "earlier_source"}
+    # Both kinds can be the subject of a review request.
+    for key in ("python:demo:legacy.py:1-9", EXCLUDED_KEY):
+        assert client.post("/passport/p-review/review-requests", json={"citation_key": key}).status_code == 201
+
+
+def test_review_request_on_a_counted_or_unsupported_citation_is_rejected(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    for key in ("python:demo:main.py:1-2", "flask:demo:x.py:None-None", "nonsense"):
+        response = client.post("/passport/p-review/review-requests", json={"citation_key": key, "note": "mine"})
+        assert response.status_code == 422
+    assert client.post("/passport/missing/review-requests", json={"citation_key": EXCLUDED_KEY}).status_code == 404
+    too_long = client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY, "note": "x" * 1001})
+    assert too_long.status_code == 422
+
+
+def test_review_request_limits(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    first = client.post("/passport/p-review/review-requests",
+                        json={"citation_key": EXCLUDED_KEY, "note": "This is from my old account."})
+    assert first.status_code == 201 and first.json()["status"] == "open"
+    # One open request per citation.
+    assert client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY}).status_code == 409
+    # At most 10 per passport.
+    passport = passport_with_fraud_signals("p-many")
+    template = passport["rejected_claims"][2]
+    passport["rejected_claims"] = [
+        {**template, "claim": {**template["claim"], "start_line": index, "end_line": index + 1}}
+        for index in range(1, 13)
+    ]
+    storage.save_passport(passport)
+    codes = [
+        client.post("/passport/p-many/review-requests",
+                    json={"citation_key": f"python:demo:helpers.py:{index}-{index + 1}"}).status_code
+        for index in range(1, 12)
+    ]
+    assert codes == [201] * 10 + [429]
+
+
+def test_review_requests_survive_recheck_and_never_change_levels(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    before = client.get("/passport/p-review/review").json()
+    client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY, "note": "Mine."})
+    after_request = client.get("/passport/p-review/review").json()
+    assert after_request["skills"] == before["skills"]
+    assert after_request["rejected_claims"] == before["rejected_claims"]
+
+    def rebuild(existing):
+        result = {**passport_with_fraud_signals(existing["id"]), "level_changes": []}
+        storage.save_passport(result)
+        return result
+
+    monkeypatch.setattr(main_module, "recheck_passport", rebuild)
+    student = client.post("/passport/p-review/recheck").json()["passport"]
+    excluded = next(item for item in student["rejected_claims"] if item.get("citation_key") == EXCLUDED_KEY)
+    assert excluded["review_request"]["status"] == "open"
+    requests = client.get("/passport/p-review/review").json()["review_requests"]
+    assert [(item["citation_key"], item["note"], item["status"]) for item in requests] == [(EXCLUDED_KEY, "Mine.", "open")]
+
+
+def test_mark_reviewed_requires_the_key_when_set(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch, recruiter_key="s3cret")
+    request_id = client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY}).json()["id"]
+    path = f"/review-requests/{request_id}/mark-reviewed"
+    assert client.post(path).status_code == 401
+    assert client.post(path, headers={"X-Recruiter-Key": "wrong"}).status_code == 401
+    reviewed = client.post(path, headers={"X-Recruiter-Key": "s3cret"})
+    assert reviewed.status_code == 200 and reviewed.json()["status"] == "reviewed" and reviewed.json()["reviewed_at"]
+    assert client.post("/review-requests/nope/mark-reviewed", headers={"X-Recruiter-Key": "s3cret"}).status_code == 404
+    # After review, the student may ask again.
+    assert client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY}).status_code == 201
 
 
 def test_review_endpoints_return_full_passport(tmp_path, monkeypatch) -> None:
@@ -194,8 +283,22 @@ def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
         lambda existing: {**passport_with_fraud_signals(existing["id"]), "level_changes": []},
     )
     keys, values = _keys_and_values(client.post("/passport/p-review/recheck").json())
-    assert not {"integrity", "good_answer_mentions", "source_url"} & keys
+    assert not {"integrity", "good_answer_mentions"} & keys
     assert "copied" not in values
+
+
+def test_recheck_endpoint_calls_the_pipeline_not_itself(tmp_path, monkeypatch) -> None:
+    from app.services import pipeline
+
+    # The endpoint used to share the pipeline function's name and called itself (502 on every Re-check).
+    assert main_module.recheck_passport is pipeline.recheck_passport
+    client = _review_client(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(pipeline, "build_passport", lambda **kwargs: calls.append(kwargs) or {
+        **passport_with_fraud_signals("p-review"), "level_changes": []})
+    response = client.post("/passport/p-review/recheck")
+    assert response.status_code == 200
+    assert calls[0]["passport_id"] == "p-review" and calls[0]["force_refresh"] is True
 
 
 def test_api_returns_skill_names(tmp_path, monkeypatch) -> None:

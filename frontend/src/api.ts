@@ -49,7 +49,25 @@ export type RejectedClaim = {
   source_first_seen?: string;
   candidate_first_seen?: string;
   count?: number;
+  /** Student view only: the key to request a review with, and that request's status. */
+  citation_key?: string;
+  review_request?: { status: ReviewRequest["status"]; created_at: string } | null;
 };
+
+export type ReviewRequest = {
+  id: string;
+  passport_id: string;
+  citation_key: string;
+  note: string;
+  created_at: string;
+  status: "open" | "reviewed";
+  reviewed_at: string | null;
+};
+
+/** Same format as the backend: "{skill_id}:{repo}:{file_path}:{start}-{end}". */
+export function citationKey(claim: Record<string, unknown>): string {
+  return `${String(claim.skill_id)}:${String(claim.repo)}:${String(claim.file_path)}:${String(claim.start_line)}-${String(claim.end_line)}`;
+}
 
 export type RepoCoverage = {
   name: string;
@@ -128,6 +146,8 @@ export type Passport = {
   updated_at?: string;
   generation_warning?: string | null;
   generation_error?: string | null;
+  /** Review endpoints only. */
+  review_requests?: ReviewRequest[];
 };
 
 export type RoleRequirement = { skill_id: string; name?: string; min_level: string; importance: string };
@@ -169,8 +189,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 let recruiterKey: string | null = null;
 
 /** Review endpoints include fraud signals; the server may require a recruiter key. */
-async function reviewRequest<T>(path: string): Promise<T> {
-  const send = () => request<T>(path, recruiterKey ? { headers: { "X-Recruiter-Key": recruiterKey } } : undefined);
+async function reviewRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const send = () => request<T>(path, {
+    ...options,
+    headers: { ...(options.headers ?? {}), ...(recruiterKey ? { "X-Recruiter-Key": recruiterKey } : {}) },
+  });
   try {
     return await send();
   } catch (reason) {
@@ -196,6 +219,14 @@ export const api = {
   passports: () => request<Passport[]>("/passports"),
   reviewPassport: (id: string) => reviewRequest<Passport>(`/passport/${id}/review`),
   reviewPassports: () => reviewRequest<Passport[]>("/passports/review"),
+  requestReview: (passportId: string, citation_key: string, note: string) =>
+    request<ReviewRequest>(`/passport/${passportId}/review-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ citation_key, note }),
+    }),
+  markReviewed: (requestId: string) =>
+    reviewRequest<ReviewRequest>(`/review-requests/${requestId}/mark-reviewed`, { method: "POST" }),
   recheck: (id: string) =>
     request<{ passport: Passport; level_changes: Passport["level_changes"] }>(
       `/passport/${id}/recheck`,

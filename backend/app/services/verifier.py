@@ -641,6 +641,14 @@ def compute_level(
 EARLIER_SOURCE_KINDS = {"earlier_source", "copied"}
 
 
+def citation_key(claim: dict[str, Any]) -> str:
+    """Stable id for one cited range: "{skill_id}:{repo}:{file_path}:{start}-{end}"."""
+    return (
+        f"{claim.get('skill_id')}:{claim.get('repo')}:{claim.get('file_path')}:"
+        f"{claim.get('start_line')}-{claim.get('end_line')}"
+    )
+
+
 def _earlier_source(item: dict[str, Any]) -> dict[str, Any] | None:
     return next(
         (

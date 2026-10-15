@@ -151,7 +151,8 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             )) : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
             <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /> {busy ? "Re-checking GitHub…" : "Re-check GitHub now"}</button>
           </section>
-          <RejectedClaims claims={passport.rejected_claims} audience={audience} />
+          <RejectedClaims claims={passport.rejected_claims} audience={audience} passportId={passport.id}
+            requests={passport.review_requests} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">
           {selected ? <EvidencePanel skill={selected} audience={audience} /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}

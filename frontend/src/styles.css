@@ -83,6 +83,17 @@ footer span { display: flex; gap: 5px; align-items: center; margin-left: 24px; }
 .legend-title { display: flex; gap: 7px; align-items: center; font-size: 10px; color: #586178; font-weight: 800; letter-spacing: .6px; }
 .legend-title svg { color: #f26b1d; }
 .legend-title small { margin-left: 4px; color: #9298a5; font-size: 10px; font-weight: 400; letter-spacing: 0; }
+.rejected-links { display: flex; gap: 12px; }
+.review-button { margin-top: 6px; padding: 5px 10px; font-size: 11px; }
+.review-form { display: grid; gap: 6px; margin-top: 6px; }
+.review-form textarea { width: 100%; border: 1px solid #dfe2e8; border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 11px; resize: vertical; }
+.review-form div { display: flex; gap: 8px; align-items: center; }
+.link-button { border: 0; background: none; color: #6b7181; font-size: 11px; cursor: pointer; }
+.review-status { display: inline-flex; align-items: center; gap: 4px; color: #27824d; font-size: 11px; font-weight: 700; }
+.review-request { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #fff7e0; font-size: 11px; }
+.review-request.review-reviewed { background: #f2f4f7; }
+.review-request p { margin: 4px 0; }
+.open-requests { margin-left: 6px; color: #8a6300; font-size: 10px; font-weight: 700; }
 .legend-note { margin: 10px 0 0; color: #6b7181; font-size: 11px; }
 .legend-items { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 11px; }
 .legend-item { display: flex; align-items: center; gap: 8px; }

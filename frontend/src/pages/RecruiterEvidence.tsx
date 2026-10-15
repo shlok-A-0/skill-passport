@@ -65,7 +65,9 @@ export default function RecruiterEvidence() {
               })}</div>
             ) : <div className="empty-state">No skills were found in this passport.</div>}
           </section>
-          <RejectedClaims claims={passport.rejected_claims} audience="recruiter" />
+          <RejectedClaims claims={passport.rejected_claims} audience="recruiter" passportId={passport.id}
+            requests={passport.review_requests}
+            onChanged={() => { api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">
           {selected ? <EvidencePanel skill={selected} audience="recruiter" /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
