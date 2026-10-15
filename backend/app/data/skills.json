@@ -387,8 +387,10 @@
     "file_extensions": [],
     "dependency_names": [],
     "code_signatures": [
-      "FROM ",
-      "docker run"
+      "docker.from_env(",
+      "docker run ",
+      "docker build ",
+      "docker compose "
     ],
     "config_files": [
       "Dockerfile",
@@ -439,8 +441,8 @@
     ],
     "dependency_names": [],
     "code_signatures": [
-      "on:",
-      "jobs:"
+      "jobs:",
+      "runs-on:"
     ],
     "config_files": [
       ".github/workflows/",

@@ -145,12 +145,28 @@ def _make_url(repo: dict[str, Any], commit_sha: str, path: str, start: int, end:
     return f"https://github.com/{full_name}/blob/{commit_sha}/{escaped_path}#L{start}-L{end}"
 
 
+def _signature_pattern(signature: str) -> re.Pattern[str]:
+    escaped = re.escape(signature)
+    if signature[:1].isalnum() or signature[:1] == "_":
+        # "it(" must not match "split(", "app.get(" must not match "myapp.get(".
+        escaped = r"(?<![A-Za-z0-9_])" + escaped
+    return re.compile(escaped, re.IGNORECASE)
+
+
 def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: int, end: int) -> bool:
     extension = PurePosixPath(path).suffix.lower()
-    if extension in {item.lower() for item in skill.get("file_extensions", [])}:
-        return True
+    extensions = {item.lower() for item in skill.get("file_extensions", [])}
+    if skill.get("category") == "Language":
+        # A language skill is proven by the file's language, nothing else.
+        return extension in extensions
+    if extensions and extension not in extensions:
+        return False
+    # Frameworks, tools and practices need an actual signature near the cited lines.
     window = "\n".join(lines[max(0, start - 1 - 5): min(len(lines), end + 5)])
-    return any(contains_signature(window, signature) for signature in skill.get("code_signatures", []))
+    return any(
+        _signature_pattern(signature).search(window)
+        for signature in skill.get("code_signatures", [])
+    )
 
 
 def contains_signature(text: str, signature: str) -> bool:

@@ -408,3 +408,29 @@ def test_test_file_cited_by_ai_is_not_cited_twice() -> None:
         item for item in verify_claims([ai_claim], ingestion)["skills"] if item["skill_id"] == "unit-testing"
     )
     assert len([item for item in skill["evidence"] if item["type"] == "code"]) == 1
+
+
+def plain_python_ingestion() -> dict:
+    lines = ["from os import path", "def add(a, b):", "    parts = 'a,b'.split(',')", "    return a + b"]
+    data = sample_ingestion()
+    data["repos"][0]["source_files"]["util.py"] = {
+        "content": "\n".join(lines), "lines": lines, "authored_shas": ["def456"], "line_count": len(lines),
+    }
+    data["repos"][0]["tree"].append("util.py")
+    return data
+
+
+@pytest.mark.parametrize("skill_id", ["pytorch", "tensorflow", "aws", "rest-api", "docker", "unit-testing", "flask"])
+def test_framework_claim_on_plain_code_is_rejected(skill_id: str) -> None:
+    result = verify_one_claim(
+        claim(skill_id=skill_id, file_path="util.py", start_line=1, end_line=4),
+        plain_python_ingestion(),
+    )
+    assert result["verified"] is False
+    assert "signature_found" in result["failed_checks"]
+
+
+def test_language_claim_needs_matching_file_extension() -> None:
+    data = plain_python_ingestion()
+    assert verify_one_claim(claim(skill_id="python", file_path="util.py", start_line=1, end_line=4), data)["verified"]
+    assert not verify_one_claim(claim(skill_id="javascript", file_path="util.py", start_line=1, end_line=4), data)["verified"]
