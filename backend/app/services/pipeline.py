@@ -90,10 +90,12 @@ def build_passport(
         )
     except Exception as exc:  # verified evidence is still valid without the AI write-up
         logger.exception("Growth plan / interview kit generation failed")
-        generated = {"growth_tasks": [], "interview_kit": []}
+        generated = {"growth_tasks": [], "interview_kit": [], "generation_error": exc.__class__.__name__}
+    generation_error = generated.get("generation_error")
+    if generation_error:
         generation_warning = (
             "The growth plan and interview kit could not be generated this time "
-            f"({exc.__class__.__name__}). Verified evidence is unaffected; use Re-check to try again."
+            f"({generation_error}). Verified evidence is unaffected; use Re-check to try again."
         )
     now = datetime.now(timezone.utc).isoformat()
     passport = {
@@ -120,6 +122,7 @@ def build_passport(
         "resume_skill_mentions": resume_skills,
         "certificate_skill_mentions": certificate_skills,
         "generation_warning": generation_warning,
+        "generation_error": generation_error,
     }
     if previous_levels:
         new_levels = {item["skill_id"]: item["level"] for item in passport["skills"]}

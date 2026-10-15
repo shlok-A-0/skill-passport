@@ -86,6 +86,7 @@ export type Passport = {
   level_changes?: { skill_id: string; from: string; to: string }[];
   updated_at?: string;
   generation_warning?: string | null;
+  generation_error?: string | null;
 };
 
 export type Role = { id: string; name: string; requirements: unknown[] };

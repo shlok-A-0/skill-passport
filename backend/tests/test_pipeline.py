@@ -135,6 +135,35 @@ def test_growth_generation_failure_still_saves_the_verified_passport(monkeypatch
     assert "Re-check" in result["generation_warning"]
 
 
+def test_growth_generation_error_is_stored_and_passport_saved(monkeypatch) -> None:
+    saved = _stub_pipeline(
+        monkeypatch, EXISTING, [{"skill_id": "python", "level": "Applied", "evidence": []}],
+        lambda *_: {"growth_tasks": [], "interview_kit": [], "generation_error": "Invalid growth data"},
+    )
+    result = _recheck()
+    assert saved == [result]
+    assert result["generation_error"] == "Invalid growth data"
+    assert result["growth_tasks"] == []
+
+    import app.main as main_module
+
+    assert main_module.student_view(result)["generation_error"] == "Invalid growth data"
+
+
+def test_gemini_requests_use_temperature_zero(monkeypatch) -> None:
+    from app.services import gemini
+
+    configs = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            configs.append(kwargs["config"])
+            return type("R", (), {"text": "{}"})()
+
+    gemini.generate_json(type("C", (), {"models": Models()})(), "prompt")
+    assert configs[0].temperature == 0
+
+
 def test_gemini_busy_errors_are_retried(monkeypatch) -> None:
     from google.genai import errors
 

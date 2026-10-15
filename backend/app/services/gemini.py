@@ -17,7 +17,8 @@ def generate_json(client: genai.Client, contents: str) -> str:
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=contents,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
+                # temperature=0: a re-check should not change claims or levels by chance.
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
             )
             return response.text or ""
         except (errors.ServerError, errors.ClientError) as exc:

@@ -39,6 +39,25 @@ def parse_proposal(text: str) -> ClaimProposal:
     return proposal
 
 
+def _lenient_proposal(text: str) -> ClaimProposal:
+    """Schema errors still fail, but an unknown skill id or a 4th citation is dropped, not fatal.
+
+    Dropped claims never reach the verifier, so nothing unverified can slip through.
+    """
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
+    proposal = ClaimProposal.model_validate_json(cleaned)
+    allowed_ids = {skill["id"] for skill in get_skills()}
+    counts: dict[str, int] = {}
+    kept = []
+    for claim in proposal.claims:
+        if claim.skill_id not in allowed_ids:
+            continue
+        counts[claim.skill_id] = counts.get(claim.skill_id, 0) + 1
+        if counts[claim.skill_id] <= 3:
+            kept.append(claim)
+    return ClaimProposal(claims=kept)
+
+
 def _build_prompt(ingestion: dict[str, Any], resume_skills: list[dict[str, str]]) -> str:
     skills = [{"id": skill["id"], "name": skill["name"]} for skill in get_skills()]
     files = []
@@ -89,12 +108,7 @@ def propose_claims(
     for attempt in range(2):
         response_text = generate_json(client, contents)
         try:
-            proposal = parse_proposal(response_text)
-            counts: dict[str, int] = {}
-            for claim in proposal.claims:
-                counts[claim.skill_id] = counts.get(claim.skill_id, 0) + 1
-            if any(count > 3 for count in counts.values()):
-                raise ValueError("Gemini proposed more than three citations for one skill.")
+            proposal = _lenient_proposal(response_text)
             payload = proposal.model_dump(mode="json")
             cache_path.write_text(json.dumps(payload), encoding="utf-8")
             return payload["claims"]

@@ -111,7 +111,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         </div>
       </header>
       {error && <div className="notice notice-error">{error}</div>}
-      {passport.generation_warning && <div className="notice notice-warning">{passport.generation_warning}</div>}
+      {(passport.generation_error || passport.generation_warning) && <div className="notice notice-warning">The growth plan couldn't be generated this time. Use Re-check to try again.</div>}
       {changes.length > 0 && (
         <div className="upgrade-banner"><Sparkles size={18} /><div><strong>Evidence updated after re-check</strong><p>{changes.map((change) => `${skillName(change.skill_id)}: ${change.from} → ${change.to}`).join(" · ")}</p></div></div>
       )}

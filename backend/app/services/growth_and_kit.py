@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from google import genai
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
 from app.services.gemini import generate_json
@@ -40,30 +40,50 @@ class GrowthAndKit(BaseModel):
     growth_tasks: list[GrowthTask]
     interview_kit: list[InterviewKitEntry]
 
-    @model_validator(mode="after")
-    def unique_growth_skills(self) -> "GrowthAndKit":
-        ids = [task.skill_id for task in self.growth_tasks]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Return exactly one growth task per skill.")
-        return self
-
 
 def parse_growth_and_kit(text: str) -> GrowthAndKit:
+    """Schema validation only; unusable items are filtered by `_usable_items`."""
     cleaned = re.sub(
         r"^```(?:json)?\s*|\s*```$",
         "",
         text.strip(),
         flags=re.IGNORECASE,
     )
-    result = GrowthAndKit.model_validate_json(cleaned)
-    allowed = set(skill_map())
+    return GrowthAndKit.model_validate_json(cleaned)
+
+
+def _usable_items(
+    result: GrowthAndKit,
+    expected_growth_ids: list[str],
+    expected_interview_ids: list[str],
+    repo_names: set[str],
+) -> dict[str, Any]:
+    """Keep tasks for real gaps on real repos and kit entries for the supplied skills; drop the rest."""
+    tasks, seen = [], set()
     for task in result.growth_tasks:
-        if task.skill_id not in allowed:
-            raise ValueError(f"Unknown growth-task skill id: {task.skill_id}")
+        if task.skill_id in expected_growth_ids and task.target_repo in repo_names and task.skill_id not in seen:
+            seen.add(task.skill_id)
+            tasks.append(task)
+    entries, seen = [], set()
     for entry in result.interview_kit:
-        if entry.skill_id not in allowed:
-            raise ValueError(f"Unknown interview-kit skill id: {entry.skill_id}")
-    return result
+        if entry.skill_id in expected_interview_ids and entry.skill_id not in seen:
+            seen.add(entry.skill_id)
+            entries.append(entry)
+    entries.sort(key=lambda entry: expected_interview_ids.index(entry.skill_id))
+    if expected_growth_ids and not tasks:
+        raise ValueError("No usable growth task: each must target a listed gap and an allowed repository.")
+    return GrowthAndKit(growth_tasks=tasks, interview_kit=entries).model_dump(mode="json")
+
+
+def _describe_error(exc: Exception) -> str:
+    """A short error text without the model's output (it may contain interview answers)."""
+    if isinstance(exc, ValidationError):
+        problems = [
+            f"{'.'.join(str(part) for part in item['loc']) or 'response'}: {item['msg']}"
+            for item in exc.errors(include_input=False, include_url=False)[:3]
+        ]
+        return "Invalid growth data: " + "; ".join(problems)
+    return str(exc)[:300]
 
 
 def _build_prompt(
@@ -144,38 +164,39 @@ def generate_growth_and_kit(
     cache_key = hashlib.sha256(
         f"{GEMINI_MODEL}\0{prompt}".encode("utf-8")
     ).hexdigest()
-    cache_path = CACHE_DIR / f"growth-{cache_key}.json"
-    if cache_path.exists():
-        cached = parse_growth_and_kit(cache_path.read_text(encoding="utf-8"))
-        return cached.model_dump(mode="json")
-
     repo_names = {repo["name"] for repo in ingestion.get("repos", [])}
     if not repo_names:
         repo_names = {"new-project"}
+    cache_path = CACHE_DIR / f"growth-{cache_key}.json"
+    if cache_path.exists():
+        try:
+            cached = parse_growth_and_kit(cache_path.read_text(encoding="utf-8"))
+            return _usable_items(cached, expected_growth_ids, expected_interview_ids, repo_names)
+        except (ValueError, ValidationError):
+            pass  # unusable cache entry: ask Gemini again
+
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = prompt
     last_error: Exception | None = None
     for attempt in range(2):
         response_text = generate_json(client, contents)
         try:
-            result = parse_growth_and_kit(response_text)
-            growth_ids = [task.skill_id for task in result.growth_tasks]
-            interview_ids = [entry.skill_id for entry in result.interview_kit]
-            if set(growth_ids) != set(expected_growth_ids):
-                raise ValueError("Growth tasks do not match the exact role-gap skills.")
-            if sorted(interview_ids) != sorted(expected_interview_ids):
-                raise ValueError("Interview kit does not match the supplied verified skills.")
-            result.interview_kit.sort(key=lambda entry: expected_interview_ids.index(entry.skill_id))
-            if any(task.target_repo not in repo_names for task in result.growth_tasks):
-                raise ValueError("A growth task used a repository not present in the user data.")
-            payload = result.model_dump(mode="json")
+            payload = _usable_items(
+                parse_growth_and_kit(response_text),
+                expected_growth_ids, expected_interview_ids, repo_names,
+            )
             cache_path.write_text(json.dumps(payload), encoding="utf-8")
             return payload
         except (ValueError, ValidationError) as exc:
             last_error = exc
             if attempt == 0:
                 contents = (
-                    f"{prompt}\nYour previous output was invalid: {exc}. "
+                    f"{prompt}\nYour previous output was invalid: {_describe_error(exc)}. "
                     "Return corrected JSON only and preserve all deterministic boundaries."
                 )
-    raise RuntimeError(f"Gemini returned invalid growth data after one retry: {last_error}")
+    # The verified passport is still valid without the AI write-up.
+    return {
+        "growth_tasks": [],
+        "interview_kit": [],
+        "generation_error": _describe_error(last_error) if last_error else "Unknown error.",
+    }
