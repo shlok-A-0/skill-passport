@@ -132,6 +132,90 @@ def test_user_commit_fetch_errors_are_recorded_as_unknown(monkeypatch) -> None:
         github_ingest._user_commits(object(), "student", "empty", "student")
 
 
+def _code(lines: int) -> str:
+    return "\n".join(f"value_{index} = {index}" for index in range(lines))
+
+
+def test_file_changed_in_latest_commit_is_selected_even_if_it_sorts_last(fake_github: FakeGitHub) -> None:
+    files = {f"{letter}.py": _code(30) for letter in "abcdefgh"}
+    files["zzz/late.py"] = _code(30)
+    fake_github.add_repo(
+        "project", files,
+        user_commits=[user_commit("newest"), user_commit("older")],
+        commit_files={"newest": ["zzz/late.py", "README.md"], "older": ["b.py"]},
+    )
+    sources = list(github_ingest.ingest_github("student")["repos"][0]["source_files"])
+    assert len(sources) == github_ingest.MAX_SOURCE_FILES == 6
+    assert sources[:2] == ["zzz/late.py", "b.py"]  # most recent change first
+    assert "h.py" not in sources
+
+
+def test_a_450_line_file_is_now_included(fake_github: FakeGitHub) -> None:
+    fake_github.add_repo("project", {"app/service.py": _code(450)})
+    source = github_ingest.ingest_github("student")["repos"][0]["source_files"]["app/service.py"]
+    assert source["line_count"] == 450
+
+
+def test_longer_files_are_preferred_and_huge_files_are_not_fetched(fake_github: FakeGitHub) -> None:
+    files = {f"{letter}.py": _code(20) for letter in "bcdefg"}
+    files["a.py"] = _code(3)  # sorts first, but is too short to be useful evidence
+    files["huge.py"] = _code(10)
+    fake_github.add_repo("project", files, sizes={"huge.py": 500_000})
+    sources = github_ingest.ingest_github("student")["repos"][0]["source_files"]
+    assert "a.py" not in sources and len(sources) == 6
+    assert not any(call.endswith("contents/huge.py") for call in fake_github.calls)
+
+
+def test_short_files_fill_remaining_slots() -> None:
+    fetched = github_ingest._select_source_files(
+        ["a.py", "b.py"], {"a.py": 10, "b.py": 10}, lambda path: {"a.py": _code(3), "b.py": _code(20)}[path],
+    )
+    assert list(fetched) == ["b.py", "a.py"]
+
+
+def test_prompt_line_cap_drops_the_lowest_priority_files_first() -> None:
+    from app.services.claim_proposer import _files_for_prompt
+
+    def source(lines: int) -> dict:
+        return {"lines": ["x"] * lines}
+
+    ingestion = {"repos": [
+        {"name": "recent", "source_files": {"r1.py": source(400), "r2.py": source(400), "r3.py": source(400)}},
+        {"name": "older", "source_files": {"o1.py": source(400), "o2.py": source(400)}},
+    ]}
+    kept = [(repo, path) for repo, path, _ in _files_for_prompt(ingestion, max_lines=1600)]
+    # Priority: r1, o1, r2, o2, r3 -> r3, the lowest priority, no longer fits and is dropped.
+    assert kept == [("recent", "r1.py"), ("recent", "r2.py"), ("older", "o1.py"), ("older", "o2.py")]
+    kept = [path for _, path, _ in _files_for_prompt(ingestion, max_lines=1000)]
+    assert kept == ["r1.py", "o1.py"]
+
+
+def test_authored_paths_marks_files_the_user_committed_to(monkeypatch) -> None:
+    def authorship(client, owner, repo, path, username):
+        if path == "broken.yml":
+            raise GitHubIngestError("GitHub API returned 500: oops")
+        return ["sha1"] if path in {"requirements.txt", "Dockerfile"} else []
+
+    monkeypatch.setattr(github_ingest, "_file_authorship", authorship)
+    result = github_ingest._authored_paths(
+        object(), "student", "demo",
+        ["requirements.txt", "package.json", "Dockerfile", "tests/test_app.py", "broken.yml", "Dockerfile"],
+        "student",
+    )
+    assert result == {"requirements.txt": True, "package.json": False, "Dockerfile": True}
+
+    def limited(*_args):
+        raise GitHubRateLimitError("GitHub API rate limit exceeded")
+
+    monkeypatch.setattr(github_ingest, "_file_authorship", limited)
+    with pytest.raises(GitHubRateLimitError):
+        github_ingest._authored_paths(object(), "student", "demo", ["Dockerfile"], "student")
+
+
+def test_cache_schema_is_version_3() -> None:
+    assert github_ingest.CACHE_SCHEMA_VERSION == 3
+
+
 def test_only_real_rate_limits_are_rate_limit_errors() -> None:
     class Response:
         def __init__(self, status: int, message: str, remaining: str) -> None:

@@ -35,8 +35,13 @@ SOURCE_EXTENSIONS = {
 }
 IGNORED_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock"}
 MAX_FILE_BYTES = 256_000
-MAX_LINES = 300
-MAX_SOURCE_FILES = 4
+MAX_LINES = 600
+MAX_SOURCE_FILES = 6
+# A source file this big can't fit in MAX_LINES; skip it without fetching (test files are truncated instead).
+MAX_SOURCE_BYTES = 80_000
+MIN_PREFERRED_LINES = 15  # shorter files are only used when nothing longer is left
+MAX_SOURCE_FETCHES = 15
+RECENT_COMMITS = 10  # the user's latest commits whose changed files are read first
 CACHE_TTL_SECONDS = 6 * 60 * 60
 DOCKER_FILES = {
     "Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml",
@@ -48,7 +53,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 
 class GitHubIngestError(RuntimeError):
@@ -140,6 +145,115 @@ def _candidate_priority(path: str) -> tuple[int, int, str]:
     parts = path.lower().split("/")
     preferred = 0 if any(part in {"src", "app", "lib"} for part in parts) else 1
     return preferred, len(parts), path.lower()
+
+
+def _recently_changed_paths(
+    client: httpx.Client, owner: str, repo: str, user_commits: list[dict[str, Any]]
+) -> list[str]:
+    """Files changed in the user's latest commits, most recent first (new growth-task work shows up here)."""
+    paths: list[str] = []
+    for commit in user_commits[:RECENT_COMMITS]:
+        sha = commit.get("sha")
+        if not sha:
+            continue
+        try:
+            detail = _request(client, f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits/{sha}")
+        except GitHubRateLimitError:
+            raise
+        except GitHubIngestError:
+            continue
+        for item in detail.get("files") or []:
+            path = item.get("filename")
+            if path and path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _ordered_candidates(tree: list[str], recent: list[str]) -> list[str]:
+    """Test files first (one slot is reserved for a test), then other source files.
+
+    Within each group, files the user changed recently come first, then `_candidate_priority`.
+    """
+    rank = {path: index for index, path in enumerate(recent)}
+
+    def recency(path: str) -> tuple[bool, int]:
+        return path not in rank, rank.get(path, 0)
+
+    candidates = [path for path in tree if _source_candidate(path)]
+    tests = sorted(
+        (path for path in candidates if is_test_path(path) and Path(path).name != "__init__.py"),
+        key=lambda path: (
+            recency(path),
+            not _named_like_test(path),
+            not set(path.lower().split("/")[:-1]) & TEST_DIRS,
+            _candidate_priority(path),
+        ),
+    )[:10]
+    others = sorted(
+        (path for path in candidates if not is_test_path(path)),
+        key=lambda path: (recency(path), _candidate_priority(path)),
+    )
+    return tests + others
+
+
+def _select_source_files(
+    candidates: list[str], sizes: dict[str, int], fetch: Any
+) -> dict[str, tuple[str, list[str]]]:
+    """Pick up to MAX_SOURCE_FILES readable files, preferring ones with MIN_PREFERRED_LINES or more."""
+    chosen: dict[str, tuple[str, list[str]]] = {}
+    short: dict[str, tuple[str, list[str]]] = {}
+    fetches = 0
+
+    def has_test(group: dict[str, Any]) -> bool:
+        return any(is_test_path(path) for path in group)
+
+    for path in candidates:
+        if len(chosen) >= MAX_SOURCE_FILES or fetches >= MAX_SOURCE_FETCHES:
+            break
+        test = is_test_path(path)
+        if test and (has_test(chosen) or has_test(short)):
+            continue
+        limit = MAX_FILE_BYTES if test else MAX_SOURCE_BYTES
+        if sizes.get(path, MAX_FILE_BYTES + 1) > limit:
+            continue
+        fetches += 1
+        content = fetch(path)
+        if content is None:
+            continue
+        lines = content.splitlines()
+        if lines and len(lines) > MAX_LINES and test:
+            # Long test files: keep the first lines. Line numbers stay identical
+            # to GitHub's, so citations inside them remain exact.
+            lines = lines[:MAX_LINES]
+            content = "\n".join(lines)
+        if not lines or len(lines) > MAX_LINES:
+            continue
+        (chosen if len(lines) >= MIN_PREFERRED_LINES else short)[path] = (content, lines)
+    for path, value in short.items():
+        if len(chosen) >= MAX_SOURCE_FILES:
+            break
+        chosen[path] = value
+    return chosen
+
+
+def _authored_paths(
+    client: httpx.Client, owner: str, repo: str, paths: list[str], username: str
+) -> dict[str, bool]:
+    """Whether the user committed to each dependency/config file; it only counts towards "Used" if so.
+
+    Test files aren't checked, and a file whose history can't be read is left out (= not authored).
+    """
+    authored: dict[str, bool] = {}
+    for path in paths:
+        if path in authored or is_test_path(path):
+            continue
+        try:
+            authored[path] = bool(_file_authorship(client, owner, repo, path, username))
+        except GitHubRateLimitError:
+            raise
+        except GitHubIngestError:
+            pass
+    return authored
 
 
 def _get_file_content(client: httpx.Client, owner: str, repo: str, path: str, branch: str) -> str:
@@ -417,52 +531,18 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     if content is not None:
                         config_contents[path] = content
 
-            candidates = sorted(
-                (path for path in tree if _source_candidate(path)),
-                key=_candidate_priority,
+            user_commits, user_commits_complete = _user_commits(client, owner, name, username)
+            recent = _recently_changed_paths(client, owner, name, user_commits or [])
+            sizes = {
+                item["path"]: item.get("size", MAX_FILE_BYTES + 1)
+                for item in tree_response.get("tree", []) if item.get("type") == "blob"
+            }
+            selected = _select_source_files(
+                _ordered_candidates(tree, recent), sizes,
+                lambda path: _optional_content(client, owner, name, path, branch),
             )
-            # Reserve one of the file slots for a test file, so testing skill can be
-            # cited in code rather than only inferred from the presence of test files.
-            test_candidates = sorted(
-                (
-                    path for path in candidates
-                    if is_test_path(path) and Path(path).name != "__init__.py"
-                ),
-                key=lambda path: (
-                    not _named_like_test(path),
-                    not set(path.lower().split("/")[:-1]) & TEST_DIRS,
-                    _candidate_priority(path),
-                ),
-            )[:10]
-            candidates = test_candidates + [
-                path for path in candidates if not is_test_path(path)
-            ]
             source_files: dict[str, dict[str, Any]] = {}
-            for path in candidates:
-                if len(source_files) >= MAX_SOURCE_FILES:
-                    break
-                if is_test_path(path) and any(is_test_path(taken) for taken in source_files):
-                    continue
-                blob = next(
-                    (
-                        item for item in tree_response.get("tree", [])
-                        if item.get("path") == path and item.get("type") == "blob"
-                    ),
-                    None,
-                )
-                if not blob or blob.get("size", MAX_FILE_BYTES + 1) > MAX_FILE_BYTES:
-                    continue
-                content = _optional_content(client, owner, name, path, branch)
-                if content is None:
-                    continue
-                lines = content.splitlines()
-                if lines and len(lines) > MAX_LINES and is_test_path(path):
-                    # Long test files: keep the first lines. Line numbers stay identical
-                    # to GitHub's, so citations inside them remain exact.
-                    lines = lines[:MAX_LINES]
-                    content = "\n".join(lines)
-                if not lines or len(lines) > MAX_LINES:
-                    continue
+            for path, (content, lines) in selected.items():
                 try:
                     commits = _file_authorship(client, owner, name, path, username)
                 except GitHubRateLimitError:
@@ -478,18 +558,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "blame": _file_blame(client, owner, name, head_sha, path),
                 }
 
-            # A dependency or config file only counts towards "Used" if the user committed to it.
-            authored_paths: dict[str, bool] = {}
-            for path in [*dependency_paths, *config_contents]:
-                if path in authored_paths or is_test_path(path):
-                    continue
-                try:
-                    authored_paths[path] = bool(_file_authorship(client, owner, name, path, username))
-                except GitHubRateLimitError:
-                    raise
-                except GitHubIngestError:
-                    pass  # unknown authorship is treated as not authored
-            user_commits, user_commits_complete = _user_commits(client, owner, name, username)
+            authored_paths = _authored_paths(
+                client, owner, name, [*dependency_paths, *config_contents], username
+            )
             repo_results.append(
                 {
                     "name": name,

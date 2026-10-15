@@ -58,21 +58,54 @@ def _lenient_proposal(text: str) -> ClaimProposal:
     return ClaimProposal(claims=kept)
 
 
+MAX_PROMPT_LINES = 8000
+
+
+def _files_for_prompt(
+    ingestion: dict[str, Any], max_lines: int = MAX_PROMPT_LINES
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Source files within the line budget, dropping the lowest-priority files first.
+
+    Priority: each repo's first-selected file across all repos, then each repo's second, and so on
+    (ingestion orders files by the user's recent changes; repos by most recent push).
+    """
+    ranked = sorted(
+        (
+            (file_index, repo_index, repo["name"], path, source)
+            for repo_index, repo in enumerate(ingestion["repos"])
+            for file_index, (path, source) in enumerate(repo["source_files"].items())
+        ),
+        key=lambda item: item[:2],
+    )
+    kept: set[tuple[int, int]] = set()
+    total = 0
+    for file_index, repo_index, _, _, source in ranked:
+        size = len(source["lines"])
+        if total + size > max_lines:
+            break
+        total += size
+        kept.add((file_index, repo_index))
+    # Keep each repo's files together in the prompt.
+    return [
+        (name, path, source)
+        for file_index, repo_index, name, path, source in sorted(ranked, key=lambda item: (item[1], item[0]))
+        if (file_index, repo_index) in kept
+    ]
+
+
 def _build_prompt(ingestion: dict[str, Any], resume_skills: list[dict[str, str]]) -> str:
     skills = [{"id": skill["id"], "name": skill["name"]} for skill in get_skills()]
-    files = []
-    for repo in ingestion["repos"]:
-        for path, source in repo["source_files"].items():
-            files.append(
-                {
-                    "repo": repo["name"],
-                    "file_path": path,
-                    "lines": [
-                        {"line": number, "text": line}
-                        for number, line in enumerate(source["lines"], start=1)
-                    ],
-                }
-            )
+    files = [
+        {
+            "repo": repo_name,
+            "file_path": path,
+            "lines": [
+                {"line": number, "text": line}
+                for number, line in enumerate(source["lines"], start=1)
+            ],
+        }
+        for repo_name, path, source in _files_for_prompt(ingestion)
+    ]
     resume_ids = sorted({item["skill_id"] for item in resume_skills})
     return (
         "Propose only skills directly supported by the supplied source-code lines. "
