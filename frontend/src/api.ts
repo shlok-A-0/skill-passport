@@ -42,6 +42,30 @@ export type RejectedClaim = {
   count?: number;
 };
 
+export type RepoCoverage = {
+  name: string;
+  source_files_total: number;
+  source_files_read: number;
+  lines_read: number;
+  skipped: Record<string, number>;
+  files_dropped_by_line_cap: number;
+};
+
+/** What was analysed: missing evidence means "not in these files", not "lacks the skill". */
+export type Coverage = {
+  repos_listed: number;
+  repos_analysed: number;
+  repos_skipped: { name: string; reason: string }[];
+  source_files_total: number;
+  source_files_read: number;
+  lines_read: number;
+  files_dropped_by_line_cap: number;
+  repos: RepoCoverage[];
+  notes: string[];
+};
+
+export const NOT_FOUND_TOOLTIP = "No evidence in the analysed files; this doesn't mean the candidate lacks the skill.";
+
 /** Display name for a skill; older passports have no name, so fall back to the id. */
 export function skillLabel(item: { skill_id: string; name?: string }): string {
   return item.name ?? item.skill_id.replace(/-/g, " ");
@@ -62,6 +86,7 @@ export type Passport = {
   github_username: string;
   target_role: string;
   sources: { repos: number; resume: boolean; certificates: number };
+  coverage?: Coverage;
   skills: PassportSkill[];
   rejected_claims: RejectedClaim[];
   role_match: {

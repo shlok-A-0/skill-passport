@@ -251,6 +251,15 @@ footer span { display: flex; gap: 5px; align-items: center; margin-left: 24px; }
 .rejected-item a { color: #F26B1D; font-size: 10px; font-weight: 700; }
 .copied-tag { margin-right: 6px; border-radius: 4px; padding: 1px 5px; background: #fde8e4; color: #a44b40; font-size: 9px; }
 .review-summary { margin-top: 10px; }
+.coverage { margin-top: 6px; font-size: 11px; color: #5b6377; }
+.coverage-line { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.coverage-line:hover { color: #1B2340; }
+.coverage-open .coverage-chevron { transform: rotate(180deg); }
+.coverage-detail { margin-top: 8px; padding: 10px 12px; border: 1px solid #eceef2; border-radius: 10px; background: #fafbfc; max-width: 760px; }
+.coverage-detail table { width: 100%; border-collapse: collapse; }
+.coverage-detail th, .coverage-detail td { text-align: left; padding: 3px 8px 3px 0; font-size: 11px; }
+.coverage-detail p { margin: 6px 0 0; }
+.status-not-found { margin-left: 6px; border-radius: 999px; padding: 1px 7px; background: #f0f1f4; color: #6b7181; font-size: 9px; font-weight: 700; cursor: help; }
 .not-counted-note { margin: 4px 0 0; color: #8A8F9C; font-size: 11px; font-style: italic; }
 .ranking-note { margin: 10px 0 0; color: #848b99; font-size: 10px; line-height: 1.6; }
 @media (max-width: 850px) { .best-candidate { flex-wrap: wrap; } .best-link { margin-left: 0; } }

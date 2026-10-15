@@ -1,7 +1,8 @@
 import { AlertTriangle, CheckCircle2, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, skillLabel, type Passport, type PassportSkill } from "../api";
+import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill } from "../api";
+import CoverageSummary from "../components/CoverageSummary";
 import LadderPill from "../components/LadderPill";
 import { verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
@@ -47,6 +48,7 @@ export default function RecruiterView() {
           <div className="eyebrow">RECRUITER VIEW · EVIDENCE-BACKED SUMMARY</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.copiedExcluded > 0 && <span className="copied-excluded"><AlertTriangle size={11} /> {verify.copiedExcluded} copied citation{verify.copiedExcluded === 1 ? "" : "s"} excluded</span>}</p>
+          <CoverageSummary coverage={passport.coverage} />
         </div>
         <div className="recruiter-actions">
           <div className="match-total"><strong>{passport.role_match.met} <i>of</i> {passport.role_match.total}</strong><span>requirements met</span></div>
@@ -65,7 +67,7 @@ export default function RecruiterView() {
                 <article className={`requirement-row req-${requirement.status}`} key={requirement.skill_id}>
                   <Icon size={18} />
                   <div className="req-main">
-                    <div className="req-title">{skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span></div>
+                    <div className="req-title">{skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span>{requirement.status === "missing" && <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>}</div>
                     <p>{requirement.reason}</p>
                   </div>
                   {skill && <LadderPill level={skill.level} />}

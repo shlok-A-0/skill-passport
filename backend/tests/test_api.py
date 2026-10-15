@@ -198,6 +198,16 @@ def test_api_returns_skill_names(tmp_path, monkeypatch) -> None:
         assert client.get(path).json()["skills"][0]["name"] == "Python"
 
 
+def test_coverage_is_in_student_and_review_responses(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = passport_with_fraud_signals("p-coverage")
+    passport["coverage"] = {"repos_analysed": 2, "source_files_read": 9, "source_files_total": 40,
+                            "lines_read": 1200, "repos_skipped": [{"name": "old", "reason": "fork"}]}
+    storage.save_passport(passport)
+    for path in ("/passport/p-coverage", "/passport/p-coverage/review"):
+        assert client.get(path).json()["coverage"] == passport["coverage"]
+
+
 def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
     from app.services.badge import create_badge
 

@@ -42,6 +42,18 @@ def test_role_match_distinguishes_met_partial_and_claimed_missing() -> None:
     assert result["requirements"][2]["student_level"] == "Claimed"
 
 
+def test_missing_requirement_reason_includes_coverage_counts() -> None:
+    role = {"id": "r", "name": "R", "requirements": [
+        {"skill_id": "docker", "importance": "must", "min_level": "Used"},
+    ]}
+    coverage = {"source_files_read": 28, "source_files_total": 168}
+    result = match_role([], role, coverage)
+    assert result["requirements"][0]["reason"] == (
+        "No evidence found in the analysed files (28 of 168 source files read)."
+    )
+    assert match_role([], role)["requirements"][0]["reason"] == "No evidence found in the analysed files."
+
+
 def test_unknown_role_is_an_explicit_error() -> None:
     with pytest.raises(ValueError, match="Unknown target role"):
         match_role([], "not-a-role")

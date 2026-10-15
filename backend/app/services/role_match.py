@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.services.coverage import coverage_phrase
 from app.services.framework import get_roles, skill_map
 from app.services.verifier import LEVEL_ORDER
 
@@ -21,7 +22,8 @@ def _get_role(role: str | dict[str, Any]) -> dict[str, Any]:
 
 
 def match_role(
-    passport_skills: list[dict[str, Any]], target_role: str | dict[str, Any]
+    passport_skills: list[dict[str, Any]], target_role: str | dict[str, Any],
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     role = _get_role(target_role)
     student_skills = {item["skill_id"]: item for item in passport_skills}
@@ -36,7 +38,8 @@ def match_role(
         minimum = requirement["min_level"]
         if not has_evidence:
             status = "missing"
-            reason = "No verified code, dependency, or configuration evidence found."
+            # "Not found" in a sample of files, not "lacks the skill".
+            reason = f"No evidence found in the analysed files{coverage_phrase(coverage)}."
         elif LEVEL_ORDER[level] >= LEVEL_ORDER[minimum]:
             status = "met"
             met_count += 1

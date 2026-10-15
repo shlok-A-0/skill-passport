@@ -212,8 +212,63 @@ def test_authored_paths_marks_files_the_user_committed_to(monkeypatch) -> None:
         github_ingest._authored_paths(object(), "student", "demo", ["Dockerfile"], "student")
 
 
-def test_cache_schema_is_version_3() -> None:
-    assert github_ingest.CACHE_SCHEMA_VERSION == 3
+def test_cache_from_an_older_schema_is_refetched(fake_github: FakeGitHub, tmp_path) -> None:
+    import json
+    import time
+
+    fake_github.add_repo("normal", {"app.py": _code(20)})
+    old = {"schema_version": github_ingest.CACHE_SCHEMA_VERSION - 1, "cached_at": time.time(),
+           "data": {"repos": "stale"}}
+    (tmp_path / "github-student.json").write_text(json.dumps(old), encoding="utf-8")
+    assert github_ingest.ingest_github("student")["repos"] != "stale"
+
+
+def test_coverage_counts_read_skipped_and_unread_files(fake_github: FakeGitHub) -> None:
+    from app.services.coverage import build_coverage
+
+    files = {f"src/m{index}.py": _code(30) for index in range(9)}  # 9 good files, 6 can be read
+    files["src/huge.py"] = _code(10)
+    files["src/long.py"] = _code(700)
+    files["README.md"] = "not source"
+    # The fake pushes repos in the order they are added, so the last added is the most recent.
+    for index in range(5):
+        fake_github.add_repo(f"extra{index}", {"a.py": _code(20)})
+    fake_github.add_repo("empty", error=GitHubIngestError("GitHub API returned 409: Git Repository is empty."))
+    fake_github.add_repo("project", files, sizes={"src/huge.py": 500_000})
+    ingestion = github_ingest.ingest_github("student")
+    project = next(repo for repo in ingestion["repos"] if repo["name"] == "project")
+    assert project["coverage"]["source_files_total"] == 11
+    assert project["coverage"]["source_files_read"] == 6
+    assert project["coverage"]["lines_read"] == 180
+    assert project["coverage"]["skipped"] == {"too_large": 1, "too_many_lines": 1, "file_limit": 3}
+
+    coverage = build_coverage(ingestion)
+    assert coverage["repos_listed"] == 7
+    assert coverage["repos_analysed"] == 4  # top 5 by push date, one of them empty
+    skipped = {item["name"]: item["reason"] for item in coverage["repos_skipped"]}
+    assert skipped == {
+        "extra0": "not among the 5 most recently pushed",
+        "extra1": "not among the 5 most recently pushed",
+        "empty": "empty repository",
+    }
+    assert coverage["source_files_total"] == 11 + 3
+    assert coverage["source_files_read"] == 6 + 3
+    assert coverage["lines_read"] == 180 + 60
+    assert coverage["files_dropped_by_line_cap"] == 0
+
+
+def test_coverage_counts_files_dropped_by_the_prompt_line_cap(monkeypatch) -> None:
+    from app.services import claim_proposer
+    from app.services.coverage import build_coverage
+
+    monkeypatch.setattr(claim_proposer, "MAX_PROMPT_LINES", 500)
+    source = {"lines": ["x"] * 300, "line_count": 300}
+    ingestion = {"repos": [{"name": "r", "source_files": {"a.py": source, "b.py": source}, "coverage": {
+        "source_files_total": 2, "source_files_read": 2, "lines_read": 600, "skipped": {},
+        "tree_truncated": True}}]}
+    coverage = build_coverage(ingestion)
+    assert coverage["files_dropped_by_line_cap"] == 1
+    assert any("Tree truncated for repo r" in note for note in coverage["notes"])
 
 
 def test_only_real_rate_limits_are_rate_limit_errors() -> None:

@@ -53,7 +53,8 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
+MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
 class GitHubIngestError(RuntimeError):
@@ -197,15 +198,24 @@ def _ordered_candidates(tree: list[str], recent: list[str]) -> list[str]:
 
 
 def _select_source_files(
-    candidates: list[str], sizes: dict[str, int], fetch: Any
+    candidates: list[str], sizes: dict[str, int], fetch: Any,
+    skipped: dict[str, int] | None = None,
 ) -> dict[str, tuple[str, list[str]]]:
-    """Pick up to MAX_SOURCE_FILES readable files, preferring ones with MIN_PREFERRED_LINES or more."""
+    """Pick up to MAX_SOURCE_FILES readable files, preferring ones with MIN_PREFERRED_LINES or more.
+
+    `skipped` (if given) counts files passed over for a reason other than the file limit:
+    "too_large" (not fetched), "too_many_lines", "unreadable" or "empty".
+    """
     chosen: dict[str, tuple[str, list[str]]] = {}
     short: dict[str, tuple[str, list[str]]] = {}
     fetches = 0
+    reasons = skipped if skipped is not None else {}
 
     def has_test(group: dict[str, Any]) -> bool:
         return any(is_test_path(path) for path in group)
+
+    def skip(reason: str) -> None:
+        reasons[reason] = reasons.get(reason, 0) + 1
 
     for path in candidates:
         if len(chosen) >= MAX_SOURCE_FILES or fetches >= MAX_SOURCE_FETCHES:
@@ -215,10 +225,12 @@ def _select_source_files(
             continue
         limit = MAX_FILE_BYTES if test else MAX_SOURCE_BYTES
         if sizes.get(path, MAX_FILE_BYTES + 1) > limit:
+            skip("too_large")
             continue
         fetches += 1
         content = fetch(path)
         if content is None:
+            skip("unreadable")
             continue
         lines = content.splitlines()
         if lines and len(lines) > MAX_LINES and test:
@@ -226,7 +238,11 @@ def _select_source_files(
             # to GitHub's, so citations inside them remain exact.
             lines = lines[:MAX_LINES]
             content = "\n".join(lines)
-        if not lines or len(lines) > MAX_LINES:
+        if not lines:
+            skip("empty")
+            continue
+        if len(lines) > MAX_LINES:
+            skip("too_many_lines")
             continue
         (chosen if len(lines) >= MIN_PREFERRED_LINES else short)[path] = (content, lines)
     for path, value in short.items():
@@ -234,6 +250,38 @@ def _select_source_files(
             break
         chosen[path] = value
     return chosen
+
+
+def _repo_error_reason(exc: Exception) -> str:
+    message = str(exc)
+    if "409" in message:
+        return "empty repository"
+    if "not found" in message.lower() or "404" in message:
+        return "not found (404)"
+    if "451" in message:
+        return "unavailable for legal reasons (451)"
+    return "could not be read"
+
+
+def _repo_coverage(
+    tree: list[str], source_files: dict[str, dict[str, Any]], skip_reasons: dict[str, int],
+    tree_response: dict[str, Any],
+) -> dict[str, Any]:
+    """How much of this repo's source was actually read, and why the rest wasn't."""
+    total = sum(1 for path in tree if _source_candidate(path))
+    read = len(source_files)
+    skipped = {reason: count for reason, count in skip_reasons.items() if count}
+    # Everything else was never attempted: the per-repo file or fetch limit was reached first.
+    not_attempted = total - read - sum(skipped.values())
+    if not_attempted > 0:
+        skipped["file_limit"] = not_attempted
+    return {
+        "source_files_total": total,
+        "source_files_read": read,
+        "lines_read": sum(source["line_count"] for source in source_files.values()),
+        "skipped": skipped,
+        "tree_truncated": bool(tree_response.get("truncated", False)),
+    }
 
 
 def _authored_paths(
@@ -465,10 +513,18 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             repo for repo in repositories
             if not repo.get("fork") and repo.get("visibility", "public") == "public"
         ]
+        skipped_repos = [
+            {"name": repo.get("name", "?"), "reason": "fork" if repo.get("fork") else "not public"}
+            for repo in repositories if repo not in eligible
+        ]
         eligible.sort(key=lambda repo: repo.get("pushed_at") or "", reverse=True)
+        skipped_repos += [
+            {"name": repo.get("name", "?"), "reason": f"not among the {MAX_REPOS} most recently pushed"}
+            for repo in eligible[MAX_REPOS:]
+        ]
         repo_results: list[dict[str, Any]] = []
 
-        for repo in eligible[:5]:
+        for repo in eligible[:MAX_REPOS]:
             owner = repo["owner"]["login"]
             name = repo["name"]
             branch = repo.get("default_branch") or "main"
@@ -489,8 +545,10 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     )
                 except GitHubRateLimitError:
                     raise
-                except GitHubIngestError:
-                    continue  # empty (409), missing (404), blocked (451) or broken repo: skip it
+                except GitHubIngestError as exc:
+                    # Empty (409), missing (404), blocked (451) or broken repo: skip it.
+                    skipped_repos.append({"name": name, "reason": _repo_error_reason(exc)})
+                    continue
             tree = [
                 item["path"]
                 for item in tree_response.get("tree", [])
@@ -537,9 +595,11 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 item["path"]: item.get("size", MAX_FILE_BYTES + 1)
                 for item in tree_response.get("tree", []) if item.get("type") == "blob"
             }
+            skip_reasons: dict[str, int] = {}
             selected = _select_source_files(
                 _ordered_candidates(tree, recent), sizes,
                 lambda path: _optional_content(client, owner, name, path, branch),
+                skip_reasons,
             )
             source_files: dict[str, dict[str, Any]] = {}
             for path, (content, lines) in selected.items():
@@ -582,6 +642,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "source_files": source_files,
                     "authored_paths": authored_paths,
                     "source_file_count": sum(1 for path in tree if _source_candidate(path)),
+                    "coverage": _repo_coverage(tree, source_files, skip_reasons, tree_response),
                     "user_commits": user_commits,
                     "user_commits_complete": user_commits_complete,
                     "commit_counts": {
@@ -600,6 +661,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
         "profile_url": profile.get("html_url"),
         "repo_count": len(repo_results),
         "repos": repo_results,
+        "repos_listed": len(repositories),
+        "skipped_repos": skipped_repos,
     }
     cache_path.write_text(
         json.dumps({"schema_version": CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": result}),

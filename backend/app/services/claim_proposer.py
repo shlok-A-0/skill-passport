@@ -62,7 +62,7 @@ MAX_PROMPT_LINES = 8000
 
 
 def _files_for_prompt(
-    ingestion: dict[str, Any], max_lines: int = MAX_PROMPT_LINES
+    ingestion: dict[str, Any], max_lines: int | None = None
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """Source files within the line budget, dropping the lowest-priority files first.
 
@@ -77,6 +77,7 @@ def _files_for_prompt(
         ),
         key=lambda item: item[:2],
     )
+    max_lines = MAX_PROMPT_LINES if max_lines is None else max_lines
     kept: set[tuple[int, int]] = set()
     total = 0
     for file_index, repo_index, _, _, source in ranked:

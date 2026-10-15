@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services.claim_proposer import propose_claims
 from app.services.copy_check import add_copy_signals
+from app.services.coverage import build_coverage
 from app.services.github_ingest import ingest_github
 from app.services.growth_and_kit import generate_growth_and_kit
 from app.services.jobs import complete_job, fail_job, update_job
@@ -91,7 +92,8 @@ def build_passport(
     # Confirmed copies are removed before role matching, so the match sees the final levels.
     exclude_confirmed_copies(verified, ingestion["repos"])
     progress("Matching role")
-    role_match = match_role(verified["skills"], target_role)
+    coverage = build_coverage(ingestion)
+    role_match = match_role(verified["skills"], target_role, coverage)
     progress("Building growth plan")
     generation_warning = None
     try:
@@ -123,6 +125,7 @@ def build_passport(
                 else (existing or {}).get("sources", {}).get("certificates", 0)
             ),
         },
+        "coverage": coverage,
         "skills": verified["skills"],
         "rejected_claims": verified["rejected_claims"],
         "role_match": role_match,

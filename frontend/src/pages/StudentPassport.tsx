@@ -2,6 +2,7 @@ import { Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
+import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
@@ -104,6 +105,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           <div className="eyebrow">STUDENT PASSPORT · CREATED {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · RE-CHECKED ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
           <h1>@{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates</span></p>
+          <CoverageSummary coverage={passport.coverage} />
         </div>
         <div className="passport-actions">
           <button className="button button-light" onClick={downloadBadge}><Download size={15} /> Download credential</button>

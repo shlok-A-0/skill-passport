@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, skillLabel, type Passport, type Role } from "../api";
+import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
 import { latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
 function VerifyPill({ verify }: { verify: Verifiability }) {
@@ -79,7 +79,7 @@ export default function PlacementCell() {
       <div className="placement-stats">
         <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>STUDENTS IN VIEW</small><strong>{passports.length}</strong></div></section>
         <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>AVERAGE REQUIREMENTS MET</small><strong>{avgMet} <i>of {requirements.length} requirements</i></strong></div></section>
-        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>SUGGESTED WORKSHOP</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `${topGap.percent}% of this group has no evidence for this requirement.` : "The highest shared evidence gap appears here."}</p></div></section>
+        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>SUGGESTED WORKSHOP</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `For ${topGap.percent}% of this group, no evidence was found in the analysed files.` : "The highest shared evidence gap appears here."}</p></div></section>
       </div>
       <section className="panel ranking-panel">
         <div className="panel-heading">
@@ -146,7 +146,7 @@ export default function PlacementCell() {
                     {requirements.map((req) => {
                       const skill = passport.skills.find((item) => item.skill_id === req.skill_id);
                       const level = skill?.evidence.length ? skill.level : undefined;
-                      return <td key={req.skill_id}><span className={`heat-cell ${levelClass(level)}`} title={`${req.skill_id}: ${level ?? "Missing"}`} /></td>;
+                      return <td key={req.skill_id}><span className={`heat-cell ${levelClass(level)}`} title={`${skillLabel(req)}: ${level ?? `Not found. ${NOT_FOUND_TOOLTIP}`}`} /></td>;
                     })}
                   </tr>
                 ))}</tbody>
@@ -154,11 +154,11 @@ export default function PlacementCell() {
             </div>
           )}
           <div className="heatmap-legend">
-            <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span><i className="heat-missing" />Missing</span>
+            <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span>
           </div>
         </section>
         <section className="panel gaps-panel">
-          <div className="panel-heading"><div><div className="eyebrow">SHARED LEARNING GAPS</div><h2>Most-missing requirements</h2></div></div>
+          <div className="panel-heading"><div><div className="eyebrow">SHARED LEARNING GAPS</div><h2>Requirements most often not found</h2></div></div>
           <div className="gap-chart">
             {gaps.length ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -166,7 +166,7 @@ export default function PlacementCell() {
                   <CartesianGrid stroke="#edf0f4" horizontal={false} />
                   <XAxis type="number" domain={[0, 100]} tickFormatter={(value: number) => `${value}%`} tick={{ fontSize: 10, fill: "#858b99" }} />
                   <YAxis type="category" dataKey="skill" width={100} tick={{ fontSize: 10, fill: "#525b71" }} />
-                  <Tooltip formatter={(value) => [`${value}% with no evidence`, "Cohort gap"]} />
+                  <Tooltip formatter={(value) => [`${value}% not found in analysed files`, "Not found"]} />
                   <Bar dataKey="percent" fill="#f26b1d" radius={[0, 5, 5, 0]} barSize={13} />
                 </BarChart>
               </ResponsiveContainer>
