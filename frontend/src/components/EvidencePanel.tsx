@@ -32,7 +32,7 @@ export default function EvidencePanel({ skill, audience }: { skill: PassportSkil
               <span className="file-icon"><FileCode2 size={16} /></span>
               <div>
                 <strong>{item.repo}</strong>
-                <div className="muted">{item.type === "commit" ? `Commit history · ${item.commit_sha.slice(0, 7)}` : `${item.file_path} · lines ${item.start_line}–${item.end_line}`}</div>
+                <div className="muted">{item.type === "commit" ? `Commit history · ${item.commit_sha.slice(0, 7)}` : item.start_line > 0 ? `${item.file_path} · lines ${item.start_line}–${item.end_line}` : item.file_path}</div>
               </div>
               <a className="icon-link" href={item.url} target="_blank" rel="noreferrer" aria-label="Open exact GitHub lines">
                 {item.type === "commit" ? "Open commit" : "Open on GitHub"} <ExternalLink size={14} />

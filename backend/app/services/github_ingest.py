@@ -55,6 +55,10 @@ class GitHubIngestError(RuntimeError):
     pass
 
 
+class GitHubRateLimitError(GitHubIngestError):
+    """Rate limits stop the job; other per-repo errors (404, 409 empty repo, 451) skip data."""
+
+
 def _cache_path(username: str) -> Path:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", username.lower())
     return CACHE_DIR / f"github-{safe_name}.json"
@@ -75,18 +79,22 @@ def _get(client: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
     response = client.get(url, **kwargs)
     if response.status_code == 404:
         raise GitHubIngestError(f"GitHub resource not found: {url}")
-    if response.status_code in (403, 429):
-        remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
+    message = response.reason_phrase
+    if response.is_error:
+        try:
+            message = response.json().get("message", response.reason_phrase)
+        except (ValueError, AttributeError):
+            pass
+    remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
+    if response.status_code == 429 or (
+        response.status_code == 403 and (remaining == "0" or "rate limit" in str(message).lower())
+    ):
         reset = response.headers.get("X-RateLimit-Reset")
         detail = "GitHub API rate limit exceeded"
         if reset:
             detail += f"; reset at Unix time {reset}"
-        raise GitHubIngestError(f"{detail} (remaining={remaining})")
+        raise GitHubRateLimitError(f"{detail} (remaining={remaining})")
     if response.is_error:
-        try:
-            message = response.json().get("message", response.reason_phrase)
-        except ValueError:
-            message = response.reason_phrase
         raise GitHubIngestError(f"GitHub API returned {response.status_code}: {message}")
     return response
 
@@ -152,6 +160,18 @@ def _get_file_content(client: httpx.Client, owner: str, repo: str, path: str, br
     return ""
 
 
+def _optional_content(
+    client: httpx.Client, owner: str, repo: str, path: str, branch: str
+) -> str | None:
+    """File text, or None when this one file can't be read (rate limits still stop the job)."""
+    try:
+        return _get_file_content(client, owner, repo, path, branch)
+    except GitHubRateLimitError:
+        raise
+    except (GitHubIngestError, httpx.HTTPError):
+        return None
+
+
 def _file_authorship(
     client: httpx.Client, owner: str, repo: str, path: str, username: str
 ) -> list[str]:
@@ -195,8 +215,10 @@ def _user_commits(
             f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits",
             params={"author": username, "per_page": HISTORY_PAGE_SIZE},
         )
+    except GitHubRateLimitError:
+        raise
     except GitHubIngestError:
-        return None, False
+        return None, False  # recorded as unknown
     if not isinstance(commits, list):
         return None, False
     result = []
@@ -351,10 +373,10 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                         f"{API_ROOT}/repos/{quote(owner)}/{quote(name)}/git/trees/{quote(branch, safe='')}",
                         params={"recursive": "1"},
                     )
-                except GitHubIngestError as exc:
-                    if "resource not found" not in str(exc):
-                        raise
-                    continue
+                except GitHubRateLimitError:
+                    raise
+                except GitHubIngestError:
+                    continue  # empty (409), missing (404), blocked (451) or broken repo: skip it
             tree = [
                 item["path"]
                 for item in tree_response.get("tree", [])
@@ -378,7 +400,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             tests = [path for path in tree if is_test_path(path)]
             dependency_contents = {}
             for path in dependency_paths:
-                dependency_contents[path] = _get_file_content(client, owner, name, path, branch)
+                content = _optional_content(client, owner, name, path, branch)
+                if content is not None:
+                    dependency_contents[path] = content
             config_contents = {}
             for path in configs:
                 blob = next(
@@ -389,8 +413,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     None,
                 )
                 if blob and blob.get("size", MAX_FILE_BYTES + 1) <= MAX_FILE_BYTES:
-                    content = _get_file_content(client, owner, name, path, branch)
-                    config_contents[path] = content
+                    content = _optional_content(client, owner, name, path, branch)
+                    if content is not None:
+                        config_contents[path] = content
 
             candidates = sorted(
                 (path for path in tree if _source_candidate(path)),
@@ -427,7 +452,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 )
                 if not blob or blob.get("size", MAX_FILE_BYTES + 1) > MAX_FILE_BYTES:
                     continue
-                content = _get_file_content(client, owner, name, path, branch)
+                content = _optional_content(client, owner, name, path, branch)
+                if content is None:
+                    continue
                 lines = content.splitlines()
                 if lines and len(lines) > MAX_LINES and is_test_path(path):
                     # Long test files: keep the first lines. Line numbers stay identical
@@ -436,7 +463,12 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     content = "\n".join(lines)
                 if not lines or len(lines) > MAX_LINES:
                     continue
-                commits = _file_authorship(client, owner, name, path, username)
+                try:
+                    commits = _file_authorship(client, owner, name, path, username)
+                except GitHubRateLimitError:
+                    raise
+                except GitHubIngestError:
+                    commits = []  # authorship unknown: the claim's "authored" check fails
                 source_files[path] = {
                     "content": content,
                     "lines": lines,
@@ -453,6 +485,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     continue
                 try:
                     authored_paths[path] = bool(_file_authorship(client, owner, name, path, username))
+                except GitHubRateLimitError:
+                    raise
                 except GitHubIngestError:
                     pass  # unknown authorship is treated as not authored
             user_commits, user_commits_complete = _user_commits(client, owner, name, username)

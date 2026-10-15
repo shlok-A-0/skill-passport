@@ -367,33 +367,69 @@ def _test_code_evidence(
     return evidence
 
 
+GIT_HISTORY_PATH = "(commit history)"
+MAX_TEST_FILE_EVIDENCE = 3
+
+
+def _authored_commit_count(repo: dict[str, Any]) -> tuple[int, str]:
+    """How many commits the user authored here (and "+" when the list was cut off)."""
+    commits = repo.get("user_commits") or []
+    if commits:
+        return len(commits), "" if repo.get("user_commits_complete") else "+"
+    by_user = (repo.get("commit_counts") or {}).get("by_user")
+    if isinstance(by_user, int) and by_user > 0:
+        return by_user, ""
+    # Older ingestions: commits that touched the fetched files the user authored.
+    shas = {
+        sha for source in repo.get("source_files", {}).values()
+        for sha in source.get("authored_shas") or []
+    }
+    return len(shas), ""
+
+
 def _commit_evidence(repo: dict[str, Any], username: str) -> dict[str, Any] | None:
     """Commits the user authored in a non-fork repo show they use Git."""
     if repo.get("is_fork"):
         return None
-    sha = next(
-        (
-            source["authored_shas"][0]
-            for source in repo.get("source_files", {}).values()
-            if source.get("authored_shas")
-        ),
-        None,
-    )
-    by_user = (repo.get("commit_counts") or {}).get("by_user")
-    if not sha:
+    count, more = _authored_commit_count(repo)
+    if not count:
         return None
-    count = f"{by_user} commits" if by_user else "Commits"
+    full_name = repo.get("full_name", repo["name"])
+    owner = repo.get("owner") or full_name.split("/")[0]
     return {
-        "type": "commit",
+        "type": "config",
         "repo": repo["name"],
-        "file_path": "",
+        "file_path": GIT_HISTORY_PATH,
+        "start_line": 0,
+        "end_line": 0,
+        "commit_sha": repo.get("head_sha") or "HEAD",
+        "url": f"https://github.com/{full_name}/commits?author={owner}",
+        "snippet": "",
+        "explanation": f"Git: {count}{more} commit(s) authored by you in this repository.",
+        # Authored by construction, so it counts under "Used requires authorship".
+        "checks": {"file_exists": True, "authored": True, "not_fork": True},
+    }
+
+
+def _test_file_evidence(repo: dict[str, Any], path: str) -> dict[str, Any]:
+    """A test file's presence; its content isn't fetched, so there are no lines to cite."""
+    sha = repo.get("head_sha") or "HEAD"
+    return {
+        "type": "config",
+        "repo": repo["name"],
+        "file_path": path,
         "start_line": 0,
         "end_line": 0,
         "commit_sha": sha,
-        "url": f"https://github.com/{repo.get('full_name', repo['name'])}/commit/{sha}",
+        "url": f"https://github.com/{repo.get('full_name', repo['name'])}/blob/{sha}/{quote(path, safe='/')}",
         "snippet": "",
-        "explanation": f"{count} in {repo['name']} were authored by {username or 'you'}; link opens one of them.",
-        "checks": {"authored": True, "not_fork": True},
+        "explanation": "Test file present in the repository.",
+        "checks": {
+            "file_exists": path in repo.get("tree", []),
+            "not_fork": not repo.get("is_fork", False),
+        },
+        # Test files are not authorship-checked; these items keep counting towards Used.
+        "test_file_group": True,
     }
 
 
@@ -482,15 +518,14 @@ def _deterministic_evidence(
             if configured:
                 evidence.append(_config_evidence(repo, path, content, "config", skill["name"]))
         if skill["id"] == "unit-testing" and repo.get("test_files"):
-            evidence.extend(_test_code_evidence(skill, repo, username))
-            # One grouped item per repo instead of one per test file.
-            test_files = repo["test_files"]
-            item = _config_evidence(repo, test_files[0], "", "config", skill["name"])
-            others = f" and {len(test_files) - 1} more" if len(test_files) > 1 else ""
-            item["explanation"] = f"{len(test_files)} test file(s) in {repo['name']}: {test_files[0]}{others}."
-            # Test files are not authorship-checked; this item keeps counting towards Used.
-            item["test_file_group"] = True
-            evidence.append(item)
+            code = _test_code_evidence(skill, repo, username)
+            evidence.extend(code)
+            # A few test files per repo is enough proof; listing all of them bloated passports.
+            cited = {item["file_path"] for item in code}
+            evidence.extend(
+                _test_file_evidence(repo, path)
+                for path in [path for path in repo["test_files"] if path not in cited][:MAX_TEST_FILE_EVIDENCE]
+            )
         if skill["id"] == "git":
             commit = _commit_evidence(repo, username)
             if commit:

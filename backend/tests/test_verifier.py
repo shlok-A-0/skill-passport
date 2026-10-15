@@ -473,15 +473,45 @@ def test_non_github_ci_counts_as_cicd_evidence() -> None:
 
 def test_authored_commits_count_as_git_evidence() -> None:
     ingestion = sample_ingestion()
+    ingestion["repos"][0]["user_commits"] = _commits("2024-01-01", "2024-01-05")
+    ingestion["repos"][0]["user_commits_complete"] = True
     result = verify_claims([], ingestion)
     git = next(item for item in result["skills"] if item["skill_id"] == "git")
     assert git["level"] == "Used"
-    assert git["evidence"][0]["type"] == "commit"
-    assert git["evidence"][0]["url"] == "https://github.com/student/demo-api/commit/def456"
+    history = next(item for item in git["evidence"] if item["file_path"] == "(commit history)")
+    assert history["type"] == "config"
+    assert history["url"] == "https://github.com/student/demo-api/commits?author=student"
+    assert history["explanation"] == "Git: 2 commit(s) authored by you in this repository."
+    assert history["checks"] == {"file_exists": True, "authored": True, "not_fork": True}
+
+
+def test_git_is_used_when_the_student_has_commits() -> None:
+    data = sample_ingestion()
+    data["repos"][0]["commit_counts"] = {"total": 12, "by_user": 9}
+    skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
+    assert skills["git"]["level"] == "Used"
+    assert "9 commit(s)" in skills["git"]["evidence"][0]["explanation"]
 
 
 def test_git_is_not_evidenced_for_a_fork() -> None:
     assert "git" not in _levels_with(is_fork=True)
+    data = sample_ingestion(is_fork=True)
+    data["repos"][0]["commit_counts"] = {"total": 12, "by_user": 9}
+    data["repos"][0]["user_commits"] = _commits("2024-01-01")
+    skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
+    assert "git" not in skills
+
+
+def test_test_file_evidence_is_capped() -> None:
+    data = sample_ingestion()
+    data["repos"][0]["test_files"] = [f"tests/test_{index}.py" for index in range(40)]
+    skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
+    assert len(skills["unit-testing"]["evidence"]) == 3
+    item = skills["unit-testing"]["evidence"][0]
+    assert set(item["checks"]) == {"file_exists", "not_fork"}
+    assert item["url"] == "https://github.com/student/demo-api/blob/abc123/tests/test_0.py"
+    assert item["explanation"] == "Test file present in the repository."
+    assert skills["unit-testing"]["level"] == "Used"
 
 
 def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> None:
@@ -501,7 +531,8 @@ def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> Non
     code = [item for item in skill["evidence"] if item["type"] == "code"]
     config = [item for item in skill["evidence"] if item["type"] == "config"]
     assert code and code[0]["start_line"] == 3 and all(code[0]["checks"].values())
-    assert len(config) == 1 and "2 test file(s)" in config[0]["explanation"]
+    # The file already cited as code is not listed again as a test-file item.
+    assert [item["file_path"] for item in config] == ["tests/test_more.py"]
     assert skill["level"] == "Demonstrated"  # tests exist in the same repo
 
 
