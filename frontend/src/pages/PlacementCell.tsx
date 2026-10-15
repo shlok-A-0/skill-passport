@@ -40,7 +40,7 @@ export default function PlacementCell() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([api.roles(), api.passports()])
+    Promise.all([api.roles(), api.reviewPassports()])
       .then(([availableRoles, allPassports]) => {
         setRoles(availableRoles);
         setPassports(latestPerStudent(allPassports));

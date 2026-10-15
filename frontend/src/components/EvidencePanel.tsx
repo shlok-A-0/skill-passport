@@ -1,6 +1,7 @@
 import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2 } from "lucide-react";
 import type { PassportSkill } from "../api";
 import LadderPill from "./LadderPill";
+import type { Audience } from "./RejectedClaims";
 import { skillName } from "../skillNames";
 
 const checkLabels: Record<string, string> = {
@@ -11,7 +12,7 @@ const checkLabels: Record<string, string> = {
   signature_found: "Skill signature found in code",
 };
 
-export default function EvidencePanel({ skill }: { skill: PassportSkill }) {
+export default function EvidencePanel({ skill, audience }: { skill: PassportSkill; audience: Audience }) {
   return (
     <section className="panel evidence-panel">
       <div className="panel-heading">
@@ -59,7 +60,7 @@ export default function EvidencePanel({ skill }: { skill: PassportSkill }) {
                 );
               })}
             </div>
-            {item.integrity && item.integrity.length > 0 && (
+            {audience === "recruiter" && item.integrity && item.integrity.length > 0 && (
               <div className="integrity-list">
                 <div className="integrity-title">Authorship signals · advisory, never change the level</div>
                 {item.integrity.map((signal) => (

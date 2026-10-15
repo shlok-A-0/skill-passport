@@ -99,6 +99,93 @@ def test_create_rejects_non_pdf_resume() -> None:
     assert response.status_code == 415
 
 
+def passport_with_fraud_signals(passport_id: str) -> dict:
+    passport = fake_passport(passport_id)
+    passport["skills"][0]["evidence"][0]["integrity"] = [
+        {"id": "commit_spread", "label": "Work spread over time", "status": "warn", "detail": "All on one day."},
+    ]
+    passport["interview_kit"] = [{"skill_id": "python", "questions": [
+        {"q": "Why this loop?", "good_answer_mentions": "the batching in lines 3-9"},
+    ]}]
+    passport["rejected_claims"] = [
+        {"claim": {"skill_id": "flask", "repo": "demo", "file_path": "x.py"}, "failed_checks": ["lines_valid"],
+         "reason": "Failed verification checks: lines_valid.", "kind": "unsupported"},
+        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "copied.py"}, "failed_checks": ["not_copied"],
+         "reason": "Same code found in someone/original, created 2020-01-01, before this repository (created 2024-01-01).",
+         "source_url": "https://github.com/someone/original/blob/main/a.py", "kind": "copied"},
+        {"claim": {"skill_id": "python", "repo": "demo", "file_path": "copied2.py"}, "failed_checks": ["not_copied"],
+         "reason": "Same code found in someone/original.", "source_url": "https://github.com/someone/original",
+         "kind": "copied"},
+    ]
+    return passport
+
+
+def _keys_and_values(data: object) -> tuple[set, list]:
+    keys: set = set()
+    values: list = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            keys.add(key)
+            values.append(value)
+            more_keys, more_values = _keys_and_values(value)
+            keys |= more_keys
+            values += more_values
+    elif isinstance(data, list):
+        for value in data:
+            more_keys, more_values = _keys_and_values(value)
+            keys |= more_keys
+            values += more_values
+    return keys, values
+
+
+def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    monkeypatch.setattr(main_module, "RECRUITER_KEY", recruiter_key)
+    storage.save_passport(passport_with_fraud_signals("p-review"))
+    return TestClient(main_module.app)
+
+
+def test_student_endpoints_hide_fraud_signals(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    for body in (client.get("/passport/p-review").json(), client.get("/passports").json()):
+        keys, values = _keys_and_values(body)
+        assert not {"integrity", "good_answer_mentions", "source_url"} & keys
+        assert "copied" not in values
+        assert not any("someone/original" in str(value) for value in values)
+    rejected = client.get("/passport/p-review").json()["rejected_claims"]
+    assert [item["kind"] for item in rejected] == ["unsupported", "review"]
+    assert rejected[1] == {"kind": "review", "count": 2, "reason": "2 citations were not counted after authorship review."}
+
+
+def test_review_endpoints_return_full_passport(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    for body in (client.get("/passport/p-review/review").json(), client.get("/passports/review").json()):
+        keys, values = _keys_and_values(body)
+        assert {"integrity", "good_answer_mentions", "source_url"} <= keys
+        assert "copied" in values
+
+
+def test_review_endpoints_require_matching_recruiter_key_when_set(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch, recruiter_key="s3cret")
+    for path in ("/passport/p-review/review", "/passports/review"):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers={"X-Recruiter-Key": "wrong"}).status_code == 401
+        assert client.get(path, headers={"X-Recruiter-Key": "s3cret"}).status_code == 200
+    # The student view stays open.
+    assert client.get("/passport/p-review").status_code == 200
+
+
+def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        main_module, "build_passport",
+        lambda **_: {**passport_with_fraud_signals("p-review"), "level_changes": []},
+    )
+    keys, values = _keys_and_values(client.post("/passport/p-review/recheck").json())
+    assert not {"integrity", "good_answer_mentions", "source_url"} & keys
+    assert "copied" not in values
+
+
 def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
     from app.services.badge import create_badge
 

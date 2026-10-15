@@ -1,0 +1,79 @@
+import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { api, type Passport, type PassportSkill } from "../api";
+import EvidencePanel from "../components/EvidencePanel";
+import LadderPill from "../components/LadderPill";
+import RejectedClaims from "../components/RejectedClaims";
+import { skillName } from "../skillNames";
+import { verifiability } from "../verifiability";
+
+const levelOrder: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
+
+/** Full evidence review for recruiters: every authorship signal and every excluded claim. */
+export default function RecruiterEvidence() {
+  const { id = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const [passport, setPassport] = useState<Passport | null>(null);
+  const [selected, setSelected] = useState<PassportSkill | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.reviewPassport(id)
+      .then((data) => {
+        setPassport(data);
+        const requested = data.skills.find((skill) => skill.skill_id === searchParams.get("skill"));
+        setSelected(requested ?? sortedSkills(data)[0] ?? null);
+      })
+      .catch((reason: Error) => setError(reason.message));
+  }, [id, searchParams]);
+
+  if (error && !passport) return <div className="page-message notice-error">{error}</div>;
+  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence review…</div>;
+
+  const verify = verifiability(passport);
+  return (
+    <div className="passport-page">
+      <header className="passport-heading">
+        <div>
+          <div className="eyebrow">RECRUITER EVIDENCE REVIEW · NOT SHOWN TO THE CANDIDATE</div>
+          <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
+          <p>
+            Candidate for <strong>{passport.target_role}</strong> ·{" "}
+            <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>
+            {verify.copiedExcluded > 0 && <span className="copied-excluded"><AlertTriangle size={11} /> {verify.copiedExcluded} copied citation{verify.copiedExcluded === 1 ? "" : "s"} excluded</span>}
+          </p>
+        </div>
+        <div className="passport-actions">
+          <Link className="button button-light" to={`/recruiter/${passport.id}`}><ArrowLeft size={15} /> Recruiter summary</Link>
+        </div>
+      </header>
+      <div className="passport-grid">
+        <div className="skill-column">
+          <section className="panel skill-panel">
+            <div className="panel-heading"><div><div className="eyebrow">ALL SKILLS</div><h2>Evidence by skill</h2></div><span className="count-tag">{passport.skills.length} skills</span></div>
+            {passport.skills.length ? (
+              <div className="skill-grid">{sortedSkills(passport).map((skill) => {
+                const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
+                return (
+                  <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
+                    <span className="skill-name">{skillName(skill.skill_id)}</span><LadderPill level={skill.level} />
+                    <small>{skill.evidence.length} evidence{flags > 0 ? ` · ${flags} to check` : ""}</small>
+                  </button>
+                );
+              })}</div>
+            ) : <div className="empty-state">No skills were found in this passport.</div>}
+          </section>
+          <RejectedClaims claims={passport.rejected_claims} audience="recruiter" />
+        </div>
+        <aside className="evidence-column">
+          {selected ? <EvidencePanel skill={selected} audience="recruiter" /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function sortedSkills(passport: Passport): PassportSkill[] {
+  return [...passport.skills].sort((left, right) => levelOrder[right.level] - levelOrder[left.level]);
+}

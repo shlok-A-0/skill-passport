@@ -5,6 +5,7 @@ import { api } from "./api";
 import CreatePassport from "./pages/CreatePassport";
 import StudentPassport from "./pages/StudentPassport";
 import RecruiterView from "./pages/RecruiterView";
+import RecruiterEvidence from "./pages/RecruiterEvidence";
 
 const PlacementCell = lazy(() => import("./pages/PlacementCell"));
 
@@ -47,6 +48,7 @@ function App() {
           <Route path="/recruiter" element={<LatestPassportRedirect view="recruiter" />} />
           <Route path="/passport/:id" element={<StudentPassport />} />
           <Route path="/recruiter/:id" element={<RecruiterView />} />
+          <Route path="/recruiter/:id/evidence" element={<RecruiterEvidence />} />
           <Route path="/placement" element={<Suspense fallback={<div className="page-message">Loading placement insights…</div>}><PlacementCell /></Suspense>} />
           <Route path="*" element={<CreatePassport />} />
         </Routes>

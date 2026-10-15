@@ -5,6 +5,7 @@ import { api, type Passport, type PassportSkill } from "../api";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
+import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import { skillName } from "../skillNames";
 
 const ladder = [
@@ -21,7 +22,7 @@ const levelOrder: Record<PassportSkill["level"], number> = {
   Demonstrated: 3,
 };
 
-export default function StudentPassport() {
+export default function StudentPassport({ audience = "student" }: { audience?: Audience }) {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const [passport, setPassport] = useState<Passport | null>(null);
@@ -31,7 +32,7 @@ export default function StudentPassport() {
   const [changes, setChanges] = useState<NonNullable<Passport["level_changes"]>>([]);
 
   async function load() {
-    const data = await api.passport(id);
+    const data = audience === "recruiter" ? await api.reviewPassport(id) : await api.passport(id);
     setPassport(data);
     const requestedSkill = searchParams.get("skill");
     const strongestSkill = [...data.skills]
@@ -150,19 +151,10 @@ export default function StudentPassport() {
             )) : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
             <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /> {busy ? "Re-checking GitHub…" : "Re-check GitHub now"}</button>
           </section>
-          <details className="panel rejected-panel">
-            <summary>Rejected AI claims <span className="count-tag">{passport.rejected_claims.length}</span></summary>
-            {passport.rejected_claims.length ? passport.rejected_claims.map((item, index) => (
-              <article className="rejected-item" key={`${String(item.claim.file_path)}-${index}`}>
-                <strong>{String(item.claim.skill_id)} · {String(item.claim.repo)}/{String(item.claim.file_path)}</strong>
-                <p>{item.reason}</p><small>Failed checks: {item.failed_checks.join(", ")}</small>
-                {item.source_url && <p><a href={item.source_url} target="_blank" rel="noreferrer">View original <ArrowUpRight size={11} /></a></p>}
-              </article>
-            )) : <p className="muted">No proposed claims failed verification in this run.</p>}
-          </details>
+          <RejectedClaims claims={passport.rejected_claims} audience={audience} />
         </div>
         <aside className="evidence-column">
-          {selected ? <EvidencePanel skill={selected} /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
+          {selected ? <EvidencePanel skill={selected} audience={audience} /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
         </aside>
       </div>
     </div>

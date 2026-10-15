@@ -13,7 +13,7 @@ export default function RecruiterView() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    api.passport(id).then(setPassport).catch((reason: Error) => setError(reason.message));
+    api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message));
   }, [id]);
 
   async function copyLink() {
@@ -65,7 +65,7 @@ export default function RecruiterView() {
                     <p>{requirement.reason}</p>
                   </div>
                   {skill && <LadderPill level={skill.level} />}
-                  <Link className="view-evidence-link" to={`/passport/${passport.id}?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
+                  <Link className="view-evidence-link" to={`/recruiter/${passport.id}/evidence?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
                 </article>
               );
             })}
@@ -78,7 +78,7 @@ export default function RecruiterView() {
               const evidence = skill.evidence.find((item) => item.type === "code");
               const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
               return (
-                <Link className="strength-row" to={`/passport/${passport.id}?skill=${skill.skill_id}`} key={skill.skill_id}>
+                <Link className="strength-row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
                   <span><strong>{skillName(skill.skill_id)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{evidence?.repo}/{evidence?.file_path} · L{evidence?.start_line}–L{evidence?.end_line}</small></span>
                   <LadderPill level={skill.level} />
                 </Link>
@@ -107,7 +107,7 @@ export default function RecruiterView() {
           </details>
         </aside>
       </div>
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/passport/${passport.id}`}><ExternalLink size={13} /> Full passport</Link></footer>
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
 }

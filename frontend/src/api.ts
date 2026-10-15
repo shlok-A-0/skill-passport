@@ -29,12 +29,17 @@ export type IntegritySignal = {
   source_created_at?: string;
 };
 
+/**
+ * "unsupported": failed a verification check. "copied": excluded as a confirmed copy
+ * (review endpoints only). "review": the student-safe summary of copied items, no details.
+ */
 export type RejectedClaim = {
-  claim: Record<string, unknown>;
-  failed_checks: string[];
+  claim?: Record<string, unknown>;
+  failed_checks?: string[];
   reason: string;
-  kind?: "unsupported" | "copied";
+  kind?: "unsupported" | "copied" | "review";
   source_url?: string;
+  count?: number;
 };
 
 export type PassportSkill = {
@@ -93,6 +98,15 @@ export type PassportJob = {
   passport_id?: string;
 };
 
+class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
@@ -103,9 +117,31 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     } catch {
       // Keep the HTTP status when an error body is not JSON.
     }
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;
+}
+
+// Kept in memory only (never localStorage), so it is gone when the tab closes.
+let recruiterKey: string | null = null;
+
+/** Review endpoints include fraud signals; the server may require a recruiter key. */
+async function reviewRequest<T>(path: string): Promise<T> {
+  const send = () => request<T>(path, recruiterKey ? { headers: { "X-Recruiter-Key": recruiterKey } } : undefined);
+  try {
+    return await send();
+  } catch (reason) {
+    if (!(reason instanceof ApiError) || reason.status !== 401) throw reason;
+    const entered = window.prompt("Enter the recruiter key to see the full review:");
+    if (!entered) throw new Error("A recruiter key is required to open the review view.");
+    recruiterKey = entered;
+    try {
+      return await send();
+    } catch (retryReason) {
+      if (retryReason instanceof ApiError && retryReason.status === 401) recruiterKey = null;
+      throw retryReason;
+    }
+  }
 }
 
 export const api = {
@@ -115,6 +151,8 @@ export const api = {
   job: (id: string) => request<PassportJob>(`/jobs/${id}`),
   passport: (id: string) => request<Passport>(`/passport/${id}`),
   passports: () => request<Passport[]>("/passports"),
+  reviewPassport: (id: string) => reviewRequest<Passport>(`/passport/${id}/review`),
+  reviewPassports: () => reviewRequest<Passport[]>("/passports/review"),
   recheck: (id: string) =>
     request<{ passport: Passport; level_changes: Passport["level_changes"] }>(
       `/passport/${id}/recheck`,

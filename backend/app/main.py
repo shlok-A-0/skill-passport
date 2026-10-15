@@ -1,11 +1,14 @@
+import copy
+import hmac
 import logging
 import uuid
+from typing import Any
 
 from fastapi import FastAPI
-from fastapi import BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import FRONTEND_ORIGINS
+from app.config import FRONTEND_ORIGINS, RECRUITER_KEY
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
@@ -23,6 +26,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(debug_router)
+
+
+def student_view(passport: dict[str, Any]) -> dict[str, Any]:
+    """The passport without fraud signals: showing them to the person being checked
+    would teach them how to get around the checks."""
+    view = copy.deepcopy(passport)
+    for skill in view.get("skills", []):
+        for item in skill.get("evidence", []):
+            item.pop("integrity", None)
+    for entry in view.get("interview_kit", []):
+        for question in entry.get("questions", []):
+            question.pop("good_answer_mentions", None)
+    rejected = view.get("rejected_claims", [])
+    copied = sum(1 for item in rejected if item.get("kind") == "copied")
+    view["rejected_claims"] = [item for item in rejected if item.get("kind") != "copied"]
+    if copied:
+        noun = "citation was" if copied == 1 else "citations were"
+        view["rejected_claims"].append({
+            "kind": "review",
+            "count": copied,
+            "reason": f"{copied} {noun} not counted after authorship review.",
+        })
+    return view
+
+
+def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> None:
+    """Review endpoints are open in local dev; with RECRUITER_KEY set, the header must match."""
+    if RECRUITER_KEY and not hmac.compare_digest(
+        (x_recruiter_key or "").encode(), RECRUITER_KEY.encode()
+    ):
+        raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
 
 
 @app.get("/health")
@@ -91,16 +125,30 @@ def passport_job(job_id: str) -> dict:
     return job
 
 
-@app.get("/passport/{passport_id}")
-def passport(passport_id: str) -> dict:
+def _stored_passport(passport_id: str) -> dict:
     result = get_passport(passport_id)
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
     return result
 
 
+@app.get("/passport/{passport_id}")
+def passport(passport_id: str) -> dict:
+    return student_view(_stored_passport(passport_id))
+
+
+@app.get("/passport/{passport_id}/review", dependencies=[Depends(require_recruiter)])
+def review_passport(passport_id: str) -> dict:
+    return _stored_passport(passport_id)
+
+
 @app.get("/passports")
 def passports() -> list[dict]:
+    return [student_view(item) for item in list_passports()]
+
+
+@app.get("/passports/review", dependencies=[Depends(require_recruiter)])
+def review_passports() -> list[dict]:
     return list_passports()
 
 
@@ -123,7 +171,7 @@ def recheck_passport(passport_id: str) -> dict:
         logging.getLogger(__name__).exception("Passport re-check failed: %s", passport_id)
         raise HTTPException(status_code=502, detail=f"Re-check failed: {exc}") from exc
     return {
-        "passport": result,
+        "passport": student_view(result),
         "level_changes": result.get("level_changes", []),
     }
 

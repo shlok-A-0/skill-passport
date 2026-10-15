@@ -24,6 +24,8 @@ FRONTEND_ORIGINS = [
     for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
+# When set, the recruiter review endpoints require a matching X-Recruiter-Key header.
+RECRUITER_KEY = os.getenv("RECRUITER_KEY", "")
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_PATH = BASE_DIR / "skill_passport.db"
