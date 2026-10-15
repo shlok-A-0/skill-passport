@@ -105,8 +105,7 @@
     "category": "Language",
     "esco_label": "Go (computer programming)",
     "aliases": [
-      "golang",
-      "go"
+      "golang"
     ],
     "file_extensions": [
       ".go"

@@ -101,7 +101,6 @@ export default function CreatePassport() {
       <section className="panel create-card">
         <div className="panel-heading">
           <div><div className="eyebrow">START YOUR PASSPORT</div><h2>Bring your proof</h2></div>
-          <div className="step-count">01 <span>/ 03</span></div>
         </div>
         {roleError && <div className="notice notice-error">{roleError}</div>}
         <form onSubmit={submit} className="create-form">

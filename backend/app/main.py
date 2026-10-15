@@ -66,7 +66,17 @@ def health() -> dict[str, str]:
 
 @app.get("/roles")
 def roles() -> list[dict]:
-    return get_roles()
+    names = {skill["id"]: skill["name"] for skill in get_skills()}
+    return [
+        {
+            **role,
+            "requirements": [
+                {**item, "name": names.get(item["skill_id"], item["skill_id"])}
+                for item in role["requirements"]
+            ],
+        }
+        for role in get_roles()
+    ]
 
 
 @app.get("/skills")

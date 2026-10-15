@@ -54,6 +54,7 @@ def match_role(
         requirements.append(
             {
                 "skill_id": skill_id,
+                "name": (skill_map().get(skill_id) or {}).get("name", skill_id),
                 "importance": requirement["importance"],
                 "status": status,
                 "student_level": level,

@@ -1,7 +1,7 @@
-import { ArrowUpRight, Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type Passport, type PassportSkill } from "../api";
+import { useParams, useSearchParams } from "react-router-dom";
+import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
@@ -106,7 +106,6 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates</span></p>
         </div>
         <div className="passport-actions">
-          <Link className="button button-light" to={`/recruiter/${passport.id}`}>Recruiter view <ArrowUpRight size={15} /></Link>
           <button className="button button-light" onClick={downloadBadge}><Download size={15} /> Download credential</button>
         </div>
       </header>
@@ -128,7 +127,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             {verified.length ? (
               <div className="skill-grid">{verified.map((skill) => (
                 <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
-                  <span className="skill-name">{skillName(skill.skill_id)}</span><LadderPill level={skill.level} />
+                  <span className="skill-name">{skillLabel(skill)}</span><LadderPill level={skill.level} />
                   <small>{skill.evidence.length} evidence {skill.certified ? "· Certified" : ""}</small>
                 </button>
               ))}</div>
@@ -138,7 +137,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             <section className="panel claimed-panel">
               <div className="panel-heading"><div><div className="eyebrow">SEPARATE · NEVER COUNTED AS MET</div><h2>On your resume, not yet evidenced</h2></div><span className="count-tag">{claimed.length}</span></div>
               <div className="claimed-skills">{claimed.map((skill) => (
-                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillName(skill.skill_id)}</span><LadderPill level="Claimed" /></button>
+                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
               ))}</div>
               <p className="muted">Listed on resume or certificates, or found only in files you did not commit to. No qualifying evidence was found.</p>
             </section>

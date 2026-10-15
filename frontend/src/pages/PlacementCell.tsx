@@ -10,16 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, type Passport, type Role } from "../api";
-import { latestPerStudent, rankCandidates, type Verifiability } from "../verifiability";
-import { skillName } from "../skillNames";
-
-const levelOrder: Record<string, number> = {
-  Claimed: 0,
-  Used: 1,
-  Applied: 2,
-  Demonstrated: 3,
-};
+import { api, skillLabel, type Passport, type Role } from "../api";
+import { latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
 function VerifyPill({ verify }: { verify: Verifiability }) {
   return (
@@ -43,6 +35,7 @@ export default function PlacementCell() {
     Promise.all([api.roles(), api.reviewPassports()])
       .then(([availableRoles, allPassports]) => {
         setRoles(availableRoles);
+        // One row per student (latest passport per username) for stats, heatmap, gaps and ranking.
         setPassports(latestPerStudent(allPassports));
         if (availableRoles.length) setRoleId(availableRoles[0].id);
       })
@@ -50,23 +43,11 @@ export default function PlacementCell() {
   }, []);
 
   const role = roles.find((item) => item.id === roleId);
-  const requirements = (role?.requirements ?? []) as {
-    skill_id: string;
-    min_level: string;
-    importance: string;
-  }[];
-  const rows = useMemo(() => passports.map((passport) => {
-    const matched = requirements.filter((requirement) => {
-      const studentSkill = passport.skills.find((skill) => skill.skill_id === requirement.skill_id);
-      return Boolean(
-        studentSkill
-        && studentSkill.level !== "Claimed"
-        && studentSkill.evidence.length
-        && levelOrder[studentSkill.level] >= levelOrder[requirement.min_level],
-      );
-    }).length;
-    return { passport, matched };
-  }), [passports, requirements]);
+  const requirements = role?.requirements ?? [];
+  const rows = useMemo(
+    () => passports.map((passport) => ({ passport, matched: requirementsMet(passport, requirements).met })),
+    [passports, requirements],
+  );
   const ranked = useMemo(() => rankCandidates(passports, requirements), [passports, requirements]);
   const best = ranked[0];
   const avgMet = rows.length
@@ -78,7 +59,7 @@ export default function PlacementCell() {
       return !skill || skill.level === "Claimed" || !skill.evidence.length;
     }).length;
     return {
-      skill: skillName(requirement.skill_id),
+      skill: skillLabel(requirement),
       missing,
       percent: rows.length ? Math.round((missing / rows.length) * 100) : 0,
       skill_id: requirement.skill_id,
@@ -158,7 +139,7 @@ export default function PlacementCell() {
           {!rows.length ? <div className="empty-state">No passports yet. Generate student passports to populate the batch view.</div> : (
             <div className="heatmap-scroll">
               <table className="heatmap-table">
-                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillName(req.skill_id)}</th>)}</tr></thead>
+                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillLabel(req)}</th>)}</tr></thead>
                 <tbody>{rows.map(({ passport }) => (
                   <tr key={passport.id}>
                     <td><Link to={`/passport/${passport.id}`}>{passport.github_username}{passport.is_demo && <small>DEMO</small>}</Link></td>

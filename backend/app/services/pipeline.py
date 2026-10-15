@@ -8,7 +8,7 @@ from app.services.copy_check import add_copy_signals
 from app.services.github_ingest import ingest_github
 from app.services.growth_and_kit import generate_growth_and_kit
 from app.services.jobs import complete_job, fail_job, update_job
-from app.services.resume_parse import parse_certificate, parse_resume
+from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
 from app.services.verifier import exclude_confirmed_copies, verify_claims
@@ -22,6 +22,13 @@ def _merge_skill_matches(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
         for item in group:
             mentions.setdefault(item["skill_id"], item["mention"])
     return [{"skill_id": key, "mention": value} for key, value in mentions.items()]
+
+
+def _redact_mentions(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {**item, "mention": redact_personal_data(item.get("mention") or "", detect_name=False)}
+        for item in items
+    ]
 
 
 def build_passport(
@@ -64,6 +71,9 @@ def build_passport(
         certificate_skills = _merge_skill_matches(*certificate_groups)
     else:
         certificate_skills = certificate_skill_mentions or []
+    # Stored mentions from older passports may predate redaction; the redaction is idempotent.
+    resume_skills = _redact_mentions(resume_skills)
+    certificate_skills = _redact_mentions(certificate_skills)
     progress("Proposing skills")
     claims = propose_claims(ingestion, resume_skills)
     progress("Verifying evidence")

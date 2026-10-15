@@ -1,10 +1,12 @@
 import { AlertTriangle, CheckCircle2, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type Passport } from "../api";
+import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import LadderPill from "../components/LadderPill";
 import { verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
+
+const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 
 export default function RecruiterView() {
   const { id = "" } = useParams();
@@ -29,8 +31,10 @@ export default function RecruiterView() {
   if (error && !passport) return <div className="page-message notice-error">{error}</div>;
   if (!passport) return <div className="page-message">Loading recruiter summary…</div>;
 
+  // Strongest first: Demonstrated > Applied > Used, then the most evidence.
   const topSkills = passport.skills
-    .filter((skill) => skill.level !== "Claimed" && skill.evidence.some((item) => item.type === "code"))
+    .filter((skill) => skill.level !== "Claimed" && skill.evidence.length > 0)
+    .sort((left, right) => levelRank[right.level] - levelRank[left.level] || right.evidence.length - left.evidence.length)
     .slice(0, 5);
   const claimedSkills = passport.skills.filter((skill) => skill.level === "Claimed" || !skill.evidence.length);
   const interviews = passport.interview_kit;
@@ -61,7 +65,7 @@ export default function RecruiterView() {
                 <article className={`requirement-row req-${requirement.status}`} key={requirement.skill_id}>
                   <Icon size={18} />
                   <div className="req-main">
-                    <div className="req-title">{skillName(requirement.skill_id)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span></div>
+                    <div className="req-title">{skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span></div>
                     <p>{requirement.reason}</p>
                   </div>
                   {skill && <LadderPill level={skill.level} />}
@@ -73,23 +77,26 @@ export default function RecruiterView() {
         </section>
         <aside className="recruiter-side">
           <section className="panel verified-summary">
-            <div className="panel-heading"><div><div className="eyebrow">CODE-BACKED SKILLS</div><h2>Verified strengths</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
+            <div className="panel-heading"><div><div className="eyebrow">STRONGEST EVIDENCE</div><h2>Verified strengths</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
             {topSkills.length ? topSkills.map((skill) => {
-              const evidence = skill.evidence.find((item) => item.type === "code");
+              const evidence = skill.evidence.find((item) => item.type === "code") ?? skill.evidence[0];
+              const where = evidence.start_line > 0
+                ? `${evidence.repo}/${evidence.file_path} · L${evidence.start_line}–L${evidence.end_line}`
+                : `${evidence.repo}/${evidence.file_path}`;
               const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
               return (
                 <Link className="strength-row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
-                  <span><strong>{skillName(skill.skill_id)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{evidence?.repo}/{evidence?.file_path} · L{evidence?.start_line}–L{evidence?.end_line}</small></span>
+                  <span><strong>{skillLabel(skill)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{where}</small></span>
                   <LadderPill level={skill.level} />
                 </Link>
               );
-            }) : <p className="muted">No authored code skills have been verified yet.</p>}
+            }) : <p className="muted">No skills have been verified yet.</p>}
           </section>
           <section className="panel claimed-summary">
             <div className="panel-heading"><div><div className="eyebrow">NOT INCLUDED IN MATCH</div><h2>Claimed, unverified</h2></div><span className="count-tag">{claimedSkills.length}</span></div>
             {claimedSkills.length ? (
               <>
-                <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillName(skill.skill_id)}</span>)}</div>
+                <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
                 <p>Listed on resume. No evidence found in submitted work.</p>
               </>
             ) : <p>No resume-only claims in this passport.</p>}

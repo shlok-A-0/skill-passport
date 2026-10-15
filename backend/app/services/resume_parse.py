@@ -8,7 +8,9 @@ from pdfminer.pdfparser import PDFSyntaxError
 from app.services.framework import get_skills
 
 
-def redact_personal_data(text: str) -> str:
+def redact_personal_data(text: str, detect_name: bool = True) -> str:
+    """Remove personal details (I11). `detect_name` guesses the name from the first lines of a
+    whole resume; it is off for single mention lines, where "Python Django" would look like a name."""
     redacted = text
     patterns = [
         (r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED EMAIL]"),
@@ -20,6 +22,8 @@ def redact_personal_data(text: str) -> str:
     ]
     for pattern, replacement in patterns:
         redacted = re.sub(pattern, replacement, redacted, flags=re.IGNORECASE)
+    if not detect_name:
+        return redacted
 
     lines = redacted.splitlines()
     section_headings = {
@@ -90,7 +94,8 @@ def match_resume_skills(text: str) -> list[dict[str, str]]:
             if found_line:
                 break
         if found_line:
-            matches.append({"skill_id": skill["id"], "mention": found_line})
+            # Mention lines are stored in the passport, so personal details are removed first.
+            matches.append({"skill_id": skill["id"], "mention": redact_personal_data(found_line, detect_name=False)})
     return matches
 
 

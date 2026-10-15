@@ -589,6 +589,55 @@ def test_test_file_cited_by_ai_is_not_cited_twice() -> None:
     assert len([item for item in skill["evidence"] if item["type"] == "code"]) == 1
 
 
+def test_skills_and_requirements_carry_display_names() -> None:
+    from app.services.role_match import match_role
+
+    skills = verify_claims([claim()], sample_ingestion())["skills"]
+    names = {item["skill_id"]: item["name"] for item in skills}
+    assert names["flask"] == "Flask" and names["unit-testing"] == "Unit Testing"
+    requirements = match_role(skills, "backend-intern")["requirements"]
+    assert all(item["name"] for item in requirements)
+    assert next(item for item in requirements if item["skill_id"] == "rest-api")["name"] == "REST API design"
+
+
+def test_nested_dockerfile_qualifies_for_demonstrated() -> None:
+    ingestion = sample_ingestion()
+    repo = ingestion["repos"][0]
+    repo.update(
+        test_files=[], tree=["app.py", "deploy/docker/Dockerfile"],
+        config_files=["deploy/docker/Dockerfile"], config_contents={"deploy/docker/Dockerfile": "FROM python:3.11\n"},
+        authored_paths={"deploy/docker/Dockerfile": True},
+    )
+    levels = {item["skill_id"]: item["level"] for item in verify_claims([claim()], ingestion)["skills"]}
+    assert levels["flask"] == "Demonstrated"
+    assert levels["docker"] == "Used"
+
+
+def test_resume_mention_lines_are_redacted() -> None:
+    from app.services.resume_parse import match_resume_skills
+
+    text = "Contact jane.doe@example.com +91 98765 43210 | Python, Docker\nPython Django"
+    mentions = {item["skill_id"]: item["mention"] for item in match_resume_skills(text)}
+    assert "@" not in mentions["python"] and "98765" not in mentions["python"]
+    assert "[REDACTED EMAIL]" in mentions["python"]
+    assert mentions["django"] == "Python Django"  # skill lines are not mistaken for a name
+
+
+def test_stored_mentions_are_redacted_on_recheck() -> None:
+    from app.services.pipeline import _redact_mentions
+
+    redacted = _redact_mentions([{"skill_id": "aws", "mention": "AWS - call +1 (555) 123-4567 or a@b.io"}])
+    assert "555" not in redacted[0]["mention"] and "a@b.io" not in redacted[0]["mention"]
+
+
+def test_go_alias_does_not_match_the_everyday_word() -> None:
+    from app.services.framework import skill_map
+    from app.services.resume_parse import match_resume_skills
+
+    assert "go" not in skill_map()["go"]["aliases"]
+    assert not [item for item in match_resume_skills("I like to go hiking") if item["skill_id"] == "go"]
+
+
 def plain_python_ingestion() -> dict:
     lines = ["from os import path", "def add(a, b):", "    parts = 'a,b'.split(',')", "    return a + b"]
     data = sample_ingestion()

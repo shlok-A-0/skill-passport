@@ -36,8 +36,6 @@ footer span { display: flex; gap: 5px; align-items: center; margin-left: 24px; }
 .create-card { padding: 25px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { margin: 7px 0 0; font: 800 20px/1.2 Manrope, sans-serif; letter-spacing: -.5px; text-transform: capitalize; }
-.step-count { font: 800 14px Manrope,sans-serif; color: #f26b1d; }
-.step-count span { color: #b4b8c2; font-weight: 500; }
 .create-form { display: grid; gap: 17px; margin-top: 23px; }
 .create-form > label { display: grid; gap: 7px; font-size: 12px; font-weight: 700; color: #333d58; }
 .input-wrap { height: 43px; display: flex; align-items: center; gap: 9px; border: 1px solid #e3e5eb; border-radius: 8px; padding: 0 11px; color: #9298a5; }

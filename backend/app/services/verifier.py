@@ -740,6 +740,7 @@ def verify_claims(
         skills.append(
             {
                 "skill_id": skill_id,
+                "name": skill["name"],
                 "level": compute_level(skill_id, evidence, repos),
                 "certified": skill_id in certified_ids,
                 "evidence": evidence,

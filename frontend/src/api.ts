@@ -42,8 +42,14 @@ export type RejectedClaim = {
   count?: number;
 };
 
+/** Display name for a skill; older passports have no name, so fall back to the id. */
+export function skillLabel(item: { skill_id: string; name?: string }): string {
+  return item.name ?? item.skill_id.replace(/-/g, " ");
+}
+
 export type PassportSkill = {
   skill_id: string;
+  name?: string;
   level: "Claimed" | "Used" | "Applied" | "Demonstrated";
   certified: boolean;
   evidence: Evidence[];
@@ -65,6 +71,7 @@ export type Passport = {
     total: number;
     requirements: {
       skill_id: string;
+      name?: string;
       importance: "must" | "nice";
       status: "met" | "partial" | "missing";
       student_level: string | null;
@@ -89,7 +96,8 @@ export type Passport = {
   generation_error?: string | null;
 };
 
-export type Role = { id: string; name: string; requirements: unknown[] };
+export type RoleRequirement = { skill_id: string; name?: string; min_level: string; importance: string };
+export type Role = { id: string; name: string; requirements: RoleRequirement[] };
 export type PassportJob = {
   job_id: string;
   status: "queued" | "running" | "done" | "failed";

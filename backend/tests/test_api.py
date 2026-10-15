@@ -186,6 +186,18 @@ def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
     assert "copied" not in values
 
 
+def test_api_returns_skill_names(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    roles = client.get("/roles").json()
+    backend = next(role for role in roles if role["id"] == "backend-intern")
+    assert all(item["name"] for item in backend["requirements"])
+    passport = passport_with_fraud_signals("p-names")
+    passport["skills"][0]["name"] = "Python"
+    storage.save_passport(passport)
+    for path in ("/passport/p-names", "/passport/p-names/review"):
+        assert client.get(path).json()["skills"][0]["name"] == "Python"
+
+
 def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
     from app.services.badge import create_badge
 

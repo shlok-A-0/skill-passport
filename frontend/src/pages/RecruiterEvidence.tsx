@@ -1,11 +1,10 @@
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type Passport, type PassportSkill } from "../api";
+import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import EvidencePanel from "../components/EvidencePanel";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims from "../components/RejectedClaims";
-import { skillName } from "../skillNames";
 import { verifiability } from "../verifiability";
 
 const levelOrder: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -57,7 +56,7 @@ export default function RecruiterEvidence() {
                 const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
                 return (
                   <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
-                    <span className="skill-name">{skillName(skill.skill_id)}</span><LadderPill level={skill.level} />
+                    <span className="skill-name">{skillLabel(skill)}</span><LadderPill level={skill.level} />
                     <small>{skill.evidence.length} evidence{flags > 0 ? ` · ${flags} to check` : ""}</small>
                   </button>
                 );
