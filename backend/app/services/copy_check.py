@@ -1,25 +1,31 @@
-"""Copy detection: search GitHub for a distinctive cited line in other people's repos.
+"""Earlier-source check: search GitHub for a distinctive cited line in other people's repos.
 
 Runs after verification. A single matching line is advisory (shared tutorials,
-boilerplate). A copy is only *confirmed* when a second, different line from the same
-citation is found in the same older repository; the verifier then excludes it.
+boilerplate). A citation is only excluded as an **earlier source** when a second,
+different line from it is in the same file elsewhere, and that file first appeared more
+than a day before the candidate's file. Exclusion means "can't attribute to the
+candidate", not "copied".
 """
 import hashlib
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from app.config import CACHE_DIR, GITHUB_TOKEN
+from app.services.github_ingest import oldest_commit_date
 
 API_ROOT = "https://api.github.com"
 MAX_SEARCHES = 8  # GitHub code search allows ~10 requests/minute
 MIN_LINE_LENGTH = 30
 TOO_COMMON = 50
-MAX_DATE_LOOKUPS = 5  # other repos whose creation date is compared with the student's repo
-LABEL = "Code not found in other repositories"
+MAX_DATE_LOOKUPS = 5  # matching files whose first-appearance date is compared with the candidate's file
+EARLIER_MARGIN = timedelta(days=1)  # same-day matches are not treated as earlier
+LABEL = "Earlier public source"
 BOILERPLATE = re.compile(
     r"^(import |from \S+ import |#include|package |using |export \* |require\(|//|#|/\*|\*)"
 )
@@ -65,12 +71,39 @@ def _code_search(client: httpx.Client, query: str) -> dict[str, Any] | None:
     return data
 
 
-def _found_in_repo(client: httpx.Client, line: str, full_name: str) -> bool | None:
-    """Whether `line` appears in one specific repository; None when the search failed."""
-    data = _code_search(client, f'"{line}" repo:{full_name}')
-    if data is None:
+def _normalise(line: str) -> str:
+    """The form `_distinctive_lines` searches for."""
+    return line.strip()[:120].replace('"', " ")
+
+
+def _file_contains(client: httpx.Client, full_name: str, path: str, line: str) -> bool | None:
+    """Whether the other repository's file contains `line`; None when it couldn't be read."""
+    try:
+        response = client.get(
+            f"{API_ROOT}/repos/{full_name}/contents/{quote(path, safe='/')}",
+            headers={"Accept": "application/vnd.github.raw+json"},
+        )
+        response.raise_for_status()
+        text = response.text
+    except (httpx.HTTPError, ValueError):
         return None
-    return bool(data.get("total_count") or data.get("items"))
+    return any(_normalise(other) == line for other in text.splitlines())
+
+
+def _file_first_seen(client: httpx.Client, full_name: str, path: str) -> str | None:
+    """When the matching file first appeared in the other repository (its oldest commit)."""
+    owner, _, repo = full_name.partition("/")
+    return oldest_commit_date(client, owner, repo, path)
+
+
+def _parse_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _search(client: httpx.Client, line: str, username: str) -> dict[str, Any] | None:
@@ -85,18 +118,11 @@ def _search(client: httpx.Client, line: str, username: str) -> dict[str, Any] | 
             continue
         if any(other["repo"] == repository.get("full_name") for other in others):
             continue
-        others.append({"repo": repository.get("full_name"), "url": item.get("html_url")})
+        others.append({
+            "repo": repository.get("full_name"), "url": item.get("html_url"), "path": item.get("path"),
+        })
     total = data.get("total_count", 0) - (len(data.get("items", [])) - len(others))
     return {"total": max(total, len(others)), "matches": others}
-
-
-def _repo_created_at(client: httpx.Client, full_name: str) -> str | None:
-    try:
-        response = client.get(f"{API_ROOT}/repos/{full_name}")
-        response.raise_for_status()
-        return response.json().get("created_at")
-    except (httpx.HTTPError, ValueError):
-        return None
 
 
 def _spend(budget: dict[str, int] | None) -> bool:
@@ -114,13 +140,26 @@ def _not_checked_for_budget() -> dict[str, Any]:
             "detail": f"Not checked (search limit of {MAX_SEARCHES} searches per passport)."}
 
 
+def earlier_source_detail(source_repo: str, source_first_seen: str, candidate_first_seen: str) -> str:
+    return (
+        f"Matches code that appeared in {source_repo} on {source_first_seen[:10]}, before this file's "
+        f"first commit here ({candidate_first_seen[:10]}). Not counted as the candidate's own work. "
+        "This may be legitimate reuse; review if relevant."
+    )
+
+
 def copy_signal(
     evidence: dict[str, Any],
     client: httpx.Client | None,
     username: str,
-    repo_created_at: str | None = None,
+    candidate_first_seen: str | None = None,
     budget: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    """Compare a citation with matching code elsewhere, by when each *file* first appeared.
+
+    Repo creation dates are not used: a repo created earlier may have added the code later
+    (possibly from the candidate). Unknown dates never lead to an exclusion.
+    """
     if client is None:
         return {"id": "copy_match", "label": LABEL, "status": "unknown",
                 "detail": "Not checked (GitHub code search needs a token, and is limited per minute)."}
@@ -142,48 +181,56 @@ def copy_signal(
         return {"id": "copy_match", "label": LABEL, "status": "unknown",
                 "detail": f"The searched line appears in {total} repositories; too common to judge."}
     plural = "y" if total == 1 else "ies"
-    # Only a repo that existed before the student's repo can be the source of a copy;
-    # later repos may have copied from the student.
+    candidate = _parse_date(candidate_first_seen)
     looked_up = result["matches"][:MAX_DATE_LOOKUPS]
-    older, older_created, unknown = [], {}, 0
+    earlier, undetermined = [], 0
     for match in looked_up:
-        created = _repo_created_at(client, match["repo"]) if repo_created_at else None
-        if created is None:
-            unknown += 1
-        elif created < repo_created_at:
-            older.append(match)
-            older_created[match["repo"]] = created
-    if older:
-        # Confirm with a second, different line from the same citation in the oldest match.
-        source = min(older, key=lambda match: older_created[match["repo"]])
-        if len(lines) > 1 and _spend(budget) and _found_in_repo(client, lines[1], source["repo"]):
+        other_seen = (
+            _file_first_seen(client, match["repo"], match["path"])
+            if candidate and match.get("path") else None
+        )
+        other = _parse_date(other_seen)
+        if other is None:
+            undetermined += 1  # unknown date: never an exclusion
+        elif other < candidate - EARLIER_MARGIN:
+            earlier.append((other, other_seen, match))
+    if earlier:
+        # Two different lines from the citation must be in that same, earlier file.
+        _, source_seen, source = min(earlier, key=lambda item: item[0])
+        if len(lines) > 1 and _file_contains(client, source["repo"], source["path"], lines[1]):
             return {"id": "copy_match", "label": LABEL, "status": "warn",
-                    "detail": f"Two different cited lines were found in {source['repo']}, "
-                              f"created {older_created[source['repo']][:10]}, before this repository "
-                              f"({repo_created_at[:10]}).",
-                    "matches": older[:3],
-                    "confirmed_copy": True,
+                    "detail": earlier_source_detail(source["repo"], source_seen, candidate_first_seen),
+                    "matches": [match for _, _, match in earlier][:3],
+                    "earlier_source": True,
                     "source_repo": source["repo"],
                     "source_url": source.get("url") or f"https://github.com/{source['repo']}",
-                    "source_created_at": older_created[source["repo"]]}
+                    "source_first_seen": source_seen,
+                    "candidate_first_seen": candidate_first_seen}
         return {"id": "copy_match", "label": LABEL, "status": "warn",
-                "detail": f"A cited line also appears in {total} other repositor{plural}, "
-                          f"including {len(older)} created before this one. Check whether it was copied.",
-                "matches": older[:3]}
-    if not unknown and total <= len(looked_up):
+                "detail": f"A cited line also appears in {total} other repositor{plural}, including "
+                          f"{len(earlier)} where the file appeared before this file's first commit here. "
+                          "Only one line matched, so it still counts; review if relevant.",
+                "matches": [match for _, _, match in earlier][:3]}
+    if undetermined:
+        return {"id": "copy_match", "label": LABEL, "status": "warn",
+                "detail": f"A cited line also appears in {total} other repositor{plural}; it could not be "
+                          "determined which file appeared first, so it still counts. Review if relevant.",
+                "matches": result["matches"][:3]}
+    if total <= len(looked_up):
         return {"id": "copy_match", "label": LABEL, "status": "ok",
-                "detail": f"A cited line also appears in {total} other repositor{plural}, all created "
-                          "after this one (they may have copied from it)."}
+                "detail": f"A cited line also appears in {total} other repositor{plural}, where the file "
+                          "appeared after (or within a day of) this file's first commit here."}
     return {"id": "copy_match", "label": LABEL, "status": "unknown",
             "detail": f"A cited line also appears in {total} other repositor{plural}; "
-                      "could not confirm which came first.",
+                      "not all of them could be compared.",
             "matches": result["matches"][:3]}
 
 
 def add_copy_signals(
-    skills: list[dict[str, Any]], username: str, repo_created: dict[str, str] | None = None
+    skills: list[dict[str, Any]], username: str, first_seen: dict[str, str] | None = None
 ) -> None:
-    """Attach a copy_match signal to verified code evidence, most important first, within the search budget."""
+    """`first_seen` maps "repo/path" to when that file first appeared in the candidate's repo."""
+    # Attach a copy_match signal to verified code evidence, most important first, within the search budget.
     code_items = [
         item for skill in skills for item in skill.get("evidence", [])
         if item.get("type") == "code" and "integrity" in item
@@ -205,5 +252,7 @@ def add_copy_signals(
     with httpx.Client(headers=headers, timeout=httpx.Timeout(20.0, connect=10.0)) as client:
         for item in code_items:
             item["integrity"].append(
-                copy_signal(item, client, username, (repo_created or {}).get(item["repo"]), budget)
+                copy_signal(
+                    item, client, username, (first_seen or {}).get(f"{item['repo']}/{item['file_path']}"), budget,
+                )
             )

@@ -271,6 +271,32 @@ def test_coverage_counts_files_dropped_by_the_prompt_line_cap(monkeypatch) -> No
     assert any("Tree truncated for repo r" in note for note in coverage["notes"])
 
 
+def test_oldest_commit_date_follows_the_last_page(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_get(client, url, **kwargs):
+        params = kwargs["params"]
+        calls.append(params)
+        response = FakeResponse([user_commit("x", "2025-05-05T00:00:00Z" if "page" not in params else "2021-02-03T00:00:00Z")])
+        if "page" not in params:
+            response.headers["Link"] = '<https://api.github.com/x?path=a.py&per_page=1&page=37>; rel="last"'
+        return response
+
+    monkeypatch.setattr(github_ingest, "_get", fake_get)
+    assert github_ingest.oldest_commit_date(object(), "o", "r", "a.py") == "2021-02-03T00:00:00Z"
+    assert calls[1]["page"] == 37
+
+    # No Link header: the single commit returned is the oldest.
+    monkeypatch.setattr(github_ingest, "_get", lambda client, url, **kwargs: FakeResponse([user_commit("x", "2020-01-01T00:00:00Z")]))
+    assert github_ingest.oldest_commit_date(object(), "o", "r", "a.py") == "2020-01-01T00:00:00Z"
+
+    def fail(*_args, **_kwargs):
+        raise GitHubIngestError("GitHub API returned 404: nope")
+
+    monkeypatch.setattr(github_ingest, "_get", fail)
+    assert github_ingest.oldest_commit_date(object(), "o", "r", "a.py") is None
+
+
 def test_only_real_rate_limits_are_rate_limit_errors() -> None:
     class Response:
         def __init__(self, status: int, message: str, remaining: str) -> None:

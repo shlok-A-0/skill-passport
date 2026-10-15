@@ -409,25 +409,30 @@ def test_integrity_signals_pass_for_incremental_own_work() -> None:
     assert {item["status"] for item in signals.values()} == {"ok"}
 
 
-def test_copy_check_warns_only_when_the_other_repo_is_older(monkeypatch) -> None:
+def test_copy_check_compares_when_the_files_first_appeared(monkeypatch) -> None:
     from app.services import copy_check
 
     monkeypatch.setattr(
         copy_check, "_search",
-        lambda client, line, username: {"total": 1, "matches": [{"repo": "x/y", "url": "u"}]},
+        lambda client, line, username: {"total": 1, "matches": [{"repo": "x/y", "url": "u", "path": "a.py"}]},
     )
     evidence = {"snippet": "    return calculate_invoice_total(order_items, tax_rate)"}
     mine = "2024-06-01T00:00:00Z"
-    monkeypatch.setattr(copy_check, "_repo_created_at", lambda client, name: "2023-01-01T00:00:00Z")
+    monkeypatch.setattr(copy_check, "_file_first_seen", lambda client, name, path: "2023-01-01T00:00:00Z")
     signal = copy_check.copy_signal(evidence, object(), "student", mine)
-    assert signal["status"] == "warn" and signal["matches"]
-    # The other repo is newer: it may have copied from the student, so no warning.
-    monkeypatch.setattr(copy_check, "_repo_created_at", lambda client, name: "2025-01-01T00:00:00Z")
+    assert signal["status"] == "warn" and signal["matches"] and not signal.get("earlier_source")
+    # The other file appeared later: it may have been taken from the student, so it's fine.
+    monkeypatch.setattr(copy_check, "_file_first_seen", lambda client, name, path: "2025-01-01T00:00:00Z")
     assert copy_check.copy_signal(evidence, object(), "student", mine)["status"] == "ok"
-    # Without the student's repo date, the order can't be judged.
-    assert copy_check.copy_signal(evidence, object(), "student")["status"] == "unknown"
+    # Same day is not "earlier" (1-day margin).
+    monkeypatch.setattr(copy_check, "_file_first_seen", lambda client, name, path: "2024-05-31T12:00:00Z")
+    assert copy_check.copy_signal(evidence, object(), "student", mine)["status"] == "ok"
+    # Without the student's file date, the order can't be judged: advisory warning only.
+    signal = copy_check.copy_signal(evidence, object(), "student")
+    assert signal["status"] == "warn" and not signal.get("earlier_source")
     assert copy_check.copy_signal({"snippet": "import os"}, object(), "student")["status"] == "unknown"
     assert copy_check.copy_signal(evidence, None, "student")["status"] == "unknown"
+    assert copy_check.LABEL == "Earlier public source"
 
 
 def test_ai_chat_leftover_is_flagged_with_its_line() -> None:
@@ -665,7 +670,8 @@ COPIED_LINES = [
     "def invoice_total(invoice_id):",
     "    return calculate_invoice_total(load_items(invoice_id), tax_rate=0.18)",
 ]
-OLDER_REPO_URL = "https://github.com/original/invoices/blob/main/app.py"
+OLDER_REPO_URL = "https://github.com/original/invoices/blob/main/src/app.py"
+CANDIDATE_FIRST_SEEN = "2024-06-01T00:00:00Z"
 
 
 def copy_ingestion(**repo_overrides: object) -> dict:
@@ -680,32 +686,39 @@ def copy_ingestion(**repo_overrides: object) -> dict:
 
 
 def run_copy_check(
-    monkeypatch, ingestion: dict, *, other_created: str, second_found: bool = True,
+    monkeypatch, ingestion: dict, *, other_file_seen: str | None, second_found: bool = True,
     search_error: bool = False, resume_skills: list | None = None,
+    candidate_first_seen: str | None = CANDIDATE_FIRST_SEEN,
 ) -> dict:
     from app.services import copy_check
-    from app.services.verifier import exclude_confirmed_copies
+    from app.services.verifier import exclude_earlier_sources
 
     queries: list[str] = []
+    checked: list[tuple[str, str, str]] = []
 
     def fake_search(client, query):
         queries.append(query)
         if search_error:
             return None
-        if " repo:" in query:
-            return {"total_count": int(second_found), "items": []}
         return {"total_count": 1, "items": [{
             "repository": {"full_name": "original/invoices", "owner": {"login": "original"}, "fork": False},
-            "html_url": OLDER_REPO_URL,
+            "html_url": OLDER_REPO_URL, "path": "src/app.py",
         }]}
+
+    def fake_contains(client, full_name, path, line):
+        checked.append((full_name, path, line))
+        return second_found
 
     monkeypatch.setattr(copy_check, "GITHUB_TOKEN", "test-token")
     monkeypatch.setattr(copy_check, "_code_search", fake_search)
-    monkeypatch.setattr(copy_check, "_repo_created_at", lambda client, name: other_created)
+    monkeypatch.setattr(copy_check, "_file_first_seen", lambda client, name, path: other_file_seen)
+    monkeypatch.setattr(copy_check, "_file_contains", fake_contains)
     verified = verify_claims([claim(end_line=5)], ingestion, resume_skills=resume_skills)
-    copy_check.add_copy_signals(verified["skills"], "student", {"demo-api": "2024-06-01T00:00:00Z"})
-    exclude_confirmed_copies(verified, ingestion["repos"])
+    first_seen = {"demo-api/app.py": candidate_first_seen} if candidate_first_seen else {}
+    copy_check.add_copy_signals(verified["skills"], "student", first_seen)
+    exclude_earlier_sources(verified, ingestion["repos"])
     verified["queries"] = queries
+    verified["checked"] = checked
     return verified
 
 
@@ -718,44 +731,67 @@ def _copy_signal(skill: dict) -> dict:
     return next(signal for signal in code["integrity"] if signal["id"] == "copy_match")
 
 
-def test_confirmed_copy_in_older_repo_is_excluded_and_level_drops(monkeypatch) -> None:
-    verified = run_copy_check(monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z")
+def _excluded(verified: dict) -> list[dict]:
+    return [item for item in verified["rejected_claims"] if item.get("kind") == "earlier_source"]
+
+
+def test_earlier_file_with_both_lines_is_excluded_with_neutral_wording(monkeypatch) -> None:
+    verified = run_copy_check(monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z")
     flask = _skill(verified, "flask")
     assert flask["level"] == "Used"  # was Demonstrated; only requirements.txt remains
     assert not [item for item in flask["evidence"] if item["type"] == "code"]
-    copied = [item for item in verified["rejected_claims"] if item["kind"] == "copied"]
-    assert len(copied) == 1
-    assert copied[0]["failed_checks"] == ["not_copied"]
-    assert copied[0]["source_url"] == OLDER_REPO_URL
-    assert copied[0]["claim"]["file_path"] == "app.py"
-    assert "original/invoices, created 2023-01-01" in copied[0]["reason"]
-    assert "(created 2024-06-01)" in copied[0]["reason"]
-    # The second search uses a different line, restricted to the older repo.
-    assert len(verified["queries"]) == 2 and verified["queries"][1].endswith("repo:original/invoices")
-    assert verified["queries"][0].split('"')[1] != verified["queries"][1].split('"')[1]
+    excluded = _excluded(verified)
+    assert len(excluded) == 1
+    assert excluded[0]["failed_checks"] == ["earlier_source"]
+    assert excluded[0]["source_url"] == OLDER_REPO_URL
+    assert excluded[0]["source_first_seen"] == "2023-01-01T00:00:00Z"
+    assert excluded[0]["candidate_first_seen"] == CANDIDATE_FIRST_SEEN
+    assert excluded[0]["url"] == "https://github.com/student/demo-api/blob/abc123/app.py#L1-L5"
+    assert excluded[0]["reason"] == (
+        "Matches code that appeared in original/invoices on 2023-01-01, before this file's first commit "
+        "here (2024-06-01). Not counted as the candidate's own work. This may be legitimate reuse; "
+        "review if relevant."
+    )
+    assert not any(word in excluded[0]["reason"].lower() for word in ("copied", "fraud", "fake", "cheat"))
+    # The second line is checked in that same file, and it differs from the searched line.
+    assert len(verified["queries"]) == 1
+    assert verified["checked"][0][:2] == ("original/invoices", "src/app.py")
+    assert verified["checked"][0][2] != verified["queries"][0].split('"')[1]
 
 
-def test_older_repo_without_second_line_match_is_only_a_warning(monkeypatch) -> None:
+def test_repo_created_earlier_but_file_added_later_is_not_excluded(monkeypatch) -> None:
+    # Whatever the other repo's creation date, only when its *file* appeared matters.
+    verified = run_copy_check(monkeypatch, copy_ingestion(), other_file_seen="2025-03-01T00:00:00Z")
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Demonstrated"
+    assert _copy_signal(flask)["status"] == "ok"
+    assert not _excluded(verified)
+
+
+def test_earlier_file_without_second_line_match_is_only_a_warning(monkeypatch) -> None:
     verified = run_copy_check(
-        monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z", second_found=False,
+        monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z", second_found=False,
     )
     flask = _skill(verified, "flask")
     assert flask["level"] == "Demonstrated"
     signal = _copy_signal(flask)
-    assert signal["status"] == "warn" and not signal.get("confirmed_copy")
-    assert not [item for item in verified["rejected_claims"] if item.get("kind") == "copied"]
+    assert signal["status"] == "warn" and not signal.get("earlier_source")
+    assert not _excluded(verified)
 
 
-def test_newer_repo_match_still_counts(monkeypatch) -> None:
-    verified = run_copy_check(monkeypatch, copy_ingestion(), other_created="2025-01-01T00:00:00Z")
-    flask = _skill(verified, "flask")
-    assert flask["level"] == "Demonstrated"
-    assert _copy_signal(flask)["status"] == "ok"
+def test_unknown_file_date_is_a_warning_only(monkeypatch) -> None:
+    for kwargs in ({"other_file_seen": None}, {"other_file_seen": "2023-01-01T00:00:00Z", "candidate_first_seen": None}):
+        verified = run_copy_check(monkeypatch, copy_ingestion(), **kwargs)
+        flask = _skill(verified, "flask")
+        assert flask["level"] == "Demonstrated"
+        signal = _copy_signal(flask)
+        assert signal["status"] == "warn" and not signal.get("earlier_source")
+        assert not _excluded(verified)
 
 
 def test_search_error_still_counts_with_unknown_signal(monkeypatch) -> None:
     verified = run_copy_check(
-        monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z", search_error=True,
+        monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z", search_error=True,
     )
     flask = _skill(verified, "flask")
     assert flask["level"] == "Demonstrated"
@@ -764,16 +800,16 @@ def test_search_error_still_counts_with_unknown_signal(monkeypatch) -> None:
 
 def test_skill_losing_only_code_evidence_drops_from_applied_to_used(monkeypatch) -> None:
     ingestion = copy_ingestion(test_files=[], config_files=[], config_contents={})
-    verified = run_copy_check(monkeypatch, ingestion, other_created="2023-01-01T00:00:00Z")
+    verified = run_copy_check(monkeypatch, ingestion, other_file_seen="2023-01-01T00:00:00Z")
     assert _skill(verified, "flask")["level"] == "Used"
 
 
 def test_skill_losing_all_evidence_is_removed_or_kept_as_claimed(monkeypatch) -> None:
     ingestion = copy_ingestion(dependency_contents={})
-    verified = run_copy_check(monkeypatch, ingestion, other_created="2023-01-01T00:00:00Z")
+    verified = run_copy_check(monkeypatch, ingestion, other_file_seen="2023-01-01T00:00:00Z")
     assert _skill(verified, "flask") is None
     verified = run_copy_check(
-        monkeypatch, copy_ingestion(dependency_contents={}), other_created="2023-01-01T00:00:00Z",
+        monkeypatch, copy_ingestion(dependency_contents={}), other_file_seen="2023-01-01T00:00:00Z",
         resume_skills=[{"skill_id": "flask", "mention": "Flask"}],
     )
     flask = _skill(verified, "flask")

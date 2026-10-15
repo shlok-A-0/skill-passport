@@ -247,9 +247,9 @@ footer span { display: flex; gap: 5px; align-items: center; margin-left: 24px; }
 .verify-medium { background: #fff4d6; color: #8a6300; }
 .verify-low { background: #fde8e4; color: #a44b40; }
 .verify-not-checked { background: #f0f1f4; color: #8A8F9C; }
-.copied-excluded { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; color: #a44b40; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.earlier-sources { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; color: #a44b40; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .rejected-item a { color: #F26B1D; font-size: 10px; font-weight: 700; }
-.copied-tag { margin-right: 6px; border-radius: 4px; padding: 1px 5px; background: #fde8e4; color: #a44b40; font-size: 9px; }
+.earlier-source-tag { margin-right: 6px; border-radius: 4px; padding: 1px 5px; background: #fde8e4; color: #a44b40; font-size: 9px; }
 .review-summary { margin-top: 10px; }
 .coverage { margin-top: 6px; font-size: 11px; color: #5b6377; }
 .coverage-line { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }

@@ -1,21 +1,22 @@
 import { ArrowUpRight } from "lucide-react";
-import type { RejectedClaim } from "../api";
+import { EARLIER_SOURCE_KINDS, type RejectedClaim } from "../api";
 import { skillName } from "../skillNames";
 
 export type Audience = "student" | "recruiter";
 
 function ClaimItem({ item }: { item: RejectedClaim }) {
   const claim = item.claim ?? {};
+  const earlier = EARLIER_SOURCE_KINDS.has(item.kind ?? "");
   return (
     <article className="rejected-item">
       <strong>
-        {item.kind === "copied" && <span className="copied-tag">EXCLUDED · COPIED</span>}
+        {earlier && <span className="earlier-source-tag">EARLIER PUBLIC SOURCE</span>}
         {skillName(String(claim.skill_id))} · {String(claim.repo)}/{String(claim.file_path)}
         {claim.start_line ? ` · L${String(claim.start_line)}–L${String(claim.end_line)}` : ""}
       </strong>
       <p>{item.reason}</p>
-      {item.failed_checks && <small>Failed checks: {item.failed_checks.join(", ")}</small>}
-      {item.source_url && <p><a href={item.source_url} target="_blank" rel="noreferrer">View original <ArrowUpRight size={11} /></a></p>}
+      {item.failed_checks && !earlier && <small>Failed checks: {item.failed_checks.join(", ")}</small>}
+      {item.source_url && <p><a href={item.source_url} target="_blank" rel="noreferrer">View earlier source <ArrowUpRight size={11} /></a></p>}
     </article>
   );
 }
@@ -27,7 +28,7 @@ function ClaimItem({ item }: { item: RejectedClaim }) {
 export default function RejectedClaims({ claims, audience }: { claims: RejectedClaim[]; audience: Audience }) {
   const review = claims.filter((item) => item.kind === "review");
   const listed = audience === "student"
-    ? claims.filter((item) => item.kind !== "review" && item.kind !== "copied")
+    ? claims.filter((item) => item.kind !== "review" && !EARLIER_SOURCE_KINDS.has(item.kind ?? ""))
     : claims.filter((item) => item.kind !== "review");
   const title = audience === "student" ? "Rejected AI claims" : "Rejected and excluded claims";
   return (

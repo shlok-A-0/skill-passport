@@ -12,7 +12,7 @@ from app.services.jobs import complete_job, fail_job, update_job
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
-from app.services.verifier import exclude_confirmed_copies, verify_claims
+from app.services.verifier import exclude_earlier_sources, verify_claims
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +87,15 @@ def build_passport(
     add_copy_signals(
         verified["skills"],
         ingestion["username"],
-        {repo["name"]: repo.get("created_at") for repo in ingestion["repos"] if repo.get("created_at")},
+        {
+            f"{repo['name']}/{path}": source["first_commit_date"]
+            for repo in ingestion["repos"]
+            for path, source in repo.get("source_files", {}).items()
+            if source.get("first_commit_date")
+        },
     )
-    # Confirmed copies are removed before role matching, so the match sees the final levels.
-    exclude_confirmed_copies(verified, ingestion["repos"])
+    # Earlier-source matches are removed before role matching, so the match sees the final levels.
+    exclude_earlier_sources(verified, ingestion["repos"])
     progress("Matching role")
     coverage = build_coverage(ingestion)
     role_match = match_role(verified["skills"], target_role, coverage)
@@ -138,7 +143,7 @@ def build_passport(
         "generation_error": generation_error,
     }
     if existing:
-        # Union of old and new skills, after confirmed copies were excluded; a skill
+        # Union of old and new skills, after earlier sources were excluded; a skill
         # that is absent on one side counts as Claimed (no evidence).
         new_levels = {item["skill_id"]: item["level"] for item in passport["skills"]}
         passport["level_changes"] = [

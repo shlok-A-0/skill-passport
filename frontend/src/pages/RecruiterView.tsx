@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import LadderPill from "../components/LadderPill";
-import { verifiability } from "../verifiability";
+import { earlierSourcesText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
 
 const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -47,7 +47,7 @@ export default function RecruiterView() {
         <div>
           <div className="eyebrow">RECRUITER VIEW · EVIDENCE-BACKED SUMMARY</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
-          <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.copiedExcluded > 0 && <span className="copied-excluded"><AlertTriangle size={11} /> {verify.copiedExcluded} copied citation{verify.copiedExcluded === 1 ? "" : "s"} excluded</span>}</p>
+          <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}</p>
           <CoverageSummary coverage={passport.coverage} />
         </div>
         <div className="recruiter-actions">

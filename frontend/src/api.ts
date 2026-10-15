@@ -23,22 +23,31 @@ export type IntegritySignal = {
   status: "ok" | "warn" | "unknown";
   detail: string;
   matches?: { repo: string; url: string }[];
-  confirmed_copy?: boolean;
+  earlier_source?: boolean;
   source_repo?: string;
   source_url?: string;
-  source_created_at?: string;
+  source_first_seen?: string;
+  candidate_first_seen?: string;
 };
 
+/** "copied" is the legacy name stored in older passports; both mean an earlier public source. */
+export const EARLIER_SOURCE_KINDS = new Set(["earlier_source", "copied"]);
+
 /**
- * "unsupported": failed a verification check. "copied": excluded as a confirmed copy
- * (review endpoints only). "review": the student-safe summary of copied items, no details.
+ * "unsupported": failed a verification check. "earlier_source" (legacy "copied"): matches code
+ * that appeared earlier elsewhere, so it isn't counted as the candidate's own work.
+ * "review": the student-safe summary of excluded items.
  */
 export type RejectedClaim = {
   claim?: Record<string, unknown>;
   failed_checks?: string[];
   reason: string;
-  kind?: "unsupported" | "copied" | "review";
+  kind?: "unsupported" | "earlier_source" | "copied" | "review";
+  url?: string;
+  source_repo?: string;
   source_url?: string;
+  source_first_seen?: string;
+  candidate_first_seen?: string;
   count?: number;
 };
 

@@ -53,7 +53,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 4
+CACHE_SCHEMA_VERSION = 5
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -394,6 +394,32 @@ def _user_commits(
     return result, len(commits) < HISTORY_PAGE_SIZE
 
 
+def _commit_date(commit: dict[str, Any]) -> str | None:
+    details = commit.get("commit") or {}
+    return (details.get("author") or {}).get("date") or (details.get("committer") or {}).get("date")
+
+
+def oldest_commit_date(client: httpx.Client, owner: str, repo: str, path: str) -> str | None:
+    """When `path` first appeared in the repo: the date of its oldest commit, or None if unknown.
+
+    Uses a 1-per-page listing and follows the Link rel="last" page; without a Link header the
+    single commit returned is the oldest. Path history doesn't follow renames, so callers must
+    treat None (or a later date) as "not earlier".
+    """
+    url = f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits"
+    try:
+        response = _get(client, url, params={"path": path, "per_page": 1})
+        last = re.search(r'[?&]page=(\d+)>; rel="last"', response.headers.get("Link", ""))
+        if last:
+            response = _get(client, url, params={"path": path, "per_page": 1, "page": int(last.group(1))})
+        commits = response.json()
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(commits, list) or not commits:
+        return None
+    return _commit_date(commits[-1])
+
+
 def _file_history(
     client: httpx.Client, owner: str, repo: str, path: str, username: str
 ) -> dict[str, Any] | None:
@@ -424,6 +450,7 @@ def _file_history(
     if not complete:
         return history
     creator = commits[-1]
+    history["first_commit_date"] = _commit_date(creator)
     history["creator_login"] = _commit_login(creator)
     history["creator_sha"] = creator.get("sha")
     try:
@@ -609,13 +636,17 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     raise
                 except GitHubIngestError:
                     commits = []  # authorship unknown: the claim's "authored" check fails
+                history = _file_history(client, owner, name, path, username)
                 source_files[path] = {
                     "content": content,
                     "lines": lines,
                     "authored_shas": commits,
                     "line_count": len(lines),
-                    "history": _file_history(client, owner, name, path, username),
+                    "history": history,
                     "blame": _file_blame(client, owner, name, head_sha, path),
+                    # When this file first appeared here; compared with matches found elsewhere.
+                    "first_commit_date": (history or {}).get("first_commit_date")
+                    or (oldest_commit_date(client, owner, name, path) if history else None),
                 }
 
             authored_paths = _authored_paths(

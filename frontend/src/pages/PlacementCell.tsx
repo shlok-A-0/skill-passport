@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
-import { latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
+import { earlierSourcesText, latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
 function VerifyPill({ verify }: { verify: Verifiability }) {
   return (
@@ -115,7 +115,7 @@ export default function PlacementCell() {
                     <td><Link to={`/passport/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div></td>
                     <td>{row.mustMet} of {row.mustTotal}</td>
                     <td>{row.met} of {requirements.length}</td>
-                    <td><VerifyPill verify={row.verify} />{row.verify.copiedExcluded > 0 && <div className="copied-excluded"><AlertTriangle size={11} /> {row.verify.copiedExcluded} copied citation{row.verify.copiedExcluded === 1 ? "" : "s"} excluded</div>}</td>
+                    <td><VerifyPill verify={row.verify} />{row.verify.earlierSources > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(row.verify.earlierSources)}</div>}</td>
                     <td className="rank-flags">
                       {row.verify.tier === "Not checked" ? <span className="muted">Run Re-check to collect signals</span>
                         : row.verify.warnings.length === 0 ? <span className="flag-ok"><ShieldCheck size={12} /> None</span>
@@ -129,7 +129,7 @@ export default function PlacementCell() {
                 ))}</tbody>
               </table>
             </div>
-            <p className="ranking-note">Verifiability counts advisory authorship checks (line authorship, commit history, bulk uploads, copies found elsewhere, AI chat text left in files). A warning is a prompt to look, not proof of copying. Unverified resume claims never count towards requirements.</p>
+            <p className="ranking-note">Verifiability counts advisory authorship checks (line authorship, commit history, bulk uploads, matching code in earlier public sources, AI chat text left in files). A warning is a prompt to look, not a finding. Unverified resume claims never count towards requirements.</p>
           </>
         )}
       </section>

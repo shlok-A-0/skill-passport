@@ -16,6 +16,7 @@ from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import create_job, get_job
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import get_passport, list_passports
+from app.services.verifier import EARLIER_SOURCE_KINDS
 
 app = FastAPI(title="Skill Passport", version="0.1.0")
 app.add_middleware(
@@ -39,14 +40,14 @@ def student_view(passport: dict[str, Any]) -> dict[str, Any]:
         for question in entry.get("questions", []):
             question.pop("good_answer_mentions", None)
     rejected = view.get("rejected_claims", [])
-    copied = sum(1 for item in rejected if item.get("kind") == "copied")
-    view["rejected_claims"] = [item for item in rejected if item.get("kind") != "copied"]
-    if copied:
-        noun = "citation was" if copied == 1 else "citations were"
+    excluded = sum(1 for item in rejected if item.get("kind") in EARLIER_SOURCE_KINDS)
+    view["rejected_claims"] = [item for item in rejected if item.get("kind") not in EARLIER_SOURCE_KINDS]
+    if excluded:
+        noun = "citation was" if excluded == 1 else "citations were"
         view["rejected_claims"].append({
             "kind": "review",
-            "count": copied,
-            "reason": f"{copied} {noun} not counted after authorship review.",
+            "count": excluded,
+            "reason": f"{excluded} {noun} not counted after authorship review.",
         })
     return view
 

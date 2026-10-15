@@ -1,4 +1,4 @@
-import type { IntegritySignal, Passport } from "./api";
+import { EARLIER_SOURCE_KINDS, type IntegritySignal, type Passport } from "./api";
 
 export type Verifiability = {
   tier: "High" | "Medium" | "Low" | "Not checked";
@@ -6,7 +6,8 @@ export type Verifiability = {
   checked: number;
   warnings: { signal: IntegritySignal; where: string }[];
   codeSkills: number;
-  copiedExcluded: number;
+  /** Citations not counted because they match code that appeared earlier elsewhere. */
+  earlierSources: number;
 };
 
 const levelOrder: Record<string, number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -35,8 +36,7 @@ export function verifiability(passport: Passport): Verifiability {
   const all = [...seen.values()].filter(({ signal }) => signal.status !== "unknown");
   const warnings = all.filter(({ signal }) => signal.status === "warn");
   const passed = all.length - warnings.length;
-  // Citations excluded because the same code was confirmed in an older repository.
-  const copiedExcluded = passport.rejected_claims.filter((item) => item.kind === "copied").length;
+  const earlierSources = passport.rejected_claims.filter((item) => EARLIER_SOURCE_KINDS.has(item.kind ?? "")).length;
   let tier: Verifiability["tier"] = "Not checked";
   if (all.length) {
     const serious = warnings.some(({ signal }) => SERIOUS.has(signal.id));
@@ -44,11 +44,15 @@ export function verifiability(passport: Passport): Verifiability {
     else if (serious || warnings.length / all.length > 0.25) tier = "Low";
     else tier = "Medium";
   }
-  if (copiedExcluded) tier = "Low";
-  return { tier, passed, checked: all.length, warnings, codeSkills, copiedExcluded };
+  if (earlierSources) tier = "Low";
+  return { tier, passed, checked: all.length, warnings, codeSkills, earlierSources };
 }
 
-type Requirement = { skill_id: string; min_level: string; importance: string };
+export function earlierSourcesText(count: number): string {
+  return `${count} citation${count === 1 ? "" : "s"} matched earlier public sources`;
+}
+
+type Requirement ={ skill_id: string; min_level: string; importance: string };
 
 export function requirementsMet(passport: Passport, requirements: Requirement[]) {
   const met = requirements.filter((requirement) => {

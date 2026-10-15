@@ -157,6 +157,18 @@ def test_student_endpoints_hide_fraud_signals(tmp_path, monkeypatch) -> None:
     assert rejected[1] == {"kind": "review", "count": 2, "reason": "2 citations were not counted after authorship review."}
 
 
+def test_new_and_legacy_earlier_source_kinds_are_both_handled(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = passport_with_fraud_signals("p-kinds")
+    passport["rejected_claims"][2]["kind"] = "earlier_source"  # one new-style, one legacy "copied"
+    storage.save_passport(passport)
+    rejected = client.get("/passport/p-kinds").json()["rejected_claims"]
+    assert [item["kind"] for item in rejected] == ["unsupported", "review"]
+    assert rejected[1]["count"] == 2
+    review = client.get("/passport/p-kinds/review").json()["rejected_claims"]
+    assert {item["kind"] for item in review} == {"unsupported", "copied", "earlier_source"}
+
+
 def test_review_endpoints_return_full_passport(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review/review").json(), client.get("/passports/review").json()):

@@ -133,8 +133,9 @@ def test_recheck_reports_new_skills_when_the_old_passport_had_none(monkeypatch) 
 def test_level_changes_are_computed_after_copy_exclusion(monkeypatch) -> None:
     copied = {
         "type": "code", "repo": "demo", "file_path": "a.py", "start_line": 1, "end_line": 2,
-        "integrity": [{"id": "copy_match", "status": "warn", "confirmed_copy": True,
-                       "source_repo": "o/r", "source_url": "u", "source_created_at": "2020-01-01"}],
+        "integrity": [{"id": "copy_match", "status": "warn", "earlier_source": True,
+                       "source_repo": "o/r", "source_url": "u", "source_first_seen": "2020-01-01",
+                       "candidate_first_seen": "2024-01-01", "detail": "Matches code that appeared in o/r"}],
     }
     _stub_pipeline(monkeypatch, {**EXISTING, "skills": [{"skill_id": "python", "level": "Applied"}]}, [
         {"skill_id": "python", "level": "Applied", "evidence": [copied], "resume_mention": "Python"},

@@ -6,7 +6,7 @@ import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims from "../components/RejectedClaims";
-import { verifiability } from "../verifiability";
+import { earlierSourcesText, verifiability } from "../verifiability";
 
 const levelOrder: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 
@@ -41,7 +41,7 @@ export default function RecruiterEvidence() {
           <p>
             Candidate for <strong>{passport.target_role}</strong> ·{" "}
             <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>
-            {verify.copiedExcluded > 0 && <span className="copied-excluded"><AlertTriangle size={11} /> {verify.copiedExcluded} copied citation{verify.copiedExcluded === 1 ? "" : "s"} excluded</span>}
+            {verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}
           </p>
           <CoverageSummary coverage={passport.coverage} />
         </div>

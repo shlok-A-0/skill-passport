@@ -629,34 +629,37 @@ def compute_level(
     return level
 
 
-def _confirmed_copy(item: dict[str, Any]) -> dict[str, Any] | None:
+# Older stored passports used "copied"; both mean the same excluded outcome.
+EARLIER_SOURCE_KINDS = {"earlier_source", "copied"}
+
+
+def _earlier_source(item: dict[str, Any]) -> dict[str, Any] | None:
     return next(
         (
             signal for signal in item.get("integrity", [])
-            if signal.get("id") == "copy_match" and signal.get("confirmed_copy")
+            if signal.get("id") == "copy_match" and signal.get("earlier_source")
         ),
         None,
     )
 
 
-def exclude_confirmed_copies(
+def exclude_earlier_sources(
     verified: dict[str, Any], repos: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Remove code evidence whose copy was confirmed in an older repo, and recompute levels.
+    """Remove code evidence that matches an earlier public source, and recompute levels.
 
-    Only a confirmed copy (two different cited lines found in the same older repository)
-    is excluded; every other integrity signal stays advisory.
+    Exclusion means "can't attribute to the candidate", not "copied". Only an earlier source
+    (two different cited lines in a file that appeared more than a day earlier elsewhere) is
+    excluded; every other integrity signal stays advisory.
     """
-    created = {repo["name"]: repo.get("created_at") for repo in repos}
     kept_skills = []
     for skill in verified["skills"]:
         kept = []
         for item in skill["evidence"]:
-            signal = _confirmed_copy(item) if item.get("type") == "code" else None
+            signal = _earlier_source(item) if item.get("type") == "code" else None
             if signal is None:
                 kept.append(item)
                 continue
-            own_created = (created.get(item["repo"]) or "unknown date")[:10]
             verified["rejected_claims"].append({
                 "claim": {
                     "skill_id": skill["skill_id"],
@@ -666,14 +669,14 @@ def exclude_confirmed_copies(
                     "end_line": item["end_line"],
                     "explanation": item.get("explanation", ""),
                 },
-                "failed_checks": ["not_copied"],
-                "reason": (
-                    f"Same code found in {signal.get('source_repo')}, created "
-                    f"{str(signal.get('source_created_at') or 'unknown date')[:10]}, before this "
-                    f"repository (created {own_created})."
-                ),
+                "failed_checks": ["earlier_source"],
+                "reason": signal.get("detail", ""),
+                "url": item.get("url"),
+                "source_repo": signal.get("source_repo"),
                 "source_url": signal.get("source_url"),
-                "kind": "copied",
+                "source_first_seen": signal.get("source_first_seen"),
+                "candidate_first_seen": signal.get("candidate_first_seen"),
+                "kind": "earlier_source",
             })
         if len(kept) != len(skill["evidence"]):
             skill["evidence"] = kept
