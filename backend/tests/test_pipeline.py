@@ -118,9 +118,28 @@ def test_recheck_reports_skills_that_appear_for_the_first_time(monkeypatch) -> N
         {"skill_id": "docker", "level": "Used", "evidence": [{"type": "config"}]},
     ])
     result = _recheck()
-    assert result["level_changes"] == [{"skill_id": "docker", "from": "Not found", "to": "Used"}]
+    assert result["level_changes"] == [{"skill_id": "docker", "from": "Claimed", "to": "Used"}]
     assert result["created_at"] == EXISTING["created_at"]
     assert result["updated_at"] != EXISTING["created_at"]
+
+
+def test_recheck_reports_new_skills_when_the_old_passport_had_none(monkeypatch) -> None:
+    _stub_pipeline(monkeypatch, {**EXISTING, "skills": []}, [
+        {"skill_id": "docker", "level": "Used", "evidence": [{"type": "config"}]},
+    ])
+    assert _recheck()["level_changes"] == [{"skill_id": "docker", "from": "Claimed", "to": "Used"}]
+
+
+def test_level_changes_are_computed_after_copy_exclusion(monkeypatch) -> None:
+    copied = {
+        "type": "code", "repo": "demo", "file_path": "a.py", "start_line": 1, "end_line": 2,
+        "integrity": [{"id": "copy_match", "status": "warn", "confirmed_copy": True,
+                       "source_repo": "o/r", "source_url": "u", "source_created_at": "2020-01-01"}],
+    }
+    _stub_pipeline(monkeypatch, {**EXISTING, "skills": [{"skill_id": "python", "level": "Applied"}]}, [
+        {"skill_id": "python", "level": "Applied", "evidence": [copied], "resume_mention": "Python"},
+    ])
+    assert _recheck()["level_changes"] == [{"skill_id": "python", "from": "Applied", "to": "Claimed"}]
 
 
 def test_growth_generation_failure_still_saves_the_verified_passport(monkeypatch) -> None:

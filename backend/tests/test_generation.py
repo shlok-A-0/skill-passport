@@ -94,6 +94,40 @@ def test_growth_failure_after_retry_returns_empty_lists_and_error(monkeypatch, t
     assert len(sent) == 2
 
 
+def _code_evidence(start: int, end: int, line_share: str | None = None) -> dict:
+    integrity = [{"id": "line_share", "status": line_share}] if line_share else []
+    return {"type": "code", "repo": "demo", "file_path": f"f{start}.py", "start_line": start,
+            "end_line": end, "snippet": "code", "integrity": integrity}
+
+
+def test_interview_kit_picks_the_strongest_skills_first() -> None:
+    skills = [
+        {"skill_id": "django", "level": "Applied", "evidence": [_code_evidence(1, 5)]},
+        {"skill_id": "flask", "level": "Applied", "evidence": [_code_evidence(1, 5), _code_evidence(9, 12)]},
+        {"skill_id": "git", "level": "Used", "evidence": [{"type": "config"}]},
+        {"skill_id": "python", "level": "Demonstrated", "evidence": [_code_evidence(1, 5)]},
+    ]
+    context = growth_and_kit._interview_context(skills)
+    assert [item["skill_id"] for item in context] == ["python", "flask", "django"]
+
+
+def test_interview_kit_prefers_the_students_own_lines_over_a_longer_citation() -> None:
+    skills = [{"skill_id": "flask", "level": "Applied", "evidence": [
+        _code_evidence(1, 80, line_share="warn"),
+        _code_evidence(100, 110, line_share="ok"),
+        _code_evidence(200, 205),
+    ]}]
+    assert growth_and_kit._interview_context(skills)[0]["file"] == "demo/f100.py#L100-L110"
+    # Without an "ok" line share, the longest range wins.
+    skills[0]["evidence"] = [_code_evidence(1, 3), _code_evidence(10, 40)]
+    assert growth_and_kit._interview_context(skills)[0]["file"] == "demo/f10.py#L10-L40"
+
+
+def test_interview_prompt_asks_for_repo_specific_questions() -> None:
+    prompt, _, _ = growth_and_kit._build_prompt(*_growth_inputs())
+    assert "design decisions" in prompt and "language-trivia" in prompt
+
+
 def test_no_usable_growth_task_triggers_the_retry(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(growth_and_kit, "CACHE_DIR", tmp_path)
     only_invalid = json.dumps({"growth_tasks": [_task("docker", "invented-repo")], "interview_kit": []})

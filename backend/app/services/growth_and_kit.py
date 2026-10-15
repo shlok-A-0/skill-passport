@@ -86,6 +86,51 @@ def _describe_error(exc: Exception) -> str:
     return str(exc)[:300]
 
 
+INTERVIEW_LEVELS = {"Demonstrated": 0, "Applied": 1}
+MAX_INTERVIEW_SKILLS = 5
+
+
+def _line_share_ok(evidence: dict[str, Any]) -> bool:
+    return any(
+        signal.get("id") == "line_share" and signal.get("status") == "ok"
+        for signal in evidence.get("integrity") or []
+    )
+
+
+def _best_citation(evidence: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Code the student wrote most of (line_share ok) first, then the longest cited range."""
+    code = [item for item in evidence if item.get("type") == "code"]
+    return min(
+        code,
+        key=lambda item: (not _line_share_ok(item), -(item["end_line"] - item["start_line"])),
+        default=None,
+    )
+
+
+def _interview_context(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The strongest verified skills (Demonstrated, then Applied, then most evidence), one citation each."""
+    verified = sorted(
+        (
+            item for item in skills
+            if item["level"] in INTERVIEW_LEVELS and _best_citation(item.get("evidence") or [])
+        ),
+        key=lambda item: (INTERVIEW_LEVELS[item["level"]], -len(item["evidence"])),
+    )[:MAX_INTERVIEW_SKILLS]
+    context = []
+    for item in verified:
+        citation = _best_citation(item["evidence"])
+        context.append({
+            "skill_id": item["skill_id"],
+            "skill_name": skill_map()[item["skill_id"]]["name"],
+            "file": (
+                f"{citation['repo']}/{citation['file_path']}"
+                f"#L{citation['start_line']}-L{citation['end_line']}"
+            ),
+            "code": citation.get("snippet", ""),
+        })
+    return context
+
+
 def _build_prompt(
     skills: list[dict[str, Any]],
     role_match: dict[str, Any],
@@ -106,29 +151,7 @@ def _build_prompt(
         item for item in role_match["requirements"]
         if item["status"] in {"partial", "missing"}
     ]
-    verified = [
-        item for item in skills
-        if item["level"] in {"Applied", "Demonstrated"} and item.get("evidence")
-    ]
-    verified = verified[:5]
-    interview_context = []
-    for item in verified:
-        code_evidence = next(
-            (entry for entry in item["evidence"] if entry["type"] == "code"),
-            None,
-        )
-        if code_evidence:
-            interview_context.append(
-                {
-                    "skill_id": item["skill_id"],
-                    "skill_name": skill_map()[item["skill_id"]]["name"],
-                    "file": (
-                        f"{code_evidence['repo']}/{code_evidence['file_path']}"
-                        f"#L{code_evidence['start_line']}-L{code_evidence['end_line']}"
-                    ),
-                    "code": code_evidence["snippet"],
-                }
-            )
+    interview_context = _interview_context(skills)
     prompt = (
         "Create concrete repository-specific growth tasks and an interview kit. "
         "Return exactly JSON: {growth_tasks:[{skill_id,target_repo,task,"
@@ -138,8 +161,11 @@ def _build_prompt(
         "as target_repo; if none exist, use \"new-project\". State what proof the "
         "task produces; never claim it is already achieved. Generate exactly two "
         "questions per supplied verified skill, based on its code, and reference "
-        "the exact file and line range in each question. Do not assign levels, "
-        "verification statuses, or role-match statuses.\n"
+        "the exact file and line range in each question. Ask about design decisions in "
+        "this code, how it fails (edge cases, errors, bad input), and how the candidate "
+        "would modify this specific code for a new requirement. Do NOT ask generic "
+        "language-trivia questions that could be answered without the repository. "
+        "Do not assign levels, verification statuses, or role-match statuses.\n"
         f"Role: {role_match['role_name']}\n"
         f"Gaps: {json.dumps(growth_gaps)}\n"
         f"Allowed repositories: {json.dumps(repos or ['new-project'])}\n"

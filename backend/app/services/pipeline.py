@@ -124,16 +124,18 @@ def build_passport(
         "generation_warning": generation_warning,
         "generation_error": generation_error,
     }
-    if previous_levels:
+    if existing:
+        # Union of old and new skills, after confirmed copies were excluded; a skill
+        # that is absent on one side counts as Claimed (no evidence).
         new_levels = {item["skill_id"]: item["level"] for item in passport["skills"]}
         passport["level_changes"] = [
             {
                 "skill_id": skill_id,
-                "from": previous_levels.get(skill_id, "Not found"),
-                "to": new_levels.get(skill_id, "Not found"),
+                "from": previous_levels.get(skill_id, "Claimed"),
+                "to": new_levels.get(skill_id, "Claimed"),
             }
             for skill_id in sorted(set(previous_levels) | set(new_levels))
-            if previous_levels.get(skill_id) != new_levels.get(skill_id)
+            if previous_levels.get(skill_id, "Claimed") != new_levels.get(skill_id, "Claimed")
         ]
     save_passport(passport)
     if update_job_id:
