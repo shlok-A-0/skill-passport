@@ -1,0 +1,665 @@
+[
+  {
+    "id": "python",
+    "name": "Python",
+    "category": "Language",
+    "esco_label": "Python (computer programming)",
+    "aliases": [
+      "python3"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "import ",
+      "def "
+    ],
+    "config_files": []
+  },
+  {
+    "id": "java",
+    "name": "Java",
+    "category": "Language",
+    "esco_label": "Java (computer programming)",
+    "aliases": [
+      "java"
+    ],
+    "file_extensions": [
+      ".java"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "public class ",
+      "import java."
+    ],
+    "config_files": []
+  },
+  {
+    "id": "javascript",
+    "name": "JavaScript",
+    "category": "Language",
+    "esco_label": "JavaScript",
+    "aliases": [
+      "javascript",
+      "js"
+    ],
+    "file_extensions": [
+      ".js",
+      ".jsx"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "function ",
+      "const "
+    ],
+    "config_files": []
+  },
+  {
+    "id": "typescript",
+    "name": "TypeScript",
+    "category": "Language",
+    "esco_label": "TypeScript",
+    "aliases": [
+      "typescript",
+      "ts"
+    ],
+    "file_extensions": [
+      ".ts",
+      ".tsx"
+    ],
+    "dependency_names": [
+      "typescript"
+    ],
+    "code_signatures": [
+      "interface ",
+      "type "
+    ],
+    "config_files": []
+  },
+  {
+    "id": "cpp",
+    "name": "C++",
+    "category": "Language",
+    "esco_label": "C++",
+    "aliases": [
+      "c++",
+      "cpp"
+    ],
+    "file_extensions": [
+      ".cpp",
+      ".cc",
+      ".cxx",
+      ".hpp"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "#include ",
+      "int main("
+    ],
+    "config_files": []
+  },
+  {
+    "id": "go",
+    "name": "Go",
+    "category": "Language",
+    "esco_label": "Go (computer programming)",
+    "aliases": [
+      "golang",
+      "go"
+    ],
+    "file_extensions": [
+      ".go"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "package main",
+      "func "
+    ],
+    "config_files": []
+  },
+  {
+    "id": "flask",
+    "name": "Flask",
+    "category": "Framework",
+    "esco_label": "web application framework",
+    "aliases": [
+      "flask"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "flask"
+    ],
+    "code_signatures": [
+      "from flask import",
+      "Flask(",
+      "@app.route"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "django",
+    "name": "Django",
+    "category": "Framework",
+    "esco_label": "Django (web framework)",
+    "aliases": [
+      "django"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "django"
+    ],
+    "code_signatures": [
+      "from django",
+      "models.Model"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "fastapi",
+    "name": "FastAPI",
+    "category": "Framework",
+    "esco_label": "web application framework",
+    "aliases": [
+      "fastapi"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "fastapi"
+    ],
+    "code_signatures": [
+      "from fastapi import",
+      "FastAPI("
+    ],
+    "config_files": []
+  },
+  {
+    "id": "spring-boot",
+    "name": "Spring Boot",
+    "category": "Framework",
+    "esco_label": "Spring Framework",
+    "aliases": [
+      "spring boot",
+      "springboot"
+    ],
+    "file_extensions": [
+      ".java"
+    ],
+    "dependency_names": [
+      "spring-boot"
+    ],
+    "code_signatures": [
+      "@SpringBootApplication",
+      "@RestController"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "react",
+    "name": "React",
+    "category": "Framework",
+    "esco_label": "React (JavaScript library)",
+    "aliases": [
+      "react",
+      "react.js"
+    ],
+    "file_extensions": [
+      ".jsx",
+      ".tsx"
+    ],
+    "dependency_names": [
+      "react"
+    ],
+    "code_signatures": [
+      "from 'react'",
+      "from \"react\"",
+      "useState("
+    ],
+    "config_files": []
+  },
+  {
+    "id": "express",
+    "name": "Node.js / Express",
+    "category": "Framework",
+    "esco_label": "Express.js",
+    "aliases": [
+      "express",
+      "node.js",
+      "nodejs"
+    ],
+    "file_extensions": [
+      ".js",
+      ".ts"
+    ],
+    "dependency_names": [
+      "express"
+    ],
+    "code_signatures": [
+      "require('express')",
+      "from 'express'",
+      "express()"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "nextjs",
+    "name": "Next.js",
+    "category": "Framework",
+    "esco_label": "Next.js",
+    "aliases": [
+      "next.js",
+      "nextjs"
+    ],
+    "file_extensions": [
+      ".js",
+      ".jsx",
+      ".ts",
+      ".tsx"
+    ],
+    "dependency_names": [
+      "next"
+    ],
+    "code_signatures": [
+      "next/",
+      "getServerSideProps"
+    ],
+    "config_files": [
+      "next.config.js",
+      "next.config.ts"
+    ]
+  },
+  {
+    "id": "sql",
+    "name": "SQL",
+    "category": "Database",
+    "esco_label": "SQL",
+    "aliases": [
+      "sql"
+    ],
+    "file_extensions": [
+      ".sql"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "SELECT ",
+      "INSERT INTO ",
+      "CREATE TABLE "
+    ],
+    "config_files": []
+  },
+  {
+    "id": "postgresql",
+    "name": "PostgreSQL",
+    "category": "Database",
+    "esco_label": "PostgreSQL",
+    "aliases": [
+      "postgres",
+      "postgresql"
+    ],
+    "file_extensions": [],
+    "dependency_names": [
+      "psycopg",
+      "psycopg2",
+      "asyncpg",
+      "pg"
+    ],
+    "code_signatures": [
+      "postgresql://",
+      "create_engine("
+    ],
+    "config_files": []
+  },
+  {
+    "id": "mysql",
+    "name": "MySQL",
+    "category": "Database",
+    "esco_label": "MySQL",
+    "aliases": [
+      "mysql"
+    ],
+    "file_extensions": [],
+    "dependency_names": [
+      "mysql-connector-python",
+      "pymysql",
+      "mysql2"
+    ],
+    "code_signatures": [
+      "mysql://",
+      "mysql.connector"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "mongodb",
+    "name": "MongoDB",
+    "category": "Database",
+    "esco_label": "MongoDB",
+    "aliases": [
+      "mongodb",
+      "mongo"
+    ],
+    "file_extensions": [],
+    "dependency_names": [
+      "pymongo",
+      "motor",
+      "mongoose"
+    ],
+    "code_signatures": [
+      "MongoClient(",
+      "mongodb://",
+      "mongoose.connect"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "redis",
+    "name": "Redis",
+    "category": "Database",
+    "esco_label": "Redis",
+    "aliases": [
+      "redis"
+    ],
+    "file_extensions": [],
+    "dependency_names": [
+      "redis"
+    ],
+    "code_signatures": [
+      "redis.Redis(",
+      "redis://"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "category": "DevOps",
+    "esco_label": "Docker (software)",
+    "aliases": [
+      "docker",
+      "containerization"
+    ],
+    "file_extensions": [],
+    "dependency_names": [],
+    "code_signatures": [
+      "FROM ",
+      "docker run"
+    ],
+    "config_files": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "compose.yaml",
+      "docker-compose.yaml",
+      "compose.yml"
+    ]
+  },
+  {
+    "id": "kubernetes",
+    "name": "Kubernetes",
+    "category": "DevOps",
+    "esco_label": "Kubernetes",
+    "aliases": [
+      "kubernetes",
+      "k8s"
+    ],
+    "file_extensions": [
+      ".yaml",
+      ".yml"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "apiVersion:",
+      "kind: Deployment"
+    ],
+    "config_files": [
+      "k8s/",
+      "kubernetes/"
+    ]
+  },
+  {
+    "id": "cicd",
+    "name": "CI/CD",
+    "category": "DevOps",
+    "esco_label": "continuous integration",
+    "aliases": [
+      "github actions",
+      "ci/cd",
+      "ci cd",
+      "CI/CD (GitHub Actions)",
+      "continuous integration"
+    ],
+    "file_extensions": [
+      ".yml",
+      ".yaml"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "on:",
+      "jobs:"
+    ],
+    "config_files": [
+      ".github/workflows/",
+      ".forgejo/workflows/",
+      ".gitea/workflows/",
+      ".travis.yml",
+      ".gitlab-ci.yml",
+      ".circleci/config.yml",
+      "Jenkinsfile",
+      "azure-pipelines.yml",
+      "bitbucket-pipelines.yml"
+    ]
+  },
+  {
+    "id": "git",
+    "name": "Git",
+    "category": "Practice",
+    "esco_label": "Git",
+    "aliases": [
+      "git",
+      "version control"
+    ],
+    "file_extensions": [],
+    "dependency_names": [],
+    "code_signatures": [
+      "git "
+    ],
+    "config_files": [
+      ".gitignore"
+    ]
+  },
+  {
+    "id": "rest-api",
+    "name": "REST API design",
+    "category": "Practice",
+    "esco_label": "REST",
+    "aliases": [
+      "rest api",
+      "restful api"
+    ],
+    "file_extensions": [
+      ".py",
+      ".js",
+      ".ts",
+      ".java"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "@app.get",
+      "@app.post",
+      "@GetMapping",
+      "app.get("
+    ],
+    "config_files": []
+  },
+  {
+    "id": "unit-testing",
+    "name": "Unit Testing",
+    "category": "Practice",
+    "esco_label": "software testing",
+    "aliases": [
+      "unit testing",
+      "pytest",
+      "jest",
+      "junit"
+    ],
+    "file_extensions": [
+      ".py",
+      ".js",
+      ".ts",
+      ".java"
+    ],
+    "dependency_names": [
+      "pytest",
+      "jest",
+      "vitest",
+      "junit"
+    ],
+    "code_signatures": [
+      "def test_",
+      "@Test",
+      "describe(",
+      "it("
+    ],
+    "config_files": [
+      "tests/",
+      "test/"
+    ]
+  },
+  {
+    "id": "pytorch",
+    "name": "PyTorch",
+    "category": "ML",
+    "esco_label": "machine learning",
+    "aliases": [
+      "pytorch",
+      "torch"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "torch"
+    ],
+    "code_signatures": [
+      "import torch",
+      "torch.nn"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "tensorflow",
+    "name": "TensorFlow",
+    "category": "ML",
+    "esco_label": "machine learning",
+    "aliases": [
+      "tensorflow",
+      "keras"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "tensorflow"
+    ],
+    "code_signatures": [
+      "import tensorflow",
+      "tf.keras"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "scikit-learn",
+    "name": "scikit-learn",
+    "category": "ML",
+    "esco_label": "machine learning",
+    "aliases": [
+      "scikit-learn",
+      "sklearn"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "scikit-learn"
+    ],
+    "code_signatures": [
+      "from sklearn",
+      "import sklearn"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "pandas",
+    "name": "Pandas",
+    "category": "ML",
+    "esco_label": "data analysis",
+    "aliases": [
+      "pandas"
+    ],
+    "file_extensions": [
+      ".py"
+    ],
+    "dependency_names": [
+      "pandas"
+    ],
+    "code_signatures": [
+      "import pandas",
+      "pd.read_csv"
+    ],
+    "config_files": []
+  },
+  {
+    "id": "aws",
+    "name": "AWS",
+    "category": "Cloud",
+    "esco_label": "cloud computing",
+    "aliases": [
+      "aws",
+      "amazon web services"
+    ],
+    "file_extensions": [
+      ".py",
+      ".js",
+      ".ts"
+    ],
+    "dependency_names": [
+      "boto3",
+      "@aws-sdk"
+    ],
+    "code_signatures": [
+      "boto3.",
+      "S3Client("
+    ],
+    "config_files": [
+      "serverless.yml",
+      "template.yaml"
+    ]
+  },
+  {
+    "id": "linux-shell",
+    "name": "Linux / Shell",
+    "category": "DevOps",
+    "esco_label": "Linux",
+    "aliases": [
+      "linux",
+      "bash",
+      "shell scripting"
+    ],
+    "file_extensions": [
+      ".sh"
+    ],
+    "dependency_names": [],
+    "code_signatures": [
+      "#!/bin/bash",
+      "#!/bin/sh"
+    ],
+    "config_files": [
+      ".bashrc"
+    ]
+  }
+]

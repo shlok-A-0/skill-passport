@@ -1,0 +1,12 @@
+backend/.env
+backend/.venv/
+.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/skill_passport.db
+backend/cache/*
+!backend/cache/.gitkeep
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
