@@ -106,14 +106,15 @@ Only two things change what counts; everything else is an advisory signal for a 
 | Check | Effect | Rule |
 |---|---|---|
 | Signature check (`signature_found`) | Hard check (claim rejected) | Language skills are evidenced by file extension. Frameworks, tools and practices need a real code signature within ±5 lines of the citation (whole-word start, case-insensitive). |
-| Confirmed copy | Citation **excluded** (`kind: "copied"`) | A distinctive cited line is found in another owner's non-fork repo created **before** the student's repo, **and** a second, different line from the same citation is found in that same repo. Level recomputed. |
+| Earlier public source | Citation **excluded** (`kind: "earlier_source"`; older passports: `"copied"`) | A distinctive cited line is found in another owner's non-fork repo, a second, different line from the same citation is in **that same file**, and that file's first commit is **more than 1 day before** the candidate's file's first commit (file-level dates, never repo creation dates). Unknown dates stay a warning. Level recomputed. Means "can't attribute to the candidate", not "copied". |
 | Authorship of dependency/config files | Counts towards Used only if authored | `authored_paths` from ingestion; missing = not authored. |
 | `line_share`, `commit_share`, `bulk_upload`, `repo_history`, `ai_leftover` | Advisory | Per file (see Decision log, 2026-10-11). |
-| `copy_match` (one line only) | Advisory | One shared line is often boilerplate or a tutorial. |
+| `copy_match` (one line only, or dates unknown) | Advisory | One shared line is often boilerplate or a tutorial; label "Earlier public source". |
+| Demonstrated test targeting | Level rule | A test must target the cited file by name or import (section 3.1); CI/Dockerfiles never upgrade other skills. |
 | `commit_spread` | Advisory, per repo | Warn when all the user's commits fall on one UTC day in a repo with ≥15 source files. |
 | `history_import` | Advisory, per repo | Warn when ≥3 commits and at least half are dated >7 days before GitHub's `created_at`. Neutral wording: honest students sometimes build locally first. |
 
-Fraud signals are **never** returned by student endpoints (see section 9). A confirmed copy makes verifiability "Low".
+**Student view rule: internals hidden, outcomes shown.** Advisory signals, thresholds, evidence records and interview answers are **never** returned by student endpoints (see section 9). Outcomes that affect the student are shown: every excluded citation (with links to their lines and the earlier source, and a neutral reason), and they can request a review (`review_requests`; never changes levels or exclusions; recruiters mark requests reviewed). An earlier-source exclusion makes verifiability "Low". Student-facing text never says "fraud", "fake", "copied" or "cheat".
 
 ---
 
@@ -128,7 +129,7 @@ Fraud signals are **never** returned by student endpoints (see section 9). A con
    `https://github.com/{owner}/{repo}/blob/{sha}/{path}#L{start}-L{end}`
 7. Personal details are redacted before any LLM call (I11).
 8. Don't claim the system "proves" skills with 100% certainty. It is a transparent evidence-retrieval system with human-checkable trails.
-9. Fraud signals (integrity signals, interview-kit answers, copy sources) are never returned by student-facing endpoints.
+9. Detector internals (integrity signals and thresholds, evidence records, interview-kit answers) are never returned by student-facing endpoints; outcomes that affect the student (excluded citations) are always shown, with a way to request a review.
 
 ---
 
@@ -273,10 +274,11 @@ Then add deterministic evidence the LLM may have missed: dependency matches → 
 Compute ladder levels per section 3.1 with `compute_level()` (only authored dependency/config evidence counts).
 Each verified code citation gets advisory integrity signals (section 3.2), including the repo-level `commit_spread` and `history_import`.
 
-**P4b. Copy check** (`copy_check.py`, then `exclude_confirmed_copies()` in `verifier.py`)
-- Order: verify → `add_copy_signals` → `exclude_confirmed_copies` → role match → growth/kit, so role matching sees post-exclusion levels.
-- Code search for the longest distinctive cited line; if another owner's older non-fork repo has it, search a second, different line with `repo:<owner>/<name>`. Both found = confirmed copy (`confirmed_copy`, `source_repo`, `source_url`, `source_created_at`). Max 8 searches per passport, second searches included.
-- Confirmed copies are removed from the skill, added to `rejected_claims` (`kind: "copied"`, `failed_checks: ["not_copied"]`, `source_url`), and the level is recomputed; a skill left with no evidence is removed unless the resume or a certificate mentions it (then Claimed).
+**P4b. Earlier-source check** (`copy_check.py`, then `exclude_earlier_sources()` in `verifier.py`)
+- Order: verify → `add_copy_signals` → `exclude_earlier_sources` → coverage → role match → growth/kit, so role matching sees post-exclusion levels.
+- Code search for the longest distinctive cited line (max 8 searches per passport). For each match in another owner's non-fork repo, compare when **that file** first appeared there (oldest commit via the `Link rel="last"` page) with the candidate's file's `first_commit_date`. If the other file is more than 1 day earlier and a second, different cited line is in that same file (read directly), it's an earlier source (`earlier_source`, `source_repo`, `source_url`, `source_first_seen`, `candidate_first_seen`). Unknown dates (path history doesn't follow renames) or a later date never exclude.
+- Earlier-source citations are removed from the skill, added to `rejected_claims` (`kind: "earlier_source"`, `failed_checks: ["earlier_source"]`, `url`, `source_url`, neutral reason), and the level is recomputed; a skill left with no evidence is removed unless the resume or a certificate mentions it (then Claimed).
+- Every code citation carries an evidence `record` (Decision log 2026-10-15); each requirement gets a reviewer packet in the review responses (`packets.py`).
 
 **P5. Role match** (`role_match.py`, **NO LLM**)
 - met = student level ≥ min_level; partial = skill exists but below min_level; missing = no evidence (including Claimed-only).
@@ -303,12 +305,14 @@ Each verified code citation gets advisory integrity signals (section 3.2), inclu
 | GET | `/roles` | Role list |
 | POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional), `target_role` → returns `job_id` |
 | GET | `/jobs/{id}` | Step status: Reading GitHub → Reading resume → Proposing skills → Verifying evidence → Matching role → Building growth plan → Done |
-| GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, no good-answer notes, copied exclusions summarised as one `kind: "review"` line) |
+| GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, evidence records or good-answer notes; every excluded citation listed with `citation_key`, links, neutral reason and its review-request status; `coverage` included) |
 | GET | `/passports` | All passports, student-safe |
-| GET | `/passport/{id}/review` | Full passport for recruiters (needs `X-Recruiter-Key` when `RECRUITER_KEY` is set) |
+| GET | `/passport/{id}/review` | Full passport for recruiters, plus `review_requests` and `requirement_packets` (needs `X-Recruiter-Key` when `RECRUITER_KEY` is set) |
 | GET | `/passports/review` | All full passports (Placement Cell); same key rule |
+| POST | `/passport/{id}/review-requests` | Student asks for a review of an excluded citation: `{citation_key, note}` (≤1,000 chars); ≤10 per passport, one open per citation |
+| POST | `/review-requests/{id}/mark-reviewed` | Recruiter marks a request reviewed; same key rule as the review endpoints |
 | POST | `/passport/{id}/recheck` | Growth Loop re-verification; returns the student-safe passport and level changes |
-| GET | `/passport/{id}/badge` | Open Badges JSON-LD |
+| GET | `/passport/{id}/badge` | Open Badges JSON-LD, including each code citation's `evidenceRecord` |
 | GET | `/debug/github/{username}` | Dev only: ingest summary |
 | POST | `/debug/resume` | Dev only: resume extraction |
 
@@ -421,7 +425,7 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
 - Private work is invisible: missing evidence means "no evidence found", not "not skilled".
 - Authorship via commit author can be imperfect (squashed merges, mismatched git emails). Show the evidence; let humans judge.
 - AI-generated code in a student's repo can't be reliably detected and stays **out of scope**, apart from AI chat leftovers pasted into files (`ai_leftover`); the interview kit is the mitigation.
-- Fraud checks are evidence for a human, not verdicts: only a confirmed copy (two lines in an older repo) is excluded automatically. Commit timing can be faked by an informed user (dates are set locally), which is one reason the signals are hidden from students.
+- Fraud checks are evidence for a human, not verdicts: only an earlier public source (two lines in a file that appeared earlier elsewhere) is excluded automatically, and the student can request a review. Commit timing can be faked by an informed user (dates are set locally), which is one reason the signals are hidden from students.
 - GitHub rate limits: always use a token; cache aggressively.
 - LLM cost/quota: one call per stage, cache by input hash.
 - SQLite is fine for the prototype; revisit only if deployment requires it.
