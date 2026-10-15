@@ -83,7 +83,7 @@ export default function PlacementCell() {
       </div>
       <section className="panel ranking-panel">
         <div className="panel-heading">
-          <div><div className="eyebrow">CANDIDATE RANKING · {role?.name ?? "ROLE"}</div><h2>Who has the strongest verified proof</h2></div>
+          <div><div className="eyebrow">CANDIDATE RANKING · {role?.name ?? "ROLE"}</div><h2>Who has the strongest evidence</h2></div>
           <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
         </div>
         {!ranked.length ? <div className="empty-state">No passports yet. Generate student passports to rank candidates.</div> : (

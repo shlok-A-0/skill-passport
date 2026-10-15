@@ -220,6 +220,24 @@ def test_coverage_is_in_student_and_review_responses(tmp_path, monkeypatch) -> N
         assert client.get(path).json()["coverage"] == passport["coverage"]
 
 
+BANNED_WORDS = ("prove", "proves", "proven", "expert", "mastery", "competence", "fraud", "fake", "copied", "cheat")
+
+
+def test_level_descriptions_make_no_ability_claims() -> None:
+    import re
+
+    from app.services.badge import create_badge
+    from app.services.verifier import LEVEL_DESCRIPTIONS, LEVEL_NOTE
+
+    texts = [*LEVEL_DESCRIPTIONS.values(), LEVEL_NOTE]
+    badge = create_badge(fake_passport("p"))
+    texts += [item["description"] for item in badge["credentialSubject"]["achievement"]]
+    for text in texts:
+        words = set(re.findall(r"[a-z]+", text.lower()))
+        assert not words & set(BANNED_WORDS), text
+    assert set(LEVEL_DESCRIPTIONS) == {"Claimed", "Used", "Applied", "Demonstrated"}
+
+
 def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
     from app.services.badge import create_badge
 

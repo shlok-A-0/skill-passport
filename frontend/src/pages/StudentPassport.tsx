@@ -7,14 +7,12 @@ import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims, { type Audience } from "../components/RejectedClaims";
+import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { skillName } from "../skillNames";
 
-const ladder = [
-  ["Claimed", "Resume / certificate only; no code evidence"],
-  ["Used", "Dependency or configuration files you committed to, or your commit history"],
-  ["Applied", "Verified code the student authored"],
-  ["Demonstrated", "Applied, plus tests, CI, or deployment config"],
-] as const;
+const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
+  (level) => [level, LEVEL_HELP_STUDENT[level]] as const,
+);
 
 const levelOrder: Record<PassportSkill["level"], number> = {
   Claimed: 0,
@@ -96,7 +94,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
   }
 
   if (error && !passport) return <div className="page-message notice-error">{error}</div>;
-  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading verified evidence…</div>;
+  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence…</div>;
 
   return (
     <div className="passport-page">
@@ -121,11 +119,12 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         <div className="legend-items">{ladder.map(([level, text]) => (
           <div className="legend-item" key={level}><LadderPill level={level} /><span>{text}</span></div>
         ))}</div>
+        <p className="legend-note">{LEVEL_NOTE}</p>
       </section>
       <div className="passport-grid">
         <div className="skill-column">
           <section className="panel skill-panel">
-            <div className="panel-heading"><div><div className="eyebrow">VERIFIED FROM YOUR WORK</div><h2>Skills with evidence</h2></div><span className="count-tag">{verified.length} skills</span></div>
+            <div className="panel-heading"><div><div className="eyebrow">FROM THE ANALYSED FILES</div><h2>Evidence from your work</h2></div><span className="count-tag">{verified.length} skills</span></div>
             {verified.length ? (
               <div className="skill-grid">{verified.map((skill) => (
                 <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
@@ -133,7 +132,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
                   <small>{skill.evidence.length} evidence {skill.certified ? "· Certified" : ""}</small>
                 </button>
               ))}</div>
-            ) : <div className="empty-state">No code-backed skills were verified yet. Missing evidence means “not found”, not “not skilled”.</div>}
+            ) : <div className="empty-state">No evidence was found in the analysed files yet. “Not found” doesn't mean “not skilled”.</div>}
           </section>
           {claimed.length > 0 && (
             <section className="panel claimed-panel">

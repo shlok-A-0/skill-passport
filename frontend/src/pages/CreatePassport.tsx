@@ -91,7 +91,7 @@ export default function CreatePassport() {
       <section className="create-intro">
         <div className="eyebrow">SKILL PASSPORT · PROOF, NOT CLAIMS</div>
         <h1>Your work speaks.<br /><em>Now show the proof.</em></h1>
-        <p>Turn your real code into a clear, evidence-backed skill profile. Every verified claim links to the exact work a recruiter can inspect.</p>
+        <p>Turn your real code into a clear, evidence-backed skill profile. Every verified citation links to the exact lines a recruiter can inspect.</p>
         <div className="promise-list">
           <span><ShieldCheck size={17} /> Human-checkable evidence</span>
           <span><Github size={17} /> Authorship is checked per file</span>

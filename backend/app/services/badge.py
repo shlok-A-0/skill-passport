@@ -1,5 +1,7 @@
 from typing import Any
 
+from app.services.verifier import LEVEL_DESCRIPTIONS, LEVEL_NOTE
+
 
 def create_badge(passport: dict[str, Any]) -> dict[str, Any]:
     achievements = []
@@ -24,7 +26,7 @@ def create_badge(passport: dict[str, Any]) -> dict[str, Any]:
                 "type": "Achievement",
                 "name": name,
                 "description": (
-                    f"{skill['level']} evidence level based on verifiable work. "
+                    f"{skill['level']}: {LEVEL_DESCRIPTIONS[skill['level']]} {LEVEL_NOTE} "
                     "This is an unsigned prototype."
                 ),
                 "criteria": {

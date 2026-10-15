@@ -38,7 +38,7 @@ export default function EvidencePanel({ skill, audience }: { skill: PassportSkil
       </div>
       {skill.certified && <span className="certified-tag">Certificate noted · does not raise level</span>}
       {skill.evidence.length === 0 ? (
-        <div className="empty-evidence">No authored code evidence was verified for this claim.</div>
+        <div className="empty-evidence">No evidence for this skill was found in the analysed files.</div>
       ) : (
         skill.evidence.map((item, index) => (
           <article className="evidence-item" key={`${item.url}-${index}`}>

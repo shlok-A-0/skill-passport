@@ -79,7 +79,7 @@ export default function RecruiterView() {
         </section>
         <aside className="recruiter-side">
           <section className="panel verified-summary">
-            <div className="panel-heading"><div><div className="eyebrow">STRONGEST EVIDENCE</div><h2>Verified strengths</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
+            <div className="panel-heading"><div><div className="eyebrow">STRONGEST EVIDENCE</div><h2>Skills with the strongest evidence</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
             {topSkills.length ? topSkills.map((skill) => {
               const evidence = skill.evidence.find((item) => item.type === "code") ?? skill.evidence[0];
               const where = evidence.start_line > 0
@@ -92,7 +92,7 @@ export default function RecruiterView() {
                   <LadderPill level={skill.level} />
                 </Link>
               );
-            }) : <p className="muted">No skills have been verified yet.</p>}
+            }) : <p className="muted">No evidence was found in the analysed files yet.</p>}
           </section>
           <section className="panel claimed-summary">
             <div className="panel-heading"><div><div className="eyebrow">NOT INCLUDED IN MATCH</div><h2>Claimed, unverified</h2></div><span className="count-tag">{claimedSkills.length}</span></div>

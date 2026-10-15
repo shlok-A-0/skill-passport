@@ -9,6 +9,14 @@ from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path
 
 LEVEL_ORDER = {"Claimed": 0, "Used": 1, "Applied": 2, "Demonstrated": 3}
+# Levels describe evidence of use, never ability. "Claimed" is shown as "Unverified".
+LEVEL_DESCRIPTIONS = {
+    "Claimed": "Mentioned on the resume or a certificate; no evidence in the analysed files.",
+    "Used": "Listed in a dependency or config file the candidate committed to.",
+    "Applied": "Used in source code the candidate committed to (exact lines cited).",
+    "Demonstrated": "Applied, and exercised by tests that target that code.",
+}
+LEVEL_NOTE = "Levels show evidence of use in the candidate's code, not how well the skill is used."
 # Integrity signals are advisory: they are shown next to the evidence but never change
 # verification or ladder level (a bulk upload is common for honest students too).
 MIN_LINE_SHARE = 0.5
@@ -234,7 +242,7 @@ def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: 
     extension = PurePosixPath(path).suffix.lower()
     extensions = {item.lower() for item in skill.get("file_extensions", [])}
     if skill.get("category") == "Language":
-        # A language skill is proven by the file's language, nothing else.
+        # A language skill is evidenced by the file's language, nothing else.
         return extension in extensions
     if extensions and extension not in extensions:
         return False
