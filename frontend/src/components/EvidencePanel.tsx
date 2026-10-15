@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2, X } from "lucide-react";
+import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2, FlaskConical, X } from "lucide-react";
 import { skillLabel, type Evidence, type PassportSkill } from "../api";
 import LadderPill from "./LadderPill";
 import type { Audience } from "./RejectedClaims";
@@ -61,6 +61,10 @@ export default function EvidencePanel({ skill, audience }: { skill: PassportSkil
               })}</pre>
             )}
             <p className="evidence-explanation">{item.explanation}</p>
+            {item.demonstrated_by && (
+              <p className="evidence-context evidence-tested"><FlaskConical size={12} /> Exercised by tests: {item.demonstrated_by.path} ({item.demonstrated_by.match === "name" ? "test named after this file" : "test imports this file"})</p>
+            )}
+            {item.build_config_present && <p className="evidence-context">Build or deploy config present</p>}
             {(item.type === "dependency" || item.type === "config") && "authored" in item.checks && !item.checks.authored && !item.test_file_group && (
               <p className="not-counted-note">Found in a file you did not commit to; not counted.</p>
             )}

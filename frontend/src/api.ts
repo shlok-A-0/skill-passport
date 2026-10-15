@@ -15,6 +15,10 @@ export type Evidence = {
   checks: Record<string, boolean>;
   integrity?: IntegritySignal[];
   test_file_group?: boolean;
+  /** The test that targets this cited file (by name or import), which makes the skill Demonstrated. */
+  demonstrated_by?: { path: string; match: "name" | "import" };
+  /** A Dockerfile or CI workflow exists in the repo: context only, never a level change. */
+  build_config_present?: boolean;
 };
 
 export type IntegritySignal = {

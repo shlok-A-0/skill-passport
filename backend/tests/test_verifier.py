@@ -140,7 +140,7 @@ def test_missing_authorship_data_counts_as_not_authored() -> None:
     assert levels["docker"] == "Claimed" and levels["flask"] == "Claimed"
     # Authored code evidence is unaffected by dependency-file authorship.
     levels = {item["skill_id"]: item["level"] for item in verify_claims([claim()], ingestion)["skills"]}
-    assert levels["flask"] == "Demonstrated"
+    assert levels["flask"] == "Applied"
 
 
 def test_dependency_evidence_cites_and_highlights_exact_package_line() -> None:
@@ -227,11 +227,105 @@ def test_primary_dependency_files_are_listed_before_fixture_files() -> None:
     ]
 
 
-def test_verified_code_plus_same_repo_tests_is_demonstrated() -> None:
+def test_verified_code_without_a_targeting_test_is_applied() -> None:
+    # The repo has tests/test_app.py, but "app" is a generic stem, so it targets nothing specific.
     result = verify_claims([claim()], sample_ingestion())
     flask = next(skill for skill in result["skills"] if skill["skill_id"] == "flask")
-    assert flask["level"] == "Demonstrated"
+    assert flask["level"] == "Applied"
     assert flask["evidence"][0]["checks"]["authored"] is True
+    assert "demonstrated_by" not in flask["evidence"][0]
+
+
+ENGINE_LINES = ["import pandas as pd", "", "def load(path):", "    return pd.read_csv(path)"]
+SERVER_LINES = ["from flask import Flask", "server = Flask(__name__)", "", "@server.route('/')", "def home():", "    return 'ok'"]
+
+
+def two_module_ingestion(**repo_overrides: object) -> dict:
+    """billing/engine.py (pandas) and web/server.py (Flask), with a test for the engine only."""
+    data = sample_ingestion()
+    repo = data["repos"][0]
+    repo["source_files"] = {
+        "billing/engine.py": {"content": "\n".join(ENGINE_LINES), "lines": ENGINE_LINES,
+                              "authored_shas": ["s1"], "line_count": len(ENGINE_LINES)},
+        "web/server.py": {"content": "\n".join(SERVER_LINES), "lines": SERVER_LINES,
+                          "authored_shas": ["s1"], "line_count": len(SERVER_LINES)},
+    }
+    repo["tree"] = ["billing/engine.py", "web/server.py", "tests/test_engine.py", "Dockerfile", "requirements.txt"]
+    repo["test_files"] = ["tests/test_engine.py"]
+    repo.update(repo_overrides)
+    return data
+
+
+TWO_MODULE_CLAIMS = [
+    claim(skill_id="pandas", file_path="billing/engine.py", start_line=1, end_line=4),
+    claim(skill_id="flask", file_path="web/server.py", start_line=1, end_line=6),
+]
+
+
+def test_demonstrated_needs_a_test_that_targets_the_cited_module() -> None:
+    skills = {item["skill_id"]: item for item in verify_claims(TWO_MODULE_CLAIMS, two_module_ingestion())["skills"]}
+    assert skills["pandas"]["level"] == "Demonstrated"
+    code = next(item for item in skills["pandas"]["evidence"] if item["type"] == "code")
+    assert code["demonstrated_by"] == {"path": "tests/test_engine.py", "match": "name"}
+    # Same repo, tests and a Dockerfile exist, but nothing targets web/server.py.
+    assert skills["flask"]["level"] == "Applied"
+    flask_code = next(item for item in skills["flask"]["evidence"] if item["type"] == "code")
+    assert "demonstrated_by" not in flask_code
+    assert flask_code["build_config_present"] is True  # shown as context only
+
+
+def test_a_dockerfile_or_ci_alone_no_longer_upgrades_anything() -> None:
+    data = two_module_ingestion(test_files=[], config_files=["Dockerfile", ".github/workflows/ci.yml"])
+    levels = {item["skill_id"]: item["level"] for item in verify_claims(TWO_MODULE_CLAIMS, data)["skills"]}
+    assert levels["pandas"] == "Applied" and levels["flask"] == "Applied"
+
+
+def test_import_match_in_python_tests() -> None:
+    data = two_module_ingestion(
+        test_files=["tests/test_billing.py"],
+        test_contents={"tests/test_billing.py": "import pytest\nfrom billing.engine import load\n"},
+    )
+    pandas = next(item for item in verify_claims(TWO_MODULE_CLAIMS, data)["skills"] if item["skill_id"] == "pandas")
+    assert pandas["level"] == "Demonstrated"
+    code = next(item for item in pandas["evidence"] if item["type"] == "code")
+    assert code["demonstrated_by"] == {"path": "tests/test_billing.py", "match": "import"}
+
+
+def test_import_match_in_javascript_tests() -> None:
+    from app.services.verifier import targeting_test
+
+    for content in ("const engine = require('../engine');", "import { run } from '../lib/engine.js';",
+                    'import calc from "./engine"'):
+        repo = {"test_files": ["src/__tests__/calc.test.js"], "test_contents": {"src/__tests__/calc.test.js": content}}
+        assert targeting_test("src/engine.js", repo) == {"path": "src/__tests__/calc.test.js", "match": "import"}, content
+    # A longer module name that merely contains the stem is not a match.
+    repo = {"test_files": ["src/__tests__/calc.test.js"],
+            "test_contents": {"src/__tests__/calc.test.js": "import x from '../myengine';\nimport y from 'engine-room';"}}
+    assert targeting_test("src/engine.js", repo) is None
+
+
+def test_name_match_variants() -> None:
+    from app.services.verifier import targeting_test
+
+    for test_path in ("tests/test_engine.py", "engine_test.py", "src/engine.test.js", "src/engine.spec.ts",
+                      "tests/test_engine_edge_cases.py"):
+        assert targeting_test("pkg/engine.py", {"test_files": [test_path]}) == {"path": test_path, "match": "name"}
+    assert targeting_test("pkg/engine.py", {"test_files": ["tests/test_reengine.py"]}) is None
+
+
+def test_generic_and_short_stems_never_match() -> None:
+    from app.services.verifier import targeting_test
+
+    for cited, test_path, content in (
+        ("app.py", "tests/test_app.py", "from app import app"),
+        ("src/index.js", "src/index.test.js", "import x from './index'"),
+        ("pkg/__init__.py", "tests/test_init.py", "import pkg"),
+        ("main.go", "main_test.go", ""),
+        ("lib/utils.py", "tests/test_utils.py", "from lib.utils import x"),
+        ("db.py", "tests/test_db.py", "import db"),
+    ):
+        repo = {"test_files": [test_path], "test_contents": {test_path: content}}
+        assert targeting_test(cited, repo) is None, cited
 
 
 def test_claim_proposal_schema_accepts_valid_json_and_rejects_unknown_skill() -> None:
@@ -538,7 +632,7 @@ def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> Non
     assert code and code[0]["start_line"] == 3 and all(code[0]["checks"].values())
     # The file already cited as code is not listed again as a test-file item.
     assert [item["file_path"] for item in config] == ["tests/test_more.py"]
-    assert skill["level"] == "Demonstrated"  # tests exist in the same repo
+    assert skill["level"] == "Applied"  # test code itself, not targeted by another test
 
 
 def test_unauthored_test_file_is_not_cited() -> None:
@@ -605,7 +699,7 @@ def test_skills_and_requirements_carry_display_names() -> None:
     assert next(item for item in requirements if item["skill_id"] == "rest-api")["name"] == "REST API design"
 
 
-def test_nested_dockerfile_qualifies_for_demonstrated() -> None:
+def test_nested_dockerfile_is_docker_evidence_but_does_not_upgrade_other_skills() -> None:
     ingestion = sample_ingestion()
     repo = ingestion["repos"][0]
     repo.update(
@@ -613,9 +707,10 @@ def test_nested_dockerfile_qualifies_for_demonstrated() -> None:
         config_files=["deploy/docker/Dockerfile"], config_contents={"deploy/docker/Dockerfile": "FROM python:3.11\n"},
         authored_paths={"deploy/docker/Dockerfile": True},
     )
-    levels = {item["skill_id"]: item["level"] for item in verify_claims([claim()], ingestion)["skills"]}
-    assert levels["flask"] == "Demonstrated"
-    assert levels["docker"] == "Used"
+    skills = {item["skill_id"]: item for item in verify_claims([claim()], ingestion)["skills"]}
+    assert skills["flask"]["level"] == "Applied"
+    assert skills["flask"]["evidence"][0]["build_config_present"] is True
+    assert skills["docker"]["level"] == "Used"
 
 
 def test_resume_mention_lines_are_redacted() -> None:
@@ -738,7 +833,7 @@ def _excluded(verified: dict) -> list[dict]:
 def test_earlier_file_with_both_lines_is_excluded_with_neutral_wording(monkeypatch) -> None:
     verified = run_copy_check(monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z")
     flask = _skill(verified, "flask")
-    assert flask["level"] == "Used"  # was Demonstrated; only requirements.txt remains
+    assert flask["level"] == "Used"  # was Applied; only requirements.txt remains
     assert not [item for item in flask["evidence"] if item["type"] == "code"]
     excluded = _excluded(verified)
     assert len(excluded) == 1
@@ -763,7 +858,7 @@ def test_repo_created_earlier_but_file_added_later_is_not_excluded(monkeypatch) 
     # Whatever the other repo's creation date, only when its *file* appeared matters.
     verified = run_copy_check(monkeypatch, copy_ingestion(), other_file_seen="2025-03-01T00:00:00Z")
     flask = _skill(verified, "flask")
-    assert flask["level"] == "Demonstrated"
+    assert flask["level"] == "Applied"  # still counted
     assert _copy_signal(flask)["status"] == "ok"
     assert not _excluded(verified)
 
@@ -773,7 +868,7 @@ def test_earlier_file_without_second_line_match_is_only_a_warning(monkeypatch) -
         monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z", second_found=False,
     )
     flask = _skill(verified, "flask")
-    assert flask["level"] == "Demonstrated"
+    assert flask["level"] == "Applied"  # still counted
     signal = _copy_signal(flask)
     assert signal["status"] == "warn" and not signal.get("earlier_source")
     assert not _excluded(verified)
@@ -783,7 +878,7 @@ def test_unknown_file_date_is_a_warning_only(monkeypatch) -> None:
     for kwargs in ({"other_file_seen": None}, {"other_file_seen": "2023-01-01T00:00:00Z", "candidate_first_seen": None}):
         verified = run_copy_check(monkeypatch, copy_ingestion(), **kwargs)
         flask = _skill(verified, "flask")
-        assert flask["level"] == "Demonstrated"
+        assert flask["level"] == "Applied"  # still counted
         signal = _copy_signal(flask)
         assert signal["status"] == "warn" and not signal.get("earlier_source")
         assert not _excluded(verified)
@@ -794,7 +889,7 @@ def test_search_error_still_counts_with_unknown_signal(monkeypatch) -> None:
         monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z", search_error=True,
     )
     flask = _skill(verified, "flask")
-    assert flask["level"] == "Demonstrated"
+    assert flask["level"] == "Applied"  # still counted
     assert _copy_signal(flask)["status"] == "unknown"
 
 

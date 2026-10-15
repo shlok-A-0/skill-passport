@@ -297,6 +297,22 @@ def test_oldest_commit_date_follows_the_last_page(monkeypatch) -> None:
     assert github_ingest.oldest_commit_date(object(), "o", "r", "a.py") is None
 
 
+def test_test_contents_have_their_own_budget_and_prefer_matching_stems(fake_github: FakeGitHub) -> None:
+    files = {"src/engine.py": _code(30), "src/report.py": _code(30)}
+    files.update({f"tests/test_zz{index}.py": "import os\n" for index in range(8)})
+    files["tests/test_engine.py"] = "from src.engine import x\n"
+    fake_github.add_repo("project", files)
+    repo = github_ingest.ingest_github("student")["repos"][0]
+    contents = repo["test_contents"]
+    # One test file was read as a source file (reserved slot, no extra fetch) + at most 5 more.
+    test_fetches = [call for call in fake_github.calls if "/contents/tests/" in call]
+    source_tests = [path for path in repo["source_files"] if path.startswith("tests/")]
+    assert len(test_fetches) == len(source_tests) + github_ingest.MAX_TEST_CONTENT_FETCHES
+    assert "tests/test_engine.py" in contents  # shares a stem with src/engine.py
+    # The source-file budget is untouched: both source files are still read.
+    assert {"src/engine.py", "src/report.py"} <= set(repo["source_files"])
+
+
 def test_only_real_rate_limits_are_rate_limit_errors() -> None:
     class Response:
         def __init__(self, status: int, message: str, remaining: str) -> None:

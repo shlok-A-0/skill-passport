@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.services.framework import skill_map
-from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path
+from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
 LEVEL_ORDER = {"Claimed": 0, "Used": 1, "Applied": 2, "Demonstrated": 3}
 # Levels describe evidence of use, never ability. "Claimed" is shown as "Unverified".
@@ -621,20 +621,57 @@ def compute_level(
     level = "Applied" if any(item["type"] == "code" for item in counted) else (
         "Used" if counted else "Claimed"
     )
-    applied_repos = {
-        item["repo"] for item in evidence if item["type"] == "code"
-    }
-    demonstrated = any(
-        repo["name"] in applied_repos
-        and (
-            bool(repo.get("test_files"))
-            or any(_is_ci_or_deploy(path) for path in repo.get("config_files", []))
-        )
-        for repo in repos
-    )
+    # Demonstrated is skill-specific: one of this skill's cited files must be targeted by a
+    # test in the same repo. A test, CI workflow or Dockerfile elsewhere no longer upgrades it.
+    by_name = {repo["name"]: repo for repo in repos}
+    demonstrated = False
+    for item in evidence:
+        if item.get("type") != "code":
+            continue
+        repo = by_name.get(item["repo"]) or {}
+        item.pop("demonstrated_by", None)
+        target = targeting_test(item["file_path"], repo)
+        if target:
+            item["demonstrated_by"] = target
+            demonstrated = True
+        # Context only, never a level change.
+        item["build_config_present"] = any(_is_ci_or_deploy(path) for path in repo.get("config_files", []))
     if level == "Applied" and demonstrated:
         level = "Demonstrated"
     return level
+
+
+def _name_targets(test_path: str, stem: str) -> bool:
+    """`engine` -> test_engine.py, engine_test.py, engine.test.js, engine.spec.ts, tests/test_engine_x.py."""
+    name = PurePosixPath(test_path).name.lower()
+    return re.search(rf"(?<![a-z0-9]){re.escape(stem)}", name) is not None
+
+
+def _imports_module(content: str, stem: str) -> bool:
+    """Python `from x.engine import` / `import engine`; JS `require('./engine')` / `from '../engine'`."""
+    module = re.escape(stem)
+    python = rf"(?m)^\s*(?:from\s+[\w.]*\b{module}\s+import\b|import\s+(?:[\w.]*\.)?{module}\b)"
+    javascript = rf"""(?:require\(\s*|from\s+|import\s+)['"][^'"]*\b{module}(?:\.[cm]?[jt]sx?)?['"]"""
+    return bool(re.search(python, content) or re.search(javascript, content))
+
+
+def targeting_test(cited_path: str, repo: dict[str, Any]) -> dict[str, str] | None:
+    """The test file in `repo` that targets `cited_path` by name or by import, if any."""
+    stem = module_stem(cited_path)
+    if not stem:
+        return None  # too short or generic (__init__, index, main, utils, app) to match safely
+    tests = [path for path in repo.get("test_files", []) if path != cited_path]
+    for path in tests:
+        if _name_targets(path, stem):
+            return {"path": path, "match": "name"}
+    contents = dict(repo.get("test_contents") or {})
+    for path, source in (repo.get("source_files") or {}).items():
+        if is_test_path(path):
+            contents.setdefault(path, source.get("content", ""))
+    for path, content in contents.items():
+        if path != cited_path and _imports_module(content, stem):
+            return {"path": path, "match": "import"}
+    return None
 
 
 # Older stored passports used "copied"; both mean the same excluded outcome.

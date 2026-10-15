@@ -53,7 +53,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 5
+CACHE_SCHEMA_VERSION = 6
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -250,6 +250,53 @@ def _select_source_files(
             break
         chosen[path] = value
     return chosen
+
+
+MAX_TEST_CONTENT_FETCHES = 5  # own budget: never uses the source-file budget
+TEST_CONTENT_LINES = 300  # imports are near the top; keep cache files small
+GENERIC_STEMS = {"__init__", "index", "main", "utils", "app"}
+
+
+def module_stem(path: str) -> str | None:
+    """A cited file's module name for test matching, or None when it's too short or generic."""
+    stem = Path(path).stem.lower()
+    for suffix in (".test", ".spec"):
+        stem = stem.removesuffix(suffix)
+    if len(stem) < 3 or stem in GENERIC_STEMS:
+        return None
+    return stem
+
+
+def _test_files_to_read(test_files: list[str], source_paths: list[str]) -> list[str]:
+    """Test files whose name shares a stem with a source file we read come first."""
+    stems = {stem for stem in (module_stem(path) for path in source_paths if not is_test_path(path)) if stem}
+
+    def shares_stem(path: str) -> bool:
+        name = Path(path).name.lower()
+        return any(re.search(rf"(?<![a-z0-9]){re.escape(stem)}", name) for stem in stems)
+
+    return sorted(test_files, key=lambda path: (not shares_stem(path), _candidate_priority(path)))
+
+
+def _test_contents(
+    test_files: list[str], source_files: dict[str, dict[str, Any]], sizes: dict[str, int], fetch: Any
+) -> dict[str, str]:
+    """The top of up to MAX_TEST_CONTENT_FETCHES test files, for import matching ("Demonstrated")."""
+    contents: dict[str, str] = {}
+    fetches = 0
+    for path in _test_files_to_read(test_files, list(source_files)):
+        if path in source_files:  # already read as a source file: no fetch needed
+            contents[path] = "\n".join(source_files[path]["lines"][:TEST_CONTENT_LINES])
+            continue
+        if fetches >= MAX_TEST_CONTENT_FETCHES:
+            continue
+        if sizes.get(path, MAX_FILE_BYTES + 1) > MAX_FILE_BYTES:
+            continue
+        fetches += 1
+        content = fetch(path)
+        if content:
+            contents[path] = "\n".join(content.splitlines()[:TEST_CONTENT_LINES])
+    return contents
 
 
 def _repo_error_reason(exc: Exception) -> str:
@@ -652,6 +699,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             authored_paths = _authored_paths(
                 client, owner, name, [*dependency_paths, *config_contents], username
             )
+            test_contents = _test_contents(
+                tests, source_files, sizes, lambda path: _optional_content(client, owner, name, path, branch),
+            )
             repo_results.append(
                 {
                     "name": name,
@@ -670,6 +720,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "config_files": configs,
                     "config_contents": config_contents,
                     "test_files": tests,
+                    "test_contents": test_contents,
                     "source_files": source_files,
                     "authored_paths": authored_paths,
                     "source_file_count": sum(1 for path in tree if _source_candidate(path)),
