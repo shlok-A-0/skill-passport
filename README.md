@@ -40,6 +40,16 @@ npm run dev
 
 Three fictional resume PDFs for local demonstrations are in `samples/`. Each includes a visible `DEMO DATA` label. Mark generated passports as demo data in the create form.
 
+## Regenerate all passports
+
+After changing verification rules, rebuild every stored passport with a fresh GitHub read. This is the same as pressing Re-check on each one, and it reuses each passport's stored resume and certificate mentions. From the project root:
+
+```powershell
+backend\.venv\Scripts\python.exe backend\scripts\recheck_all.py
+```
+
+It prints one line per passport (username, requirements met before → after, and rejected and excluded claim counts). A passport that fails, for example on a GitHub rate limit, is reported and left unchanged. Each passport makes live GitHub and Gemini calls, so expect about a minute per passport.
+
 ## Fraud detection demo
 
 This shows the checks on three kinds of repository. Students never see these signals: `GET /passport/{id}` is student-safe, and the signals appear only on the recruiter pages, which use `/passport/{id}/review`.

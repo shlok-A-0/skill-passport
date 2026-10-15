@@ -153,6 +153,19 @@ def build_passport(
     return passport
 
 
+def recheck_passport(existing: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild a stored passport from a fresh GitHub read and its stored resume/certificate mentions."""
+    return build_passport(
+        github_username=existing["github_username"],
+        target_role=existing["role_match"]["role_id"],
+        resume_bytes=b"",
+        passport_id=existing["id"],
+        force_refresh=True,
+        resume_skill_mentions=existing.get("resume_skill_mentions", []),
+        certificate_skill_mentions=existing.get("certificate_skill_mentions", []),
+    )
+
+
 def run_passport_job(
     job_id: str,
     github_username: str,

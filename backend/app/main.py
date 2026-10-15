@@ -14,7 +14,7 @@ from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import create_job, get_job
-from app.services.pipeline import build_passport, run_passport_job
+from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import get_passport, list_passports
 
 app = FastAPI(title="Skill Passport", version="0.1.0")
@@ -168,15 +168,7 @@ def recheck_passport(passport_id: str) -> dict:
     if not existing:
         raise HTTPException(status_code=404, detail="Passport not found.")
     try:
-        result = build_passport(
-            github_username=existing["github_username"],
-            target_role=existing["role_match"]["role_id"],
-            resume_bytes=b"",
-            passport_id=passport_id,
-            force_refresh=True,
-            resume_skill_mentions=existing.get("resume_skill_mentions", []),
-            certificate_skill_mentions=existing.get("certificate_skill_mentions", []),
-        )
+        result = recheck_passport(existing)
     except Exception as exc:
         logging.getLogger(__name__).exception("Passport re-check failed: %s", passport_id)
         raise HTTPException(status_code=502, detail=f"Re-check failed: {exc}") from exc

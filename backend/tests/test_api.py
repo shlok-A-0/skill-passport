@@ -178,8 +178,8 @@ def test_review_endpoints_require_matching_recruiter_key_when_set(tmp_path, monk
 def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        main_module, "build_passport",
-        lambda **_: {**passport_with_fraud_signals("p-review"), "level_changes": []},
+        main_module, "recheck_passport",
+        lambda existing: {**passport_with_fraud_signals(existing["id"]), "level_changes": []},
     )
     keys, values = _keys_and_values(client.post("/passport/p-review/recheck").json())
     assert not {"integrity", "good_answer_mentions", "source_url"} & keys

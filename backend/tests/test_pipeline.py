@@ -183,6 +183,35 @@ def test_gemini_requests_use_temperature_zero(monkeypatch) -> None:
     assert configs[0].temperature == 0
 
 
+def test_recheck_all_prints_one_line_per_passport_and_survives_failures(monkeypatch, capsys) -> None:
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "recheck_all.py"
+    spec = importlib.util.spec_from_file_location("recheck_all", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    stored = [
+        {"id": "a", "github_username": "alice", "role_match": {"met": 2, "total": 8}},
+        {"id": "b", "github_username": "bob", "role_match": {"met": 5, "total": 8}},
+    ]
+
+    def rebuild(existing):
+        if existing["id"] == "b":
+            raise RuntimeError("GitHub API rate limit exceeded")
+        return {"github_username": "alice", "role_match": {"met": 4, "total": 8}, "rejected_claims": [
+            {"kind": "unsupported"}, {"kind": "copied"}, {"kind": "copied"},
+        ]}
+
+    monkeypatch.setattr(script, "list_passports", lambda: stored)
+    monkeypatch.setattr(script, "recheck_passport", rebuild)
+    assert script.main() == 1
+    out = capsys.readouterr().out.splitlines()
+    assert out[1].split() == ["alice", "met", "2", "->", "4", "of", "8", "rejected", "1", "excluded", "2"]
+    assert out[2].startswith("bob") and "FAILED" in out[2]
+    assert out[-1] == "Done: 1 rebuilt, 1 failed."
+
+
 def test_gemini_busy_errors_are_retried(monkeypatch) -> None:
     from google.genai import errors
 
