@@ -87,16 +87,32 @@ No existing tool or paper combines all of: **file-level proof + ownership check 
 | I9 | **Placement cell dashboard** | Batch heatmap (students × required skills) + most-missing skills → suggested workshops. The brief names placement cells; almost nobody serves them. | Placement page |
 | I10 | **Portable credential** | Export as Open Badges 3.0-style JSON-LD with evidence URLs. Marked "unsigned prototype"; no fake signatures. | Download button |
 | I11 | **Bias guard** | Remove name, email, phone, address, gender, age, photo text and college name from resume text before any LLM call. | Architecture slide; resume service |
+| I12 | **Fraud checks, hidden from students** | Confirmed copies are excluded; authorship and timing signals are shown to recruiters only (see 3.2). | Recruiter evidence review; Placement Cell ranking |
 
 ### 3.1 Evidence Ladder (exact definitions, implemented as rules, never by the LLM)
 | Level | Rule | Colour |
 |---|---|---|
 | **Claimed** (shown as "Unverified") | Appears only on the resume or a certificate; no code evidence. | Grey `#8A8F9C` |
-| **Used** | Appears only in a dependency or config file (e.g. `flask` in requirements.txt, a Dockerfile exists). | Amber `#D99A00` |
+| **Used** | Appears only in a dependency or config file **the student committed to** (e.g. `flask` in their requirements.txt, their Dockerfile), or in their commit history (Git). Files they never touched stay attached but don't count. | Amber `#D99A00` |
 | **Applied** | At least one verified citation in source code the student authored. | Green `#2FB36B` |
 | **Demonstrated** | Applied AND the same repo has tests, CI (`.github/workflows/`), or a Dockerfile/deploy config. | Dark green `#1E7A46` |
 
 Certificates add a "Certified" tag to a skill but never raise its level on their own.
+
+### 3.2 Fraud and authorship checks
+Only two things change what counts; everything else is an advisory signal for a human.
+
+| Check | Effect | Rule |
+|---|---|---|
+| Signature check (`signature_found`) | Hard check (claim rejected) | Language skills are proven by file extension. Frameworks, tools and practices need a real code signature within ±5 lines of the citation (whole-word start, case-insensitive). |
+| Confirmed copy | Citation **excluded** (`kind: "copied"`) | A distinctive cited line is found in another owner's non-fork repo created **before** the student's repo, **and** a second, different line from the same citation is found in that same repo. Level recomputed. |
+| Authorship of dependency/config files | Counts towards Used only if authored | `authored_paths` from ingestion; missing = not authored. |
+| `line_share`, `commit_share`, `bulk_upload`, `repo_history`, `ai_leftover` | Advisory | Per file (see Decision log, 2026-10-11). |
+| `copy_match` (one line only) | Advisory | One shared line is often boilerplate or a tutorial. |
+| `commit_spread` | Advisory, per repo | Warn when all the user's commits fall on one UTC day in a repo with ≥15 source files. |
+| `history_import` | Advisory, per repo | Warn when ≥3 commits and at least half are dated >7 days before GitHub's `created_at`. Neutral wording: honest students sometimes build locally first. |
+
+Fraud signals are **never** returned by student endpoints (see section 9). A confirmed copy makes verifiability "Low".
 
 ---
 
@@ -111,6 +127,7 @@ Certificates add a "Certified" tag to a skill but never raise its level on their
    `https://github.com/{owner}/{repo}/blob/{sha}/{path}#L{start}-L{end}`
 7. Personal details are redacted before any LLM call (I11).
 8. Don't claim the system "proves" skills with 100% certainty. It is a transparent evidence-retrieval system with human-checkable trails.
+9. Fraud signals (integrity signals, interview-kit answers, copy sources) are never returned by student-facing endpoints.
 
 ---
 
@@ -226,7 +243,9 @@ Backend Developer Intern, Frontend Developer Intern, Full-Stack Developer Intern
 - For each repo: full file tree (`git/trees/{branch}?recursive=1`); dependency files (requirements.txt, package.json, pom.xml, build.gradle, pyproject.toml); flags for Dockerfile, docker-compose, `.github/workflows/*`, tests (`tests/`, `test_*`, `*.test.*`).
 - Up to 4 important source files per repo (skip node_modules, dist, build, vendor, migrations, lock and minified files; max 300 lines; prefer `src/` and `app/`). Store contents with line numbers.
 - Authorship per fetched file: `GET /repos/{owner}/{repo}/commits?path={file}&author={username}&per_page=5`; store SHAs. A file is "authored" if at least one commit by the user touches it.
-- Disk cache keyed by username; handle rate limits, 404s, empty repos.
+- Authorship per dependency/config file (same call) → `authored_paths: {path: bool}`; test files aren't checked.
+- The user's commits per repo (`commits?author={username}&per_page=100`) → `user_commits: [{sha, author_date, committer_date}]`, `user_commits_complete`; plus `source_file_count`.
+- Disk cache keyed by username, with `schema_version: 2` (files without it are expired and refetched); handle rate limits, 404s, empty repos.
 
 **P2. Ingest resume and certificates** (`resume_parse.py`)
 - pdfplumber with layout-aware extraction.
@@ -246,11 +265,17 @@ For each claim, record pass/fail + reason for:
 2. `lines_valid`: line range within file length
 3. `authored`: the user has at least one commit touching the file (store SHA)
 4. `not_fork`: repo is not a fork
-5. `signature_found`: a skill code_signature appears within the cited lines (±5 line window), OR the file extension matches for language skills
+5. `signature_found`: for Language skills, the file extension matches; for every other skill, the file extension is allowed (if the skill lists any) **and** a code_signature appears within the cited lines (±5 line window). Extension alone never proves a framework.
 
-All 5 pass = verified; otherwise move it to `rejected_claims` with reasons.
-Then add deterministic evidence the LLM may have missed: dependency matches → Used; config files (Dockerfile → Docker, workflows → CI/CD, tests → Unit Testing).
-Compute ladder levels per section 3.1.
+All 5 pass = verified; otherwise move it to `rejected_claims` with reasons (`kind: "unsupported"`).
+Then add deterministic evidence the LLM may have missed: dependency matches → Used; config files (Dockerfile → Docker, workflows → CI/CD, tests → Unit Testing). Dependency/config evidence sets `checks.authored` from `authored_paths`.
+Compute ladder levels per section 3.1 with `compute_level()` (only authored dependency/config evidence counts).
+Each verified code citation gets advisory integrity signals (section 3.2), including the repo-level `commit_spread` and `history_import`.
+
+**P4b. Copy check** (`copy_check.py`, then `exclude_confirmed_copies()` in `verifier.py`)
+- Order: verify → `add_copy_signals` → `exclude_confirmed_copies` → role match → growth/kit, so role matching sees post-exclusion levels.
+- Code search for the longest distinctive cited line; if another owner's older non-fork repo has it, search a second, different line with `repo:<owner>/<name>`. Both found = confirmed copy (`confirmed_copy`, `source_repo`, `source_url`, `source_created_at`). Max 8 searches per passport, second searches included.
+- Confirmed copies are removed from the skill, added to `rejected_claims` (`kind: "copied"`, `failed_checks: ["not_copied"]`, `source_url`), and the level is recomputed; a skill left with no evidence is removed unless the resume or a certificate mentions it (then Claimed).
 
 **P5. Role match** (`role_match.py`, **NO LLM**)
 - met = student level ≥ min_level; partial = skill exists but below min_level; missing = no evidence (including Claimed-only).
@@ -277,9 +302,11 @@ Compute ladder levels per section 3.1.
 | GET | `/roles` | Role list |
 | POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional), `target_role` → returns `job_id` |
 | GET | `/jobs/{id}` | Step status: Reading GitHub → Reading resume → Proposing skills → Verifying evidence → Matching role → Building growth plan → Done |
-| GET | `/passport/{id}` | Full passport |
-| GET | `/passports` | All passports (placement cell) |
-| POST | `/passport/{id}/recheck` | Growth Loop re-verification; returns level changes |
+| GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, no good-answer notes, copied exclusions summarised as one `kind: "review"` line) |
+| GET | `/passports` | All passports, student-safe |
+| GET | `/passport/{id}/review` | Full passport for recruiters (needs `X-Recruiter-Key` when `RECRUITER_KEY` is set) |
+| GET | `/passports/review` | All full passports (Placement Cell); same key rule |
+| POST | `/passport/{id}/recheck` | Growth Loop re-verification; returns the student-safe passport and level changes |
 | GET | `/passport/{id}/badge` | Open Badges JSON-LD |
 | GET | `/debug/github/{username}` | Dev only: ingest summary |
 | POST | `/debug/resume` | Dev only: resume extraction |
@@ -308,6 +335,10 @@ GitHub username, resume drag-and-drop, optional certificates, role dropdown, "Ge
 - Right 40%: top 5 verified skills; grey "Claimed but unverified" card ("Listed on resume. No evidence found in submitted work."); collapsible interview kit.
 - Footer: "Every verified skill links to code this candidate authored. Unverified claims are never counted."
 - "Copy share link" button.
+- Uses the review endpoint; header shows verifiability and "N copied citations excluded". Every "Evidence" link opens **S3b**.
+
+**S3b. Recruiter evidence review** (`/recruiter/:id/evidence`)
+Skill list + evidence panel with all integrity signals, and "Rejected and excluded claims" with full details and "View original" links for confirmed copies. Not shown to the candidate; the student passport (S2) shows no signals, only unsupported AI claims plus a one-line review summary.
 
 **S4. Placement Cell** (`/placement`)
 Role selector; student count; average requirements met; heatmap (students × required skills, coloured by level, grey = missing); recharts bar chart of % of students missing each skill; "Suggested workshop: <top gap>"; links to each passport and recruiter view.
@@ -388,7 +419,8 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
 
 - Private work is invisible: missing evidence means "no evidence found", not "not skilled".
 - Authorship via commit author can be imperfect (squashed merges, mismatched git emails). Show the evidence; let humans judge.
-- AI-generated code in a student's repo can't be reliably detected; the interview kit is the mitigation.
+- AI-generated code in a student's repo can't be reliably detected and stays **out of scope**, apart from AI chat leftovers pasted into files (`ai_leftover`); the interview kit is the mitigation.
+- Fraud checks are evidence for a human, not verdicts: only a confirmed copy (two lines in an older repo) is excluded automatically. Commit timing can be faked by an informed user (dates are set locally), which is one reason the signals are hidden from students.
 - GitHub rate limits: always use a token; cache aggressively.
 - LLM cost/quota: one call per stage, cache by input hash.
 - SQLite is fine for the prototype; revisit only if deployment requires it.
@@ -414,3 +446,4 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
 - 2026-10-15: Two advisory repo-level **commit timing** signals from the user's commit list (`user_commits`, one extra call per repo, reused for the `by_user` count): `commit_spread` warns when all of the user's commits fall on one UTC day in a repo with ≥15 source files; `history_import` warns when ≥3 commits and at least half are dated >7 days before GitHub's server-recorded `created_at`. **Why advisory:** honest students sometimes build locally before pushing, so the wording stays neutral and levels never change. GitHub cache files now carry `schema_version: 2`; older files are refetched so new fields always exist.
 - 2026-10-15: **"Used" requires authorship.** Ingestion checks every dependency and config file for a commit by the user (`authored_paths`); dependency/config evidence sets `checks.authored` from it, and `compute_level` only counts authored items (missing data = not authored). Unauthored items stay attached with the note "Found in a file you did not commit to; not counted." The grouped Unit Testing test-files item keeps counting (test files aren't authorship-checked). **Why:** a cloned repo's Dockerfile or requirements.txt was enough to make Docker/Flask "Used" without the student writing anything.
 - 2026-10-15: **Fraud signals are hidden from students in the API**, not just the UI. `GET /passport/{id}`, `GET /passports` and the re-check response return `student_view()`: no `integrity`, no `good_answer_mentions`, and copied exclusions collapsed into one `{"kind": "review", "count": N}` line with no files or sources. Recruiters use `GET /passport/{id}/review` and `GET /passports/review` (full data), gated by `X-Recruiter-Key` when `RECRUITER_KEY` is set (open in local dev). New recruiter page `/recruiter/:id/evidence` shows every signal and excluded claim. **Why:** showing the checks to the person being checked teaches them how to evade them.
+- 2026-10-15: Summary of the fraud-detection pass: confirmed copies (two different lines found in an older repo) are the **only** automatic exclusion; every other signal stays advisory. "Used" requires authorship of the dependency or config file. Fraud signals are hidden from students in the API. Documented in sections 3.2, 8 (P1, P4, P4b), 9, 10 and 15.
