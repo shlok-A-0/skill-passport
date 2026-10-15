@@ -329,6 +329,18 @@ def test_evidence_record_is_in_review_and_badge_but_not_student_output(tmp_path,
     assert badge["credentialSubject"]["achievement"][0]["evidence"][0]["evidenceRecord"] == record
 
 
+def test_requirement_packets_are_in_review_responses_only(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = passport_with_fraud_signals("p-packets")
+    passport["role_match"]["requirements"] = [
+        {"skill_id": "python", "status": "met", "min_level": "Applied", "student_level": "Applied", "importance": "must"},
+    ]
+    storage.save_passport(passport)
+    packets = client.get("/passport/p-packets/review").json()["requirement_packets"]
+    assert [(packet["skill_id"], packet["status_label"]) for packet in packets] == [("python", "Met")]
+    assert "requirement_packets" not in client.get("/passport/p-packets").json()
+
+
 def test_coverage_is_in_student_and_review_responses(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     passport = passport_with_fraud_signals("p-coverage")

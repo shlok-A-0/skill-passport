@@ -15,6 +15,7 @@ from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import create_job, get_job
+from app.services.packets import requirement_packets
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import (
     add_review_request,
@@ -89,7 +90,12 @@ def _excluded_keys(passport: dict[str, Any]) -> set[str]:
 
 def review_view(passport: dict[str, Any]) -> dict[str, Any]:
     """The full passport for recruiters, with the student's review requests."""
-    return {**passport, "review_requests": list_review_requests(passport["id"])}
+    return {
+        **passport,
+        "review_requests": list_review_requests(passport["id"]),
+        # Computed on read (deterministic, no LLM), so stored passports get it too.
+        "requirement_packets": requirement_packets(passport),
+    }
 
 
 def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> None:

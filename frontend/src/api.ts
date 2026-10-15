@@ -72,6 +72,18 @@ export type RejectedClaim = {
   review_request?: { status: ReviewRequest["status"]; created_at: string } | null;
 };
 
+/** What supports a requirement, how clearly it traces to the candidate, what's uncertain, what to ask. */
+export type RequirementPacket = {
+  skill_id: string;
+  status: "met" | "partial" | "missing";
+  status_label: "Met" | "Partial" | "Not found";
+  support: { type: Evidence["type"]; repo: string; file_path: string; start_line: number; end_line: number; url: string }[];
+  attribution: "High" | "Medium" | "Low" | "Not applicable";
+  uncertain: string[];
+  ask_next: { question: string; good_answer_mentions?: string | null; source: "interview_kit" | "template" };
+  summary: string;
+};
+
 export type ReviewRequest = {
   id: string;
   passport_id: string;
@@ -166,6 +178,8 @@ export type Passport = {
   generation_error?: string | null;
   /** Review endpoints only. */
   review_requests?: ReviewRequest[];
+  /** Review endpoints only: one reviewer-ready packet per role requirement. */
+  requirement_packets?: RequirementPacket[];
 };
 
 export type RoleRequirement = { skill_id: string; name?: string; min_level: string; importance: string };

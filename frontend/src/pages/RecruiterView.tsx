@@ -1,7 +1,7 @@
-import { AlertTriangle, CheckCircle2, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill } from "../api";
+import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import LadderPill from "../components/LadderPill";
 import { earlierSourcesText, verifiability } from "../verifiability";
@@ -9,11 +9,42 @@ import { skillName } from "../skillNames";
 
 const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 
+/** The four questions for one requirement: support, attribution, uncertainty, what to ask next. */
+function PacketDetails({ packet, reason }: { packet: RequirementPacket; reason: string }) {
+  return (
+    <div className="packet">
+      <div>
+        <h3>What supports it</h3>
+        <p><strong>{packet.status_label}.</strong> {reason}</p>
+        {packet.support.map((item) => (
+          <a key={item.url} href={item.url} target="_blank" rel="noreferrer">
+            {item.repo}/{item.file_path}{item.start_line > 0 ? ` · L${item.start_line}–L${item.end_line}` : ""} ({item.type}) <ExternalLink size={10} />
+          </a>
+        ))}
+      </div>
+      <div>
+        <h3>Attribution</h3>
+        <p><strong>{packet.attribution}</strong>{packet.attribution === "Not applicable" ? " · nothing was found to attribute." : " · how clearly the cited work traces to the candidate."}</p>
+      </div>
+      <div>
+        <h3>What's uncertain</h3>
+        {packet.uncertain.length ? <ul>{packet.uncertain.map((line) => <li key={line}>{line}</li>)}</ul> : <p className="muted">Nothing flagged.</p>}
+      </div>
+      <div>
+        <h3>What to ask next</h3>
+        <p>{packet.ask_next.question}</p>
+        {packet.ask_next.good_answer_mentions && <small>A good answer mentions: {packet.ask_next.good_answer_mentions}</small>}
+      </div>
+    </div>
+  );
+}
+
 export default function RecruiterView() {
   const { id = "" } = useParams();
   const [passport, setPassport] = useState<Passport | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message));
@@ -63,20 +94,35 @@ export default function RecruiterView() {
           <div className="requirement-list">
             {passport.role_match.requirements.map((requirement) => {
               const skill = passport.skills.find((item) => item.skill_id === requirement.skill_id);
+              const packet = passport.requirement_packets?.find((item) => item.skill_id === requirement.skill_id);
               const Icon = requirement.status === "met" ? CheckCircle2 : XCircle;
+              const open = expanded === requirement.skill_id;
               return (
-                <article className={`requirement-row req-${requirement.status}`} key={requirement.skill_id}>
-                  <Icon size={18} />
-                  <div className="req-main">
-                    <div className="req-title">{skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span>{requirement.status === "missing" && <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>}</div>
-                    <p>{requirement.reason}</p>
-                  </div>
-                  {skill && <LadderPill level={skill.level} />}
-                  <Link className="view-evidence-link" to={`/recruiter/${passport.id}/evidence?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
-                </article>
+                <div className={`requirement-item ${open ? "requirement-open" : ""}`} key={requirement.skill_id}>
+                  <article className={`requirement-row req-${requirement.status}`}>
+                    <Icon size={18} />
+                    <button type="button" className="req-main" onClick={() => setExpanded(open ? null : requirement.skill_id)} aria-expanded={open}>
+                      <div className="req-title">
+                        {skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span>
+                        {requirement.status === "missing"
+                          ? <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>
+                          : <span className={`status-pill status-${requirement.status}`}>{packet?.status_label ?? requirement.status}</span>}
+                        {packet && packet.attribution !== "Not applicable" && (
+                          <span className={`attribution attribution-${packet.attribution.toLowerCase()}`} title="How clearly the cited work traces to the candidate, not their ability.">Attribution: {packet.attribution}</span>
+                        )}
+                        <ChevronDown size={12} className="req-chevron" />
+                      </div>
+                      <p>{packet?.summary ?? requirement.reason}</p>
+                    </button>
+                    {skill && <LadderPill level={skill.level} />}
+                    <Link className="view-evidence-link" to={`/recruiter/${passport.id}/evidence?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
+                  </article>
+                  {open && packet && <PacketDetails packet={packet} reason={requirement.reason} />}
+                </div>
               );
             })}
           </div>
+          <p className="attribution-note">Attribution reflects how clearly the cited work traces to the candidate, not their ability.</p>
         </section>
         <aside className="recruiter-side">
           <section className="panel verified-summary">
@@ -100,7 +146,7 @@ export default function RecruiterView() {
             {claimedSkills.length ? (
               <>
                 <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>Listed on resume. No evidence found in submitted work.</p>
+                <p>Listed on resume. No evidence found in the analysed files.</p>
               </>
             ) : <p>No resume-only claims in this passport.</p>}
           </section>

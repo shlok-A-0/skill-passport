@@ -101,6 +101,23 @@ footer span { display: flex; gap: 5px; align-items: center; margin-left: 24px; }
 .evidence-record dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; margin: 6px 0 0; }
 .evidence-record dt { color: #8A8F9C; }
 .evidence-record dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 10px; }
+button.req-main { display: block; width: 100%; border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; }
+.req-chevron { display: inline-block; margin-left: 4px; vertical-align: middle; color: #a1a6b1; }
+.requirement-open .req-chevron { transform: rotate(180deg); }
+.status-pill { margin-left: 6px; border-radius: 999px; padding: 1px 7px; font-size: 9px; font-weight: 700; }
+.status-met { background: #e3f5ea; color: #1E7A46; }
+.status-partial { background: #fff4d6; color: #8a6300; }
+.attribution { margin-left: 6px; border-radius: 999px; padding: 1px 7px; font-size: 9px; font-weight: 700; border: 1px solid #e3e6ec; color: #4d5568; }
+.attribution-high { border-color: #b8e3c8; color: #1E7A46; }
+.attribution-medium { border-color: #f1dca0; color: #8a6300; }
+.attribution-low { border-color: #f3c9c2; color: #a44b40; }
+.packet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0 0 8px 29px; padding: 10px 12px; border-radius: 10px; background: #fafbfc; border: 1px solid #eceef2; font-size: 11px; }
+.packet h3 { margin: 0 0 4px; font-size: 10px; letter-spacing: .4px; text-transform: uppercase; color: #6b7181; }
+.packet p { margin: 0 0 4px; color: #313a55; }
+.packet a { display: block; color: #d85a13; font-size: 10px; overflow-wrap: anywhere; }
+.packet ul { margin: 0; padding-left: 16px; color: #313a55; }
+.packet small { color: #6b7181; }
+.attribution-note { margin: 8px 0 0; color: #8A8F9C; font-size: 10px; }
 .legend-note { margin: 10px 0 0; color: #6b7181; font-size: 11px; }
 .legend-items { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 11px; }
 .legend-item { display: flex; align-items: center; gap: 8px; }
