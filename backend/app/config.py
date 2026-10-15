@@ -24,6 +24,8 @@ FRONTEND_ORIGINS = [
     for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
+# Bump whenever verification or level rules change; stored in every evidence record.
+VERIFIER_VERSION = "2026-10-15"
 # When set, the recruiter review endpoints require a matching X-Recruiter-Key header.
 RECRUITER_KEY = os.getenv("RECRUITER_KEY", "")
 CACHE_DIR = BASE_DIR / "cache"

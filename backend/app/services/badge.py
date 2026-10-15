@@ -11,16 +11,18 @@ def create_badge(passport: dict[str, Any]) -> dict[str, Any]:
         name = skill["skill_id"]
         evidence_items = []
         for item in skill["evidence"]:
-            evidence_items.append(
-                {
-                    "type": "Evidence",
-                    "id": item["url"],
-                    "narrative": (
-                        f"{item['type']} evidence for {name}; level {skill['level']}. "
-                        f"Verification checks: {item['checks']}."
-                    ),
-                }
-            )
+            entry = {
+                "type": "Evidence",
+                "id": item["url"],
+                "narrative": (
+                    f"{item['type']} evidence for {name}; level {skill['level']}. "
+                    f"Verification checks: {item['checks']}."
+                ),
+            }
+            if item.get("record"):
+                # Commit, exact lines, snippet hash, retrieval time, verifier version and rules.
+                entry["evidenceRecord"] = item["record"]
+            evidence_items.append(entry)
         achievements.append(
             {
                 "type": "Achievement",

@@ -313,6 +313,22 @@ def test_api_returns_skill_names(tmp_path, monkeypatch) -> None:
         assert client.get(path).json()["skills"][0]["name"] == "Python"
 
 
+def test_evidence_record_is_in_review_and_badge_but_not_student_output(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = passport_with_fraud_signals("p-record")
+    record = {"commit_sha": "abc123", "path": "main.py", "start_line": 1, "end_line": 2,
+              "snippet_sha256": "0" * 64, "retrieved_at": "2026-10-15T09:00:00+00:00",
+              "verifier_version": "2026-10-15", "checks": {"file_exists": True},
+              "rules_applied": ["applied:code_citation"]}
+    passport["skills"][0]["evidence"][0]["record"] = record
+    storage.save_passport(passport)
+    assert client.get("/passport/p-record/review").json()["skills"][0]["evidence"][0]["record"] == record
+    keys, _ = _keys_and_values(client.get("/passport/p-record").json())
+    assert "record" not in keys and "snippet_sha256" not in keys
+    badge = client.get("/passport/p-record/badge").json()
+    assert badge["credentialSubject"]["achievement"][0]["evidence"][0]["evidenceRecord"] == record
+
+
 def test_coverage_is_in_student_and_review_responses(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     passport = passport_with_fraud_signals("p-coverage")

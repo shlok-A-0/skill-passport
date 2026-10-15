@@ -2,6 +2,7 @@ import base64
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -53,7 +54,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 7
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -575,6 +576,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
         if fresh and cached.get("schema_version") == CACHE_SCHEMA_VERSION:
             return cached["data"]
 
+    # When this ingestion fetched the files; recorded on every evidence record.
+    retrieved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     timeout = httpx.Timeout(20.0, connect=10.0)
     with httpx.Client(headers=_headers(), timeout=timeout, follow_redirects=True) as client:
         profile = _request(client, f"{API_ROOT}/users/{quote(username)}")
@@ -694,6 +697,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     # When this file first appeared here; compared with matches found elsewhere.
                     "first_commit_date": (history or {}).get("first_commit_date")
                     or (oldest_commit_date(client, owner, name, path) if history else None),
+                    "retrieved_at": retrieved_at,
                 }
 
             authored_paths = _authored_paths(

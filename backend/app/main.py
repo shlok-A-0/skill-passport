@@ -68,6 +68,7 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
     for skill in view.get("skills", []):
         for item in skill.get("evidence", []):
             item.pop("integrity", None)
+            item.pop("record", None)  # the evidence record is for recruiters and the badge
     for entry in view.get("interview_kit", []):
         for question in entry.get("questions", []):
             question.pop("good_answer_mentions", None)

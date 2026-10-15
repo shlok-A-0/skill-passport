@@ -94,6 +94,20 @@ export default function EvidencePanel({ skill, audience }: { skill: PassportSkil
                 ))}
               </div>
             )}
+            {audience === "recruiter" && item.record && (
+              <details className="evidence-record">
+                <summary>Evidence record</summary>
+                <dl>
+                  <dt>Commit</dt><dd>{item.record.commit_sha}</dd>
+                  <dt>Lines</dt><dd>{item.record.path} · L{item.record.start_line}–L{item.record.end_line}</dd>
+                  <dt>Snippet SHA-256</dt><dd>{item.record.snippet_sha256}</dd>
+                  <dt>Retrieved</dt><dd>{item.record.retrieved_at ?? "unknown"}</dd>
+                  <dt>Verifier version</dt><dd>{item.record.verifier_version}</dd>
+                  <dt>Checks</dt><dd>{Object.entries(item.record.checks).map(([key, passed]) => `${key}: ${passed ? "pass" : "fail"}`).join(", ")}</dd>
+                  <dt>Rules applied</dt><dd>{item.record.rules_applied.join(", ")}</dd>
+                </dl>
+              </details>
+            )}
             <small className="commit-label">Revision {item.commit_sha}</small>
           </article>
         ))

@@ -1,3 +1,4 @@
+import hashlib
 import re
 import json
 from datetime import datetime, timedelta, timezone
@@ -5,6 +6,7 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote
 
+from app.config import VERIFIER_VERSION
 from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
@@ -260,6 +262,26 @@ def contains_signature(text: str, signature: str) -> bool:
     return re.search(prefix + re.escape(signature), text, flags=re.IGNORECASE) is not None
 
 
+def snippet_sha256(snippet: str) -> str:
+    """Hash of the exact cited lines joined with "\\n"; any change to a line changes it."""
+    return hashlib.sha256(snippet.encode("utf-8")).hexdigest()
+
+
+def _attach_record(evidence: dict[str, Any], source: dict[str, Any]) -> None:
+    """A reproducible record of what was checked, when, and by which rules (recruiter/badge only)."""
+    evidence["record"] = {
+        "commit_sha": evidence["commit_sha"],
+        "path": evidence["file_path"],
+        "start_line": evidence["start_line"],
+        "end_line": evidence["end_line"],
+        "snippet_sha256": snippet_sha256(evidence["snippet"]),
+        "retrieved_at": source.get("retrieved_at"),
+        "verifier_version": VERIFIER_VERSION,
+        "checks": dict(evidence["checks"]),
+        "rules_applied": ["applied:code_citation"],  # completed by compute_level()
+    }
+
+
 def _verify_claim(
     claim: dict[str, Any], repos: list[dict[str, Any]], username: str = ""
 ) -> dict[str, Any]:
@@ -307,6 +329,7 @@ def _verify_claim(
             "checks": checks,
             "integrity": integrity_signals(repo, source, start, end, username),
         }
+        _attach_record(evidence, source)
     return {
         "verified": not failed_checks,
         "evidence": evidence,
@@ -372,6 +395,7 @@ def _test_code_evidence(
             },
             "integrity": integrity_signals(repo, source, start, end, username),
         })
+        _attach_record(evidence[-1], source)
     return evidence
 
 
@@ -631,9 +655,13 @@ def compute_level(
         repo = by_name.get(item["repo"]) or {}
         item.pop("demonstrated_by", None)
         target = targeting_test(item["file_path"], repo)
+        rules = ["applied:code_citation"]
         if target:
             item["demonstrated_by"] = target
             demonstrated = True
+            rules.append(f"demonstrated:test_{target['match']}_match")
+        if "record" in item:
+            item["record"]["rules_applied"] = rules
         # Context only, never a level change.
         item["build_config_present"] = any(_is_ci_or_deploy(path) for path in repo.get("config_files", []))
     if level == "Applied" and demonstrated:

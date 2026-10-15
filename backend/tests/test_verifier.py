@@ -227,6 +227,37 @@ def test_primary_dependency_files_are_listed_before_fixture_files() -> None:
     ]
 
 
+def test_code_citations_carry_an_evidence_record() -> None:
+    from app.config import VERIFIER_VERSION
+    from app.services.verifier import snippet_sha256
+
+    data = two_module_ingestion()
+    data["repos"][0]["source_files"]["billing/engine.py"]["retrieved_at"] = "2026-10-15T09:00:00+00:00"
+    skills = {item["skill_id"]: item for item in verify_claims(TWO_MODULE_CLAIMS, data)["skills"]}
+    pandas_code = next(item for item in skills["pandas"]["evidence"] if item["type"] == "code")
+    record = pandas_code["record"]
+    assert record == {
+        "commit_sha": "abc123", "path": "billing/engine.py", "start_line": 1, "end_line": 4,
+        "snippet_sha256": snippet_sha256("\n".join(ENGINE_LINES)),
+        "retrieved_at": "2026-10-15T09:00:00+00:00", "verifier_version": VERIFIER_VERSION,
+        "checks": pandas_code["checks"],
+        "rules_applied": ["applied:code_citation", "demonstrated:test_name_match"],
+    }
+    flask_code = next(item for item in skills["flask"]["evidence"] if item["type"] == "code")
+    assert flask_code["record"]["rules_applied"] == ["applied:code_citation"]
+
+
+def test_snippet_hash_is_deterministic_and_changes_with_any_line() -> None:
+    from app.services.verifier import snippet_sha256
+
+    snippet = "\n".join(ENGINE_LINES)
+    assert snippet_sha256(snippet) == snippet_sha256("\n".join(list(ENGINE_LINES)))
+    assert len(snippet_sha256(snippet)) == 64
+    changed = ENGINE_LINES[:-1] + ["    return pd.read_csv(path, sep=';')"]
+    assert snippet_sha256("\n".join(changed)) != snippet_sha256(snippet)
+    assert snippet_sha256(snippet + " ") != snippet_sha256(snippet)
+
+
 def test_verified_code_without_a_targeting_test_is_applied() -> None:
     # The repo has tests/test_app.py, but "app" is a generic stem, so it targets nothing specific.
     result = verify_claims([claim()], sample_ingestion())

@@ -19,6 +19,20 @@ export type Evidence = {
   demonstrated_by?: { path: string; match: "name" | "import" };
   /** A Dockerfile or CI workflow exists in the repo: context only, never a level change. */
   build_config_present?: boolean;
+  /** Review endpoints and badge only. */
+  record?: EvidenceRecord;
+};
+
+export type EvidenceRecord = {
+  commit_sha: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  snippet_sha256: string;
+  retrieved_at: string | null;
+  verifier_version: string;
+  checks: Record<string, boolean>;
+  rules_applied: string[];
 };
 
 export type IntegritySignal = {
