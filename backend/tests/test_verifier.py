@@ -40,6 +40,7 @@ def sample_ingestion(is_fork: bool = False) -> dict:
                 "config_files": ["Dockerfile"],
                 "config_contents": {"Dockerfile": "FROM python:3.11-slim\n"},
                 "test_files": ["tests/test_app.py"],
+                "authored_paths": {"requirements.txt": True, "Dockerfile": True},
             }
         ],
     }
@@ -109,6 +110,37 @@ def test_dockerfile_only_skill_is_used_not_applied() -> None:
     docker = next(skill for skill in result["skills"] if skill["skill_id"] == "docker")
     assert docker["level"] == "Used"
     assert docker["evidence"][0]["type"] == "config"
+
+
+def test_authored_dockerfile_makes_docker_used() -> None:
+    docker = next(skill for skill in verify_claims([], sample_ingestion())["skills"] if skill["skill_id"] == "docker")
+    assert docker["level"] == "Used"
+    assert docker["evidence"][0]["checks"]["authored"] is True
+
+
+def test_unauthored_dockerfile_does_not_make_docker_used() -> None:
+    ingestion = sample_ingestion()
+    ingestion["repos"][0]["authored_paths"] = {"requirements.txt": True, "Dockerfile": False}
+    docker = next(skill for skill in verify_claims([], ingestion)["skills"] if skill["skill_id"] == "docker")
+    assert docker["level"] == "Claimed"
+    # The evidence stays visible, marked as not authored.
+    assert docker["evidence"][0]["checks"]["authored"] is False
+    from app.services.role_match import match_role
+
+    docker_requirement = {"id": "r", "name": "R", "requirements": [
+        {"skill_id": "docker", "importance": "must", "min_level": "Used"},
+    ]}
+    assert match_role(verify_claims([], ingestion)["skills"], docker_requirement)["met"] == 0
+
+
+def test_missing_authorship_data_counts_as_not_authored() -> None:
+    ingestion = sample_ingestion()
+    del ingestion["repos"][0]["authored_paths"]
+    levels = {item["skill_id"]: item["level"] for item in verify_claims([], ingestion)["skills"]}
+    assert levels["docker"] == "Claimed" and levels["flask"] == "Claimed"
+    # Authored code evidence is unaffected by dependency-file authorship.
+    levels = {item["skill_id"]: item["level"] for item in verify_claims([claim()], ingestion)["skills"]}
+    assert levels["flask"] == "Demonstrated"
 
 
 def test_dependency_evidence_cites_and_highlights_exact_package_line() -> None:
@@ -424,6 +456,7 @@ def test_nested_dockerfile_counts_as_docker_evidence() -> None:
         tree=["app.py", "backend/Dockerfile"],
         config_files=["backend/Dockerfile"],
         config_contents={"backend/Dockerfile": "FROM python:3.11\n"},
+        authored_paths={"backend/Dockerfile": True},
     )
     assert levels["docker"] == "Used"
 
@@ -433,6 +466,7 @@ def test_non_github_ci_counts_as_cicd_evidence() -> None:
         tree=["app.py", ".travis.yml"],
         config_files=[".travis.yml"],
         config_contents={".travis.yml": "language: python\n"},
+        authored_paths={".travis.yml": True},
     )
     assert levels["cicd"] == "Used"
 

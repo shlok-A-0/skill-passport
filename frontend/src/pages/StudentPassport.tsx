@@ -9,7 +9,7 @@ import { skillName } from "../skillNames";
 
 const ladder = [
   ["Claimed", "Resume / certificate only; no code evidence"],
-  ["Used", "Dependency, configuration, or commit-history evidence"],
+  ["Used", "Dependency or configuration files you committed to, or your commit history"],
   ["Applied", "Verified code the student authored"],
   ["Demonstrated", "Applied, plus tests, CI, or deployment config"],
 ] as const;
@@ -139,7 +139,7 @@ export default function StudentPassport() {
               <div className="claimed-skills">{claimed.map((skill) => (
                 <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillName(skill.skill_id)}</span><LadderPill level="Claimed" /></button>
               ))}</div>
-              <p className="muted">Listed on resume or certificates. No qualifying code evidence was found.</p>
+              <p className="muted">Listed on resume or certificates, or found only in files you did not commit to. No qualifying evidence was found.</p>
             </section>
           )}
           <section className="panel growth-panel">

@@ -46,6 +46,9 @@ export default function EvidencePanel({ skill }: { skill: PassportSkill }) {
               })}</pre>
             )}
             <p className="evidence-explanation">{item.explanation}</p>
+            {(item.type === "dependency" || item.type === "config") && !item.checks.authored && !item.test_file_group && (
+              <p className="not-counted-note">Found in a file you did not commit to; not counted.</p>
+            )}
             <div className="verification-list">
               {Object.entries(checkLabels).filter(([key]) => key in item.checks).map(([key, label]) => {
                 const passed = item.checks[key] === true;

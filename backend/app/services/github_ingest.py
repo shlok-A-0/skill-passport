@@ -446,6 +446,15 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "blame": _file_blame(client, owner, name, head_sha, path),
                 }
 
+            # A dependency or config file only counts towards "Used" if the user committed to it.
+            authored_paths: dict[str, bool] = {}
+            for path in [*dependency_paths, *config_contents]:
+                if path in authored_paths or is_test_path(path):
+                    continue
+                try:
+                    authored_paths[path] = bool(_file_authorship(client, owner, name, path, username))
+                except GitHubIngestError:
+                    pass  # unknown authorship is treated as not authored
             user_commits, user_commits_complete = _user_commits(client, owner, name, username)
             repo_results.append(
                 {
@@ -466,6 +475,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "config_contents": config_contents,
                     "test_files": tests,
                     "source_files": source_files,
+                    "authored_paths": authored_paths,
                     "source_file_count": sum(1 for path in tree if _source_candidate(path)),
                     "user_commits": user_commits,
                     "user_commits_complete": user_commits_complete,

@@ -14,6 +14,7 @@ export type Evidence = {
   explanation: string;
   checks: Record<string, boolean>;
   integrity?: IntegritySignal[];
+  test_file_group?: boolean;
 };
 
 export type IntegritySignal = {

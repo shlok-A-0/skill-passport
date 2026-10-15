@@ -488,12 +488,19 @@ def _deterministic_evidence(
             item = _config_evidence(repo, test_files[0], "", "config", skill["name"])
             others = f" and {len(test_files) - 1} more" if len(test_files) > 1 else ""
             item["explanation"] = f"{len(test_files)} test file(s) in {repo['name']}: {test_files[0]}{others}."
+            # Test files are not authorship-checked; this item keeps counting towards Used.
+            item["test_file_group"] = True
             evidence.append(item)
         if skill["id"] == "git":
             commit = _commit_evidence(repo, username)
             if commit:
                 evidence.append(commit)
     return evidence
+
+
+def _path_authored(repo: dict[str, Any], path: str) -> bool:
+    """Whether the user committed to this dependency/config file; missing data means no."""
+    return bool((repo.get("authored_paths") or {}).get(path, False))
 
 
 def _dependency_evidence(
@@ -518,7 +525,7 @@ def _dependency_evidence(
         "checks": {
             "file_exists": path in repo.get("tree", []),
             "lines_valid": matched_line <= len(lines),
-            "authored": False,
+            "authored": _path_authored(repo, path),
             "not_fork": not repo.get("is_fork", False),
             "signature_found": True,
         },
@@ -544,19 +551,32 @@ def _config_evidence(
         "checks": {
             "file_exists": path in repo.get("tree", []),
             "lines_valid": bool(content) and end <= len(lines),
-            "authored": False,
+            "authored": _path_authored(repo, path),
             "not_fork": not repo.get("is_fork", False),
             "signature_found": True,
         },
     }
 
 
+def counts_for_level(skill_id: str, item: dict[str, Any]) -> bool:
+    if item.get("type") not in {"dependency", "config"}:
+        return True  # code and commit evidence are authored by construction
+    if skill_id == "unit-testing" and item.get("test_file_group"):
+        return True
+    return bool((item.get("checks") or {}).get("authored"))
+
+
 def compute_level(
     skill_id: str, evidence: list[dict[str, Any]], repos: list[dict[str, Any]]
 ) -> str:
-    """Evidence Ladder level from the evidence types (section 3.1); rules only, never the LLM."""
-    level = "Applied" if any(item["type"] == "code" for item in evidence) else (
-        "Used" if evidence else "Claimed"
+    """Evidence Ladder level from the evidence types (section 3.1); rules only, never the LLM.
+
+    Dependency and config evidence only counts towards Used when the user committed to
+    that file; unauthored items stay attached for transparency but don't raise the level.
+    """
+    counted = [item for item in evidence if counts_for_level(skill_id, item)]
+    level = "Applied" if any(item["type"] == "code" for item in counted) else (
+        "Used" if counted else "Claimed"
     )
     applied_repos = {
         item["repo"] for item in evidence if item["type"] == "code"
