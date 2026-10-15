@@ -1,7 +1,8 @@
 """Copy detection: search GitHub for a distinctive cited line in other people's repos.
 
-Runs after verification and only adds an advisory integrity signal. A match is a
-reason for a human to look, not proof of copying (shared tutorials, boilerplate).
+Runs after verification. A single matching line is advisory (shared tutorials,
+boilerplate). A copy is only *confirmed* when a second, different line from the same
+citation is found in the same older repository; the verifier then excludes it.
 """
 import hashlib
 import json
@@ -24,36 +25,58 @@ BOILERPLATE = re.compile(
 )
 
 
-def _distinctive_line(snippet: str) -> str | None:
-    candidates = [
-        line.strip() for line in snippet.splitlines()
-        if len(line.strip()) >= MIN_LINE_LENGTH and not BOILERPLATE.match(line.strip())
-    ]
-    if not candidates:
-        return None
-    line = max(candidates, key=len)[:120]
-    return line.replace('"', " ")
+def _distinctive_lines(snippet: str, count: int) -> list[str]:
+    """Up to `count` distinct searchable lines, longest first."""
+    candidates = sorted(
+        (
+            line.strip() for line in snippet.splitlines()
+            if len(line.strip()) >= MIN_LINE_LENGTH and not BOILERPLATE.match(line.strip())
+        ),
+        key=len,
+        reverse=True,
+    )
+    lines: list[str] = []
+    for candidate in candidates:
+        line = candidate[:120].replace('"', " ")
+        if line not in lines:
+            lines.append(line)
+        if len(lines) == count:
+            break
+    return lines
 
 
 def _cache_path(query: str) -> Path:
     return CACHE_DIR / f"codesearch-{hashlib.sha256(query.encode()).hexdigest()[:24]}.json"
 
 
-def _search(client: httpx.Client, line: str, username: str) -> dict[str, Any] | None:
-    query = f'"{line}"'
+def _code_search(client: httpx.Client, query: str) -> dict[str, Any] | None:
     cache_path = _cache_path(query)
     if cache_path.exists():
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    else:
-        try:
-            response = client.get(
-                f"{API_ROOT}/search/code", params={"q": query, "per_page": 30}
-            )
-            response.raise_for_status()
-            data = response.json()
-        except (httpx.HTTPError, ValueError):
-            return None  # rate limit or search error: report "not checked"
-        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+    try:
+        response = client.get(
+            f"{API_ROOT}/search/code", params={"q": query, "per_page": 30}
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None  # rate limit or search error: report "not checked"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+def _found_in_repo(client: httpx.Client, line: str, full_name: str) -> bool | None:
+    """Whether `line` appears in one specific repository; None when the search failed."""
+    data = _code_search(client, f'"{line}" repo:{full_name}')
+    if data is None:
+        return None
+    return bool(data.get("total_count") or data.get("items"))
+
+
+def _search(client: httpx.Client, line: str, username: str) -> dict[str, Any] | None:
+    data = _code_search(client, f'"{line}"')
+    if data is None:
+        return None
     others = []
     for item in data.get("items", []):
         repository = item.get("repository") or {}
@@ -76,20 +99,38 @@ def _repo_created_at(client: httpx.Client, full_name: str) -> str | None:
         return None
 
 
+def _spend(budget: dict[str, int] | None) -> bool:
+    """Take one search from the per-passport budget; None means unlimited."""
+    if budget is None:
+        return True
+    if budget["left"] <= 0:
+        return False
+    budget["left"] -= 1
+    return True
+
+
+def _not_checked_for_budget() -> dict[str, Any]:
+    return {"id": "copy_match", "label": LABEL, "status": "unknown",
+            "detail": f"Not checked (search limit of {MAX_SEARCHES} searches per passport)."}
+
+
 def copy_signal(
     evidence: dict[str, Any],
     client: httpx.Client | None,
     username: str,
     repo_created_at: str | None = None,
+    budget: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     if client is None:
         return {"id": "copy_match", "label": LABEL, "status": "unknown",
                 "detail": "Not checked (GitHub code search needs a token, and is limited per minute)."}
-    line = _distinctive_line(evidence.get("snippet", ""))
-    if not line:
+    lines = _distinctive_lines(evidence.get("snippet", ""), 2)
+    if not lines:
         return {"id": "copy_match", "label": LABEL, "status": "unknown",
                 "detail": "No distinctive line in the citation to search for."}
-    result = _search(client, line, username)
+    if not _spend(budget):
+        return _not_checked_for_budget()
+    result = _search(client, lines[0], username)
     if result is None:
         return {"id": "copy_match", "label": LABEL, "status": "unknown",
                 "detail": "GitHub code search was unavailable (rate limit or error)."}
@@ -104,14 +145,27 @@ def copy_signal(
     # Only a repo that existed before the student's repo can be the source of a copy;
     # later repos may have copied from the student.
     looked_up = result["matches"][:MAX_DATE_LOOKUPS]
-    older, unknown = [], 0
+    older, older_created, unknown = [], {}, 0
     for match in looked_up:
         created = _repo_created_at(client, match["repo"]) if repo_created_at else None
         if created is None:
             unknown += 1
         elif created < repo_created_at:
             older.append(match)
+            older_created[match["repo"]] = created
     if older:
+        # Confirm with a second, different line from the same citation in the oldest match.
+        source = min(older, key=lambda match: older_created[match["repo"]])
+        if len(lines) > 1 and _spend(budget) and _found_in_repo(client, lines[1], source["repo"]):
+            return {"id": "copy_match", "label": LABEL, "status": "warn",
+                    "detail": f"Two different cited lines were found in {source['repo']}, "
+                              f"created {older_created[source['repo']][:10]}, before this repository "
+                              f"({repo_created_at[:10]}).",
+                    "matches": older[:3],
+                    "confirmed_copy": True,
+                    "source_repo": source["repo"],
+                    "source_url": source.get("url") or f"https://github.com/{source['repo']}",
+                    "source_created_at": older_created[source["repo"]]}
         return {"id": "copy_match", "label": LABEL, "status": "warn",
                 "detail": f"A cited line also appears in {total} other repositor{plural}, "
                           f"including {len(older)} created before this one. Check whether it was copied.",
@@ -146,14 +200,10 @@ def add_copy_signals(
             item["integrity"].append(copy_signal(item, None, username))
         return
     headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    # Confirmation searches come out of the same budget as first searches.
+    budget = {"left": MAX_SEARCHES}
     with httpx.Client(headers=headers, timeout=httpx.Timeout(20.0, connect=10.0)) as client:
-        for index, item in enumerate(code_items):
-            if index < MAX_SEARCHES:
-                item["integrity"].append(
-                    copy_signal(item, client, username, (repo_created or {}).get(item["repo"]))
-                )
-            else:
-                item["integrity"].append(
-                    {"id": "copy_match", "label": LABEL, "status": "unknown",
-                     "detail": f"Not checked (search limit of {MAX_SEARCHES} citations per passport)."}
-                )
+        for item in code_items:
+            item["integrity"].append(
+                copy_signal(item, client, username, (repo_created or {}).get(item["repo"]), budget)
+            )

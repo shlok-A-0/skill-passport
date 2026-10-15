@@ -22,6 +22,18 @@ export type IntegritySignal = {
   status: "ok" | "warn" | "unknown";
   detail: string;
   matches?: { repo: string; url: string }[];
+  confirmed_copy?: boolean;
+  source_repo?: string;
+  source_url?: string;
+  source_created_at?: string;
+};
+
+export type RejectedClaim = {
+  claim: Record<string, unknown>;
+  failed_checks: string[];
+  reason: string;
+  kind?: "unsupported" | "copied";
+  source_url?: string;
 };
 
 export type PassportSkill = {
@@ -39,7 +51,7 @@ export type Passport = {
   target_role: string;
   sources: { repos: number; resume: boolean; certificates: number };
   skills: PassportSkill[];
-  rejected_claims: { claim: Record<string, unknown>; failed_checks: string[]; reason: string }[];
+  rejected_claims: RejectedClaim[];
   role_match: {
     role_id: string;
     role_name: string;

@@ -430,6 +430,133 @@ def test_framework_claim_on_plain_code_is_rejected(skill_id: str) -> None:
     assert "signature_found" in result["failed_checks"]
 
 
+COPIED_LINES = [
+    "from flask import Flask",
+    "app = Flask(__name__)",
+    "@app.route('/invoices/<int:invoice_id>/total')",
+    "def invoice_total(invoice_id):",
+    "    return calculate_invoice_total(load_items(invoice_id), tax_rate=0.18)",
+]
+OLDER_REPO_URL = "https://github.com/original/invoices/blob/main/app.py"
+
+
+def copy_ingestion(**repo_overrides: object) -> dict:
+    data = sample_ingestion()
+    repo = data["repos"][0]
+    repo["source_files"]["app.py"].update(
+        content="\n".join(COPIED_LINES), lines=COPIED_LINES, line_count=len(COPIED_LINES)
+    )
+    repo["created_at"] = "2024-06-01T00:00:00Z"
+    repo.update(repo_overrides)
+    return data
+
+
+def run_copy_check(
+    monkeypatch, ingestion: dict, *, other_created: str, second_found: bool = True,
+    search_error: bool = False, resume_skills: list | None = None,
+) -> dict:
+    from app.services import copy_check
+    from app.services.verifier import exclude_confirmed_copies
+
+    queries: list[str] = []
+
+    def fake_search(client, query):
+        queries.append(query)
+        if search_error:
+            return None
+        if " repo:" in query:
+            return {"total_count": int(second_found), "items": []}
+        return {"total_count": 1, "items": [{
+            "repository": {"full_name": "original/invoices", "owner": {"login": "original"}, "fork": False},
+            "html_url": OLDER_REPO_URL,
+        }]}
+
+    monkeypatch.setattr(copy_check, "GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(copy_check, "_code_search", fake_search)
+    monkeypatch.setattr(copy_check, "_repo_created_at", lambda client, name: other_created)
+    verified = verify_claims([claim(end_line=5)], ingestion, resume_skills=resume_skills)
+    copy_check.add_copy_signals(verified["skills"], "student", {"demo-api": "2024-06-01T00:00:00Z"})
+    exclude_confirmed_copies(verified, ingestion["repos"])
+    verified["queries"] = queries
+    return verified
+
+
+def _skill(verified: dict, skill_id: str) -> dict | None:
+    return next((item for item in verified["skills"] if item["skill_id"] == skill_id), None)
+
+
+def _copy_signal(skill: dict) -> dict:
+    code = next(item for item in skill["evidence"] if item["type"] == "code")
+    return next(signal for signal in code["integrity"] if signal["id"] == "copy_match")
+
+
+def test_confirmed_copy_in_older_repo_is_excluded_and_level_drops(monkeypatch) -> None:
+    verified = run_copy_check(monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z")
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Used"  # was Demonstrated; only requirements.txt remains
+    assert not [item for item in flask["evidence"] if item["type"] == "code"]
+    copied = [item for item in verified["rejected_claims"] if item["kind"] == "copied"]
+    assert len(copied) == 1
+    assert copied[0]["failed_checks"] == ["not_copied"]
+    assert copied[0]["source_url"] == OLDER_REPO_URL
+    assert copied[0]["claim"]["file_path"] == "app.py"
+    assert "original/invoices, created 2023-01-01" in copied[0]["reason"]
+    assert "(created 2024-06-01)" in copied[0]["reason"]
+    # The second search uses a different line, restricted to the older repo.
+    assert len(verified["queries"]) == 2 and verified["queries"][1].endswith("repo:original/invoices")
+    assert verified["queries"][0].split('"')[1] != verified["queries"][1].split('"')[1]
+
+
+def test_older_repo_without_second_line_match_is_only_a_warning(monkeypatch) -> None:
+    verified = run_copy_check(
+        monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z", second_found=False,
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Demonstrated"
+    signal = _copy_signal(flask)
+    assert signal["status"] == "warn" and not signal.get("confirmed_copy")
+    assert not [item for item in verified["rejected_claims"] if item.get("kind") == "copied"]
+
+
+def test_newer_repo_match_still_counts(monkeypatch) -> None:
+    verified = run_copy_check(monkeypatch, copy_ingestion(), other_created="2025-01-01T00:00:00Z")
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Demonstrated"
+    assert _copy_signal(flask)["status"] == "ok"
+
+
+def test_search_error_still_counts_with_unknown_signal(monkeypatch) -> None:
+    verified = run_copy_check(
+        monkeypatch, copy_ingestion(), other_created="2023-01-01T00:00:00Z", search_error=True,
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Demonstrated"
+    assert _copy_signal(flask)["status"] == "unknown"
+
+
+def test_skill_losing_only_code_evidence_drops_from_applied_to_used(monkeypatch) -> None:
+    ingestion = copy_ingestion(test_files=[], config_files=[], config_contents={})
+    verified = run_copy_check(monkeypatch, ingestion, other_created="2023-01-01T00:00:00Z")
+    assert _skill(verified, "flask")["level"] == "Used"
+
+
+def test_skill_losing_all_evidence_is_removed_or_kept_as_claimed(monkeypatch) -> None:
+    ingestion = copy_ingestion(dependency_contents={})
+    verified = run_copy_check(monkeypatch, ingestion, other_created="2023-01-01T00:00:00Z")
+    assert _skill(verified, "flask") is None
+    verified = run_copy_check(
+        monkeypatch, copy_ingestion(dependency_contents={}), other_created="2023-01-01T00:00:00Z",
+        resume_skills=[{"skill_id": "flask", "mention": "Flask"}],
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Claimed" and flask["evidence"] == []
+
+
+def test_failed_claims_are_tagged_unsupported() -> None:
+    result = verify_claims([claim(file_path="missing.py")], sample_ingestion())
+    assert result["rejected_claims"][0]["kind"] == "unsupported"
+
+
 def test_language_claim_needs_matching_file_extension() -> None:
     data = plain_python_ingestion()
     assert verify_one_claim(claim(skill_id="python", file_path="util.py", start_line=1, end_line=4), data)["verified"]

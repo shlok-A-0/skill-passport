@@ -474,6 +474,85 @@ def _config_evidence(
     }
 
 
+def compute_level(
+    skill_id: str, evidence: list[dict[str, Any]], repos: list[dict[str, Any]]
+) -> str:
+    """Evidence Ladder level from the evidence types (section 3.1); rules only, never the LLM."""
+    level = "Applied" if any(item["type"] == "code" for item in evidence) else (
+        "Used" if evidence else "Claimed"
+    )
+    applied_repos = {
+        item["repo"] for item in evidence if item["type"] == "code"
+    }
+    demonstrated = any(
+        repo["name"] in applied_repos
+        and (
+            bool(repo.get("test_files"))
+            or any(_is_ci_or_deploy(path) for path in repo.get("config_files", []))
+        )
+        for repo in repos
+    )
+    if level == "Applied" and demonstrated:
+        level = "Demonstrated"
+    return level
+
+
+def _confirmed_copy(item: dict[str, Any]) -> dict[str, Any] | None:
+    return next(
+        (
+            signal for signal in item.get("integrity", [])
+            if signal.get("id") == "copy_match" and signal.get("confirmed_copy")
+        ),
+        None,
+    )
+
+
+def exclude_confirmed_copies(
+    verified: dict[str, Any], repos: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Remove code evidence whose copy was confirmed in an older repo, and recompute levels.
+
+    Only a confirmed copy (two different cited lines found in the same older repository)
+    is excluded; every other integrity signal stays advisory.
+    """
+    created = {repo["name"]: repo.get("created_at") for repo in repos}
+    kept_skills = []
+    for skill in verified["skills"]:
+        kept = []
+        for item in skill["evidence"]:
+            signal = _confirmed_copy(item) if item.get("type") == "code" else None
+            if signal is None:
+                kept.append(item)
+                continue
+            own_created = (created.get(item["repo"]) or "unknown date")[:10]
+            verified["rejected_claims"].append({
+                "claim": {
+                    "skill_id": skill["skill_id"],
+                    "repo": item["repo"],
+                    "file_path": item["file_path"],
+                    "start_line": item["start_line"],
+                    "end_line": item["end_line"],
+                    "explanation": item.get("explanation", ""),
+                },
+                "failed_checks": ["not_copied"],
+                "reason": (
+                    f"Same code found in {signal.get('source_repo')}, created "
+                    f"{str(signal.get('source_created_at') or 'unknown date')[:10]}, before this "
+                    f"repository (created {own_created})."
+                ),
+                "source_url": signal.get("source_url"),
+                "kind": "copied",
+            })
+        if len(kept) != len(skill["evidence"]):
+            skill["evidence"] = kept
+            skill["level"] = compute_level(skill["skill_id"], kept, repos)
+            if not kept and not skill.get("resume_mention") and not skill.get("certified"):
+                continue  # nothing left that would list this skill
+        kept_skills.append(skill)
+    verified["skills"] = kept_skills
+    return verified
+
+
 def verify_claims(
     claims: list[dict[str, Any]],
     ingestion: dict[str, Any],
@@ -502,6 +581,7 @@ def verify_claims(
                     "claim": claim,
                     "failed_checks": failed,
                     "reason": f"Failed verification checks: {reasons}.",
+                    "kind": "unsupported",
                 }
             )
 
@@ -525,26 +605,10 @@ def verify_claims(
             # Skip a rule-based code citation when the AI already cited (and we verified) that file.
             if not (item["type"] == "code" and (item["repo"], item["file_path"]) in cited_files)
         )
-        level = "Applied" if any(item["type"] == "code" for item in evidence) else (
-            "Used" if evidence else "Claimed"
-        )
-        applied_repos = {
-            item["repo"] for item in evidence if item["type"] == "code"
-        }
-        demonstrated = any(
-            repo["name"] in applied_repos
-            and (
-                bool(repo.get("test_files"))
-                or any(_is_ci_or_deploy(path) for path in repo.get("config_files", []))
-            )
-            for repo in repos
-        )
-        if level == "Applied" and demonstrated:
-            level = "Demonstrated"
         skills.append(
             {
                 "skill_id": skill_id,
-                "level": level,
+                "level": compute_level(skill_id, evidence, repos),
                 "certified": skill_id in certified_ids,
                 "evidence": evidence,
                 "resume_mention": resume_by_skill.get(skill_id),

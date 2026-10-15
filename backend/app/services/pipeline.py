@@ -11,7 +11,7 @@ from app.services.jobs import complete_job, fail_job, update_job
 from app.services.resume_parse import parse_certificate, parse_resume
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
-from app.services.verifier import verify_claims
+from app.services.verifier import exclude_confirmed_copies, verify_claims
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,8 @@ def build_passport(
         ingestion["username"],
         {repo["name"]: repo.get("created_at") for repo in ingestion["repos"] if repo.get("created_at")},
     )
+    # Confirmed copies are removed before role matching, so the match sees the final levels.
+    exclude_confirmed_copies(verified, ingestion["repos"])
     progress("Matching role")
     role_match = match_role(verified["skills"], target_role)
     progress("Building growth plan")

@@ -134,7 +134,7 @@ export default function PlacementCell() {
                     <td><Link to={`/passport/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div></td>
                     <td>{row.mustMet} of {row.mustTotal}</td>
                     <td>{row.met} of {requirements.length}</td>
-                    <td><VerifyPill verify={row.verify} /></td>
+                    <td><VerifyPill verify={row.verify} />{row.verify.copiedExcluded > 0 && <div className="copied-excluded"><AlertTriangle size={11} /> {row.verify.copiedExcluded} copied citation{row.verify.copiedExcluded === 1 ? "" : "s"} excluded</div>}</td>
                     <td className="rank-flags">
                       {row.verify.tier === "Not checked" ? <span className="muted">Run Re-check to collect signals</span>
                         : row.verify.warnings.length === 0 ? <span className="flag-ok"><ShieldCheck size={12} /> None</span>

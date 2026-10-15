@@ -156,6 +156,7 @@ export default function StudentPassport() {
               <article className="rejected-item" key={`${String(item.claim.file_path)}-${index}`}>
                 <strong>{String(item.claim.skill_id)} · {String(item.claim.repo)}/{String(item.claim.file_path)}</strong>
                 <p>{item.reason}</p><small>Failed checks: {item.failed_checks.join(", ")}</small>
+                {item.source_url && <p><a href={item.source_url} target="_blank" rel="noreferrer">View original <ArrowUpRight size={11} /></a></p>}
               </article>
             )) : <p className="muted">No proposed claims failed verification in this run.</p>}
           </details>

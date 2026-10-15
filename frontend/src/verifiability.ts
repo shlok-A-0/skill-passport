@@ -6,6 +6,7 @@ export type Verifiability = {
   checked: number;
   warnings: { signal: IntegritySignal; where: string }[];
   codeSkills: number;
+  copiedExcluded: number;
 };
 
 const levelOrder: Record<string, number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -32,6 +33,8 @@ export function verifiability(passport: Passport): Verifiability {
   const all = [...seen.values()].filter(({ signal }) => signal.status !== "unknown");
   const warnings = all.filter(({ signal }) => signal.status === "warn");
   const passed = all.length - warnings.length;
+  // Citations excluded because the same code was confirmed in an older repository.
+  const copiedExcluded = passport.rejected_claims.filter((item) => item.kind === "copied").length;
   let tier: Verifiability["tier"] = "Not checked";
   if (all.length) {
     const serious = warnings.some(({ signal }) => SERIOUS.has(signal.id));
@@ -39,7 +42,8 @@ export function verifiability(passport: Passport): Verifiability {
     else if (serious || warnings.length / all.length > 0.25) tier = "Low";
     else tier = "Medium";
   }
-  return { tier, passed, checked: all.length, warnings, codeSkills };
+  if (copiedExcluded) tier = "Low";
+  return { tier, passed, checked: all.length, warnings, codeSkills, copiedExcluded };
 }
 
 type Requirement = { skill_id: string; min_level: string; importance: string };
