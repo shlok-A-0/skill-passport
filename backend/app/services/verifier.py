@@ -1,5 +1,6 @@
 import re
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote
@@ -15,6 +16,9 @@ MIN_COMMIT_SHARE = 0.5
 BULK_COMMIT_FILES = 20
 BULK_COMMIT_ADDITIONS = 2000
 MIN_REPO_COMMITS = 4
+COMMIT_SPREAD_MIN_FILES = 15  # one-day history only matters for a sizeable repository
+HISTORY_IMPORT_DAYS = 7
+HISTORY_IMPORT_MIN_COMMITS = 3
 # Text an AI chat assistant writes around code, which ends up in a file when the answer is
 # pasted wholesale. Finding one is concrete; not finding one does not mean a human wrote it.
 AI_CHAT_LEFTOVERS = re.compile(
@@ -98,6 +102,77 @@ def _repo_history_signal(repo: dict[str, Any]) -> dict[str, str]:
     return _signal("repo_history", label, "warn" if total < MIN_REPO_COMMITS else "ok", detail + ".")
 
 
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _user_commit_dates(repo: dict[str, Any]) -> list[datetime]:
+    return sorted(
+        date for date in (
+            _parse_utc(commit.get("author_date")) for commit in repo.get("user_commits") or []
+        )
+        if date is not None
+    )
+
+
+def _commit_spread_signal(repo: dict[str, Any]) -> dict[str, str]:
+    label = "Work spread over time"
+    dates = _user_commit_dates(repo)
+    if not dates:
+        return _signal("commit_spread", label, "unknown", "Your commit dates in this repository were not available.")
+    more = "" if repo.get("user_commits_complete") else "+"
+    days = sorted({date.date() for date in dates})
+    spread = f"{len(dates)}{more} commits across {len(days)} days, from {days[0]} to {days[-1]}."
+    if len(days) > 1:
+        return _signal("commit_spread", label, "ok", spread)
+    files = repo.get("source_file_count")
+    if not repo.get("user_commits_complete") or not isinstance(files, int):
+        # Older commits or the repository size are unknown, so one day can't be judged.
+        return _signal(
+            "commit_spread", label, "unknown",
+            f"{len(dates)}{more} recent commits on {days[0]}; the rest of the history could not be compared.",
+        )
+    if files >= COMMIT_SPREAD_MIN_FILES:
+        return _signal(
+            "commit_spread", label, "warn",
+            f"All {len(dates)} of your commits in this repository were made on one day ({days[0]}).",
+        )
+    return _signal("commit_spread", label, "ok", spread)
+
+
+def _history_import_signal(repo: dict[str, Any]) -> dict[str, str]:
+    label = "History matches when the repository was created"
+    created = _parse_utc(repo.get("created_at"))
+    dates = _user_commit_dates(repo)
+    if created is None or not dates:
+        return _signal(
+            "history_import", label, "unknown",
+            "Repository creation date or your commit dates were not available.",
+        )
+    # created_at is recorded by GitHub's servers; commit dates are set by the committer's machine.
+    early = sum(1 for date in dates if date < created - timedelta(days=HISTORY_IMPORT_DAYS))
+    created_day = created.date()
+    if len(dates) >= HISTORY_IMPORT_MIN_COMMITS and early * 2 >= len(dates):
+        return _signal(
+            "history_import", label, "warn",
+            f"{early} of {len(dates)} commits are dated before this repository was created on GitHub "
+            f"({created_day}). The history may have been developed elsewhere, imported, or backdated.",
+        )
+    return _signal(
+        "history_import", label, "ok",
+        f"{early} of {len(dates)} commits are dated more than {HISTORY_IMPORT_DAYS} days before this "
+        f"repository was created on GitHub ({created_day}).",
+    )
+
+
 def _ai_leftover_signal(source: dict[str, Any]) -> dict[str, str]:
     label = "No AI chat text left in the file"
     for number, line in enumerate(source.get("lines", []), start=1):
@@ -121,6 +196,8 @@ def integrity_signals(
         _commit_share_signal(source, username),
         _bulk_upload_signal(source),
         _repo_history_signal(repo),
+        _commit_spread_signal(repo),
+        _history_import_signal(repo),
         _ai_leftover_signal(source),
     ]
 

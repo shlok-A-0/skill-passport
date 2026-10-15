@@ -47,6 +47,8 @@ CI_FILES = {
     "azure-pipelines.yml", "bitbucket-pipelines.yml",
 }
 HISTORY_PAGE_SIZE = 100
+# Cache files written before the current schema lack newer fields, so they are refetched.
+CACHE_SCHEMA_VERSION = 2
 
 
 class GitHubIngestError(RuntimeError):
@@ -183,6 +185,31 @@ def _count_commits(
     return int(last.group(1)) if last else len(response.json())
 
 
+def _user_commits(
+    client: httpx.Client, owner: str, repo: str, username: str
+) -> tuple[list[dict[str, str]] | None, bool]:
+    """The user's latest commits with author and committer dates; (None, False) when unavailable."""
+    try:
+        commits = _request(
+            client,
+            f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits",
+            params={"author": username, "per_page": HISTORY_PAGE_SIZE},
+        )
+    except GitHubIngestError:
+        return None, False
+    if not isinstance(commits, list):
+        return None, False
+    result = []
+    for commit in commits:
+        details = commit.get("commit") or {}
+        result.append({
+            "sha": commit.get("sha", ""),
+            "author_date": (details.get("author") or {}).get("date"),
+            "committer_date": (details.get("committer") or {}).get("date"),
+        })
+    return result, len(commits) < HISTORY_PAGE_SIZE
+
+
 def _file_history(
     client: httpx.Client, owner: str, repo: str, path: str, username: str
 ) -> dict[str, Any] | None:
@@ -286,7 +313,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
     cache_path = _cache_path(username)
     if not force_refresh and cache_path.exists():
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if time.time() - cached.get("cached_at", 0) < CACHE_TTL_SECONDS:
+        fresh = time.time() - cached.get("cached_at", 0) < CACHE_TTL_SECONDS
+        if fresh and cached.get("schema_version") == CACHE_SCHEMA_VERSION:
             return cached["data"]
 
     timeout = httpx.Timeout(20.0, connect=10.0)
@@ -418,6 +446,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "blame": _file_blame(client, owner, name, head_sha, path),
                 }
 
+            user_commits, user_commits_complete = _user_commits(client, owner, name, username)
             repo_results.append(
                 {
                     "name": name,
@@ -437,9 +466,16 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "config_contents": config_contents,
                     "test_files": tests,
                     "source_files": source_files,
+                    "source_file_count": sum(1 for path in tree if _source_candidate(path)),
+                    "user_commits": user_commits,
+                    "user_commits_complete": user_commits_complete,
                     "commit_counts": {
                         "total": _count_commits(client, owner, name),
-                        "by_user": _count_commits(client, owner, name, author=username),
+                        # A complete commit list already gives the user's count.
+                        "by_user": (
+                            len(user_commits) if user_commits_complete and user_commits is not None
+                            else _count_commits(client, owner, name, author=username)
+                        ),
                     },
                 }
             )
@@ -451,7 +487,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
         "repos": repo_results,
     }
     cache_path.write_text(
-        json.dumps({"cached_at": time.time(), "data": result}),
+        json.dumps({"schema_version": CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": result}),
         encoding="utf-8",
     )
     return result

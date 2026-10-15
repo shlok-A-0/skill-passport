@@ -215,6 +215,116 @@ def test_claim_proposal_schema_accepts_valid_json_and_rejects_unknown_skill() ->
         )
 
 
+def _commits(*days: str) -> list[dict]:
+    return [
+        {"sha": f"c{index}", "author_date": f"{day}T10:00:00Z", "committer_date": f"{day}T10:00:00Z"}
+        for index, day in enumerate(days)
+    ]
+
+
+def _repo_signals(**repo_fields: object) -> dict[str, dict]:
+    ingestion = sample_ingestion()
+    ingestion["repos"][0].update(repo_fields)
+    return _signals(ingestion)
+
+
+def test_all_commits_on_one_day_in_a_large_repo_warns() -> None:
+    signal = _repo_signals(
+        user_commits=_commits("2024-03-05", "2024-03-05", "2024-03-05"),
+        user_commits_complete=True, source_file_count=20,
+    )["commit_spread"]
+    assert signal["status"] == "warn"
+    assert signal["detail"] == "All 3 of your commits in this repository were made on one day (2024-03-05)."
+
+
+def test_all_commits_on_one_day_in_a_small_repo_is_ok() -> None:
+    signal = _repo_signals(
+        user_commits=_commits("2024-03-05", "2024-03-05"), user_commits_complete=True, source_file_count=5,
+    )["commit_spread"]
+    assert signal["status"] == "ok"
+
+
+def test_commits_over_ten_days_are_ok() -> None:
+    signal = _repo_signals(
+        user_commits=_commits(*[f"2024-03-{day:02d}" for day in range(1, 11)]),
+        user_commits_complete=True, source_file_count=40,
+    )["commit_spread"]
+    assert signal["status"] == "ok"
+    assert signal["detail"] == "10 commits across 10 days, from 2024-03-01 to 2024-03-10."
+
+
+def test_history_dated_before_repo_creation_warns() -> None:
+    signal = _repo_signals(
+        created_at="2024-04-01T00:00:00Z",
+        user_commits=_commits("2024-03-02", "2024-03-02", "2024-03-02", "2024-03-02", "2024-04-02"),
+    )["history_import"]
+    assert signal["status"] == "warn"
+    assert signal["detail"].startswith("4 of 5 commits are dated before this repository was created on GitHub (2024-04-01).")
+
+
+def test_history_after_repo_creation_is_ok() -> None:
+    signal = _repo_signals(
+        created_at="2024-04-01T00:00:00Z",
+        user_commits=_commits("2024-04-01", "2024-04-03", "2024-04-09"),
+    )["history_import"]
+    assert signal["status"] == "ok"
+
+
+def test_commit_timing_signals_are_unknown_without_data() -> None:
+    signals = _repo_signals()
+    assert signals["commit_spread"]["status"] == "unknown"
+    assert signals["history_import"]["status"] == "unknown"
+    # Commits but no repository size or creation date: still unknown, never a crash.
+    signals = _repo_signals(user_commits=_commits("2024-03-05"), user_commits_complete=True)
+    assert signals["commit_spread"]["status"] == "unknown"
+    assert signals["history_import"]["status"] == "unknown"
+    signals = _repo_signals(user_commits=[{"sha": "x", "author_date": None}], created_at="not a date")
+    assert signals["commit_spread"]["status"] == "unknown"
+    assert signals["history_import"]["status"] == "unknown"
+
+
+def test_ingestion_records_user_commit_dates(monkeypatch) -> None:
+    from app.services import github_ingest
+
+    page = [{"sha": "a1", "commit": {"author": {"date": "2024-01-01T00:00:00Z"},
+                                     "committer": {"date": "2024-01-02T00:00:00Z"}}}]
+    monkeypatch.setattr(github_ingest, "_request", lambda client, url, **kwargs: page)
+    commits, complete = github_ingest._user_commits(object(), "student", "demo-api", "student")
+    assert commits == [{"sha": "a1", "author_date": "2024-01-01T00:00:00Z", "committer_date": "2024-01-02T00:00:00Z"}]
+    assert complete is True
+
+    def fail(*_args, **_kwargs):
+        raise github_ingest.GitHubIngestError("409 empty repository")
+
+    monkeypatch.setattr(github_ingest, "_request", fail)
+    assert github_ingest._user_commits(object(), "student", "demo-api", "student") == (None, False)
+
+
+def test_github_cache_without_schema_version_is_expired(monkeypatch, tmp_path) -> None:
+    import json
+    import time
+
+    from app.services import github_ingest
+
+    cache_file = tmp_path / "github-student.json"
+    monkeypatch.setattr(github_ingest, "_cache_path", lambda username: cache_file)
+
+    class Refetched(Exception):
+        pass
+
+    def no_network(*_args, **_kwargs):
+        raise Refetched
+
+    monkeypatch.setattr(github_ingest, "_request", no_network)
+    cache_file.write_text(json.dumps({"cached_at": time.time(), "data": {"repos": "old"}}), encoding="utf-8")
+    with pytest.raises(Refetched):
+        github_ingest.ingest_github("student")
+    cache_file.write_text(json.dumps({
+        "schema_version": github_ingest.CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": {"repos": "new"},
+    }), encoding="utf-8")
+    assert github_ingest.ingest_github("student") == {"repos": "new"}
+
+
 def _signals(ingestion: dict) -> dict[str, dict]:
     result = verify_one_claim(claim(), ingestion)
     assert result["verified"] is True  # integrity signals never change verification
@@ -259,6 +369,10 @@ def test_integrity_signals_pass_for_incremental_own_work() -> None:
         "creation": {"files_changed": 2, "total_additions": 30, "file_additions": 4},
     }
     repo["commit_counts"] = {"total": 24, "by_user": 24}
+    repo["created_at"] = "2024-01-01T00:00:00Z"
+    repo["user_commits"] = _commits("2024-01-02", "2024-01-09", "2024-02-01")
+    repo["user_commits_complete"] = True
+    repo["source_file_count"] = 20
     signals = _signals(ingestion)
     assert {item["status"] for item in signals.values()} == {"ok"}
 
