@@ -1,6 +1,8 @@
 import { ArrowUpRight, Check, MessageSquare } from "lucide-react";
 import { useState } from "react";
-import { api, citationKey, EXCLUDED_KINDS, NOT_WRITTEN_KIND, type RejectedClaim, type ReviewRequest } from "../api";
+import {
+  api, citationKey, DEFAULT_CHECK_LABELS, EXCLUDED_KINDS, NOT_WRITTEN_KIND, type RejectedClaim, type ReviewRequest,
+} from "../api";
 import { skillName } from "../skillNames";
 
 export type Audience = "student" | "recruiter";
@@ -115,12 +117,15 @@ function RecruiterExcluded({ item, request, onChanged }: { item: RejectedClaim; 
   );
 }
 
-function UnsupportedItem({ item }: { item: RejectedClaim }) {
+/** The backend's reason already lists the failed checks, so each one is shown once, by label. */
+function UnsupportedItem({ item, labels }: { item: RejectedClaim; labels?: Record<string, string> }) {
+  const failed = [...new Set(item.failed_checks ?? [])];
   return (
     <article className="rejected-item">
       <Where item={item} />
-      <p>{item.reason}</p>
-      {item.failed_checks && <small>Failed checks: {item.failed_checks.join(", ")}</small>}
+      {failed.length
+        ? <p>Failed checks: {failed.map((key) => labels?.[key] ?? DEFAULT_CHECK_LABELS[key] ?? key).join(", ")}</p>
+        : <p>{item.reason}</p>}
     </article>
   );
 }
@@ -129,12 +134,13 @@ function UnsupportedItem({ item }: { item: RejectedClaim }) {
  * Students see each citation that wasn't counted (with "Request review") and the AI's
  * unsupported claims; recruiters see every rejected and excluded claim, with review requests.
  */
-export default function RejectedClaims({ claims, audience, passportId = "", requests = [], onChanged }: {
+export default function RejectedClaims({ claims, audience, passportId = "", requests = [], onChanged, labels }: {
   claims: RejectedClaim[];
   audience: Audience;
   passportId?: string;
   requests?: ReviewRequest[];
   onChanged?: () => void;
+  labels?: Record<string, string>;
 }) {
   // "review" is the summary line older backends sent instead of individual items.
   const listed = claims.filter((item) => item.kind !== "review");
@@ -149,7 +155,7 @@ export default function RejectedClaims({ claims, audience, passportId = "", requ
       <summary>{title} <span className="count-tag">{listed.length}</span></summary>
       {listed.length ? listed.map((item, index) => {
         const key = `${String(item.claim?.file_path)}-${index}`;
-        if (!isExcluded(item)) return <UnsupportedItem item={item} key={key} />;
+        if (!isExcluded(item)) return <UnsupportedItem item={item} labels={labels} key={key} />;
         return audience === "student"
           ? <StudentExcluded item={item} passportId={passportId} key={key} />
           : <RecruiterExcluded item={item} request={latestRequest(item)} onChanged={onChanged} key={key} />;

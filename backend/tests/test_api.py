@@ -386,6 +386,23 @@ def test_not_written_citation_is_listed_for_the_student_with_a_neutral_reason(tm
     assert response.status_code == 201
 
 
+def test_badge_uses_readable_skill_names() -> None:
+    from app.services.badge import create_badge
+
+    passport = fake_passport("p")
+    passport["skills"] = [
+        {"skill_id": skill_id, "level": "Used", "certified": False,
+         "evidence": [{"type": "config", "url": "u", "checks": {"authored": True}}]}
+        for skill_id in ("git", "unit-testing", "rest-api")
+    ]
+    passport["skills"][0]["name"] = "Git"  # stored name, or looked up for older passports
+    achievements = create_badge(passport)["credentialSubject"]["achievement"]
+    assert [(item["name"], item["skillId"]) for item in achievements] == [
+        ("Git", "git"), ("Unit Testing", "unit-testing"), ("REST API design", "rest-api"),
+    ]
+    assert all(item["evidence"][0]["narrative"].startswith(f"config evidence for {item['name']};") for item in achievements)
+
+
 BANNED_WORDS = ("prove", "proves", "proven", "expert", "mastery", "competence", "fraud", "fake", "copied", "cheat")
 
 
@@ -409,7 +426,7 @@ def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
 
     badge = create_badge(fake_passport("passport-1"))
     subject = badge["credentialSubject"]
-    assert [item["name"] for item in subject["achievement"]] == ["python"]
+    assert [(item["name"], item["skillId"]) for item in subject["achievement"]] == [("Python", "python")]
     assert badge["prototypeNote"] == "unsigned prototype"
     assert "proof" not in badge
     assert "credentialStatus" not in badge

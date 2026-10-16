@@ -8,6 +8,7 @@ import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
+import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
 
 const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
@@ -110,7 +111,6 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         </div>
       </header>
       {error && <div className="notice notice-error">{error}</div>}
-      {(passport.generation_error || passport.generation_warning) && <div className="notice notice-warning">The growth plan couldn't be generated this time. Use Re-check to try again.</div>}
       {changes.length > 0 && (
         <div className="upgrade-banner"><Sparkles size={18} /><div><strong>Evidence updated after re-check</strong><p>{changes.map((change) => `${skillName(change.skill_id)}: ${change.from} → ${change.to}`).join(" · ")}</p></div></div>
       )}
@@ -148,11 +148,13 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             <p className="muted">Complete a task in your repo, then re-ingest GitHub to check for new evidence.</p>
             {passport.growth_tasks.length ? passport.growth_tasks.map((task) => (
               <GrowthCard key={task.skill_id} task={task} onRecheck={recheck} busy={busy} />
-            )) : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
+            )) : growthUnavailable(passport)
+              ? <div className="notice notice-warning">{GROWTH_UNAVAILABLE}</div>
+              : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
             <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /> {busy ? "Re-checking GitHub…" : "Re-check GitHub now"}</button>
           </section>
           <RejectedClaims claims={passport.rejected_claims} audience={audience} passportId={passport.id}
-            requests={passport.review_requests} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
+            requests={passport.review_requests} labels={passport.check_labels} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">
           {selected ? <EvidencePanel skill={selected} audience={audience} labels={passport.check_labels} /> :<section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}

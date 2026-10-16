@@ -158,6 +158,8 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .check-pass { color: #27824d; }
 .check-fail { color: #a44b40; }
 .check-neutral { color: #6b7180; }
+.unavailable-note { margin: 4px 0 0; color: #8a6300; font-size: 11px; }
+.coverage-missing { cursor: default; color: #8a6300; }
 .integrity-list { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e2e5eb; display: grid; gap: 6px; }
 .integrity-title { color: #848b99; font-size: 9px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
 .integrity-row { display: flex; align-items: flex-start; gap: 6px; font-size: 10px; line-height: 1.5; color: #4a5268; }

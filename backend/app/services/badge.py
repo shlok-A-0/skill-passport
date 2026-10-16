@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.services.framework import skill_map
 from app.services.verifier import LEVEL_DESCRIPTIONS, LEVEL_NOTE
 
 
@@ -8,7 +9,8 @@ def create_badge(passport: dict[str, Any]) -> dict[str, Any]:
     for skill in passport["skills"]:
         if skill["level"] == "Claimed" or not skill["evidence"]:
             continue
-        name = skill["skill_id"]
+        # Readable name ("REST API design"); older passports have no name, so look it up.
+        name = skill.get("name") or (skill_map().get(skill["skill_id"]) or {}).get("name") or skill["skill_id"]
         evidence_items = []
         for item in skill["evidence"]:
             entry = {
@@ -27,6 +29,7 @@ def create_badge(passport: dict[str, Any]) -> dict[str, Any]:
             {
                 "type": "Achievement",
                 "name": name,
+                "skillId": skill["skill_id"],
                 "description": (
                     f"{skill['level']}: {LEVEL_DESCRIPTIONS[skill['level']]} {LEVEL_NOTE} "
                     "This is an unsigned prototype."

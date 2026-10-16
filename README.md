@@ -118,6 +118,9 @@ From the project root:
 backend\.venv\Scripts\python.exe -m pytest backend/tests -q
 cd frontend
 npm run build
+npm test
 ```
+
+`npm test` uses Node's built-in test runner (Node 22.18 or newer, which runs TypeScript directly).
 
 All GitHub and Gemini calls are mocked in the tests.

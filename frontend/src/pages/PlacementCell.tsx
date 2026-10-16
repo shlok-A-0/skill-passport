@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
+import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
 function VerifyPill({ verify }: { verify: Verifiability }) {
@@ -95,7 +96,7 @@ export default function PlacementCell() {
                   <small>STRONGEST CANDIDATE</small>
                   <strong>{best.passport.github_username}{best.passport.is_demo && <em> DEMO DATA</em>}</strong>
                   <p>
-                    Meets {best.mustMet} of {best.mustTotal} must-have and {best.met} of {requirements.length} total requirements with code evidence.{" "}
+                    Meets {best.mustMet} of {best.mustTotal} must-have and {best.met} of {requirements.length} total requirements; {best.codeMet} with code evidence (Applied or Demonstrated).{" "}
                     {best.verify.tier === "Not checked"
                       ? "Authorship checks have not run on this passport yet; use Re-check."
                       : best.verify.warnings.length
@@ -112,7 +113,9 @@ export default function PlacementCell() {
                 <tbody>{ranked.map((row, index) => (
                   <tr key={row.passport.id} className={index === 0 ? "rank-top" : ""}>
                     <td className="rank-number">{index + 1}</td>
-                    <td><Link to={`/passport/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div></td>
+                    <td><Link to={`/passport/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div>
+                      {growthUnavailable(row.passport) && <div className="unavailable-note">{GROWTH_UNAVAILABLE}</div>}
+                      {!row.passport.coverage && <div className="unavailable-note">{COVERAGE_MISSING}</div>}</td>
                     <td>{row.mustMet} of {row.mustTotal}</td>
                     <td>{row.met} of {requirements.length}</td>
                     <td><VerifyPill verify={row.verify} />{row.verify.earlierSources > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(row.verify.earlierSources)}</div>}</td>

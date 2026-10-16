@@ -52,6 +52,17 @@ export type IntegritySignal = {
 
 export type LinesWritten = { written: number; cited: number };
 
+/** Same wording as the backend's CHECK_LABELS; used when a response doesn't include them. */
+export const DEFAULT_CHECK_LABELS: Record<string, string> = {
+  file_exists: "File exists in repository",
+  lines_valid: "Cited lines are valid",
+  authored: "You committed to this file",
+  not_fork: "Repository is not a fork",
+  signature_found: "Skill signature found in code",
+  lines_written: "Cited lines written by you",
+  skill_id: "Skill is in the skill framework",
+};
+
 /** "copied" is the legacy name stored in older passports; both mean an earlier public source. */
 export const EARLIER_SOURCE_KINDS = new Set(["earlier_source", "copied"]);
 export const NOT_WRITTEN_KIND = "not_written_by_candidate";

@@ -66,7 +66,7 @@ export default function RecruiterEvidence() {
             ) : <div className="empty-state">No skills were found in this passport.</div>}
           </section>
           <RejectedClaims claims={passport.rejected_claims} audience="recruiter" passportId={passport.id}
-            requests={passport.review_requests}
+            requests={passport.review_requests} labels={passport.check_labels}
             onChanged={() => { api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">

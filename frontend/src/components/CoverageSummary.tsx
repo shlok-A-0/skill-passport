@@ -1,6 +1,7 @@
 import { ChevronDown, FolderSearch } from "lucide-react";
 import { useState } from "react";
 import type { Coverage } from "../api";
+import { COVERAGE_MISSING } from "../passportNotes";
 
 const skipLabels: Record<string, string> = {
   too_large: "too large to read",
@@ -17,7 +18,8 @@ function about(lines: number): string {
 /** One-line summary of what was analysed; click to see the per-repository breakdown. */
 export default function CoverageSummary({ coverage }: { coverage?: Coverage }) {
   const [open, setOpen] = useState(false);
-  if (!coverage) return null;
+  // Passports built before coverage was recorded.
+  if (!coverage) return <div className="coverage"><span className="coverage-line coverage-missing"><FolderSearch size={13} /> {COVERAGE_MISSING}</span></div>;
   const repos = coverage.repos_analysed === 1 ? "repository" : "repositories";
   return (
     <div className={`coverage ${open ? "coverage-open" : ""}`}>

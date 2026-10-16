@@ -1,17 +1,8 @@
 import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2, FlaskConical, X } from "lucide-react";
-import { skillLabel, type Evidence, type PassportSkill } from "../api";
+import { DEFAULT_CHECK_LABELS, skillLabel, type Evidence, type PassportSkill } from "../api";
 import LadderPill from "./LadderPill";
 import type { Audience } from "./RejectedClaims";
 
-/** Same wording as the backend's CHECK_LABELS; used when a response doesn't include them. */
-const DEFAULT_LABELS: Record<string, string> = {
-  file_exists: "File exists in repository",
-  lines_valid: "Cited lines are valid",
-  authored: "You committed to this file",
-  not_fork: "Repository is not a fork",
-  signature_found: "Skill signature found in code",
-  lines_written: "Cited lines written by you",
-};
 const GIT_HISTORY = "(commit history)";
 const CODE_CHECKS = ["file_exists", "lines_valid", "authored", "not_fork", "signature_found"];
 const FILE_CHECKS = ["file_exists", "authored", "not_fork"];
@@ -38,7 +29,7 @@ export default function EvidencePanel({ skill, audience, labels }: {
   skill: PassportSkill; audience: Audience; labels?: Record<string, string>;
 }) {
   const label = (item: Evidence, key: string) => (
-    item.file_path === GIT_HISTORY && key === "file_exists" ? "Commit history found" : labels?.[key] ?? DEFAULT_LABELS[key]
+    item.file_path === GIT_HISTORY && key === "file_exists" ? "Commit history found" : labels?.[key] ?? DEFAULT_CHECK_LABELS[key]
   );
   return (
     <section className="panel evidence-panel">

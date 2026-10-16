@@ -231,3 +231,37 @@ def test_gemini_busy_errors_are_retried(monkeypatch) -> None:
     client = type("C", (), {"models": Models()})()
     assert gemini.generate_json(client, "prompt") == '{"claims": []}'
     assert calls["n"] == 3
+
+
+def _flaky_client(failures: list[Exception]):
+    calls = {"n": 0}
+
+    class Models:
+        def generate_content(self, **_):
+            calls["n"] += 1
+            if failures:
+                raise failures.pop(0)
+            return type("R", (), {"text": '{"claims": []}'})()
+
+    return type("C", (), {"models": Models()})(), calls
+
+
+def test_gemini_connection_errors_are_retried_twice(monkeypatch) -> None:
+    import httpx
+    import pytest
+
+    from app.services import gemini
+
+    delays: list[float] = []
+    monkeypatch.setattr(gemini.time, "sleep", delays.append)
+    for error in (httpx.RemoteProtocolError("Server disconnected"), httpx.ReadTimeout("timed out"),
+                  httpx.ConnectError("refused"), ConnectionResetError("reset by peer")):
+        client, calls = _flaky_client([error, error])
+        assert gemini.generate_json(client, "prompt") == '{"claims": []}'
+        assert calls["n"] == 3, error
+    assert delays[:2] == [3, 8]  # back-off
+    # A third consecutive failure is raised (2 retries at most).
+    client, calls = _flaky_client([httpx.RemoteProtocolError("x")] * 3)
+    with pytest.raises(httpx.RemoteProtocolError):
+        gemini.generate_json(client, "prompt")
+    assert calls["n"] == 3

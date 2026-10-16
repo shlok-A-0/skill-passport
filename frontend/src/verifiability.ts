@@ -1,4 +1,5 @@
 import { EARLIER_SOURCE_KINDS, type IntegritySignal, type Passport } from "./api";
+import { countRequirementsMet, type RequirementLike } from "./requirements";
 
 export type Verifiability = {
   tier: "High" | "Medium" | "Low" | "Not checked";
@@ -10,7 +11,6 @@ export type Verifiability = {
   earlierSources: number;
 };
 
-const levelOrder: Record<string, number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 // Signals that point at the code itself not being the student's are weighted as serious.
 const SERIOUS = new Set(["ai_leftover", "copy_match", "line_share"]);
 // Repository-level signals: counted once per repository, not once per cited file.
@@ -52,21 +52,8 @@ export function earlierSourcesText(count: number): string {
   return `${count} citation${count === 1 ? "" : "s"} matched earlier public sources`;
 }
 
-type Requirement ={ skill_id: string; min_level: string; importance: string };
-
-export function requirementsMet(passport: Passport, requirements: Requirement[]) {
-  const met = requirements.filter((requirement) => {
-    const skill = passport.skills.find((item) => item.skill_id === requirement.skill_id);
-    return Boolean(
-      skill && skill.level !== "Claimed" && skill.evidence.length
-      && levelOrder[skill.level] >= levelOrder[requirement.min_level],
-    );
-  });
-  return {
-    met: met.length,
-    mustMet: met.filter((item) => item.importance === "must").length,
-    mustTotal: requirements.filter((item) => item.importance === "must").length,
-  };
+export function requirementsMet(passport: Passport, requirements: RequirementLike[]) {
+  return countRequirementsMet(passport.skills, requirements);
 }
 
 /**
@@ -85,7 +72,7 @@ export function latestPerStudent(passports: Passport[]): Passport[] {
   return [...latest.values()];
 }
 
-export function rankCandidates(passports: Passport[], requirements: Requirement[]) {
+export function rankCandidates(passports: Passport[], requirements: RequirementLike[]) {
   return latestPerStudent(passports)
     .map((passport) => ({ passport, ...requirementsMet(passport, requirements), verify: verifiability(passport) }))
     .sort((a, b) =>
