@@ -817,7 +817,7 @@ def run_copy_check(
     candidate_first_seen: str | None = CANDIDATE_FIRST_SEEN,
 ) -> dict:
     from app.services import copy_check
-    from app.services.verifier import exclude_earlier_sources
+    from app.services.verifier import exclude_uncounted_citations
 
     queries: list[str] = []
     checked: list[tuple[str, str, str]] = []
@@ -842,7 +842,7 @@ def run_copy_check(
     verified = verify_claims([claim(end_line=5)], ingestion, resume_skills=resume_skills)
     first_seen = {"demo-api/app.py": candidate_first_seen} if candidate_first_seen else {}
     copy_check.add_copy_signals(verified["skills"], "student", first_seen)
-    exclude_earlier_sources(verified, ingestion["repos"])
+    exclude_uncounted_citations(verified, ingestion["repos"])
     verified["queries"] = queries
     verified["checked"] = checked
     return verified
@@ -940,6 +940,83 @@ def test_skill_losing_all_evidence_is_removed_or_kept_as_claimed(monkeypatch) ->
     )
     flask = _skill(verified, "flask")
     assert flask["level"] == "Claimed" and flask["evidence"] == []
+
+
+ROUTES_LINES = [
+    "from flask import Flask",
+    "app = Flask(__name__)",
+    "",
+    "@app.route('/orders')",
+    "def orders():",
+    "    items = load_orders()",
+    "    return {'orders': items}",
+    "",
+    "@app.route('/health')",
+    "def health():",
+    "    return {'status': 'ok'}",
+]
+
+
+def blame_ingestion(blame: list | None) -> dict:
+    """web/routes.py (11 Flask lines, committed to by the student) with tests/test_routes.py targeting it."""
+    data = sample_ingestion()
+    repo = data["repos"][0]
+    repo["source_files"]["web/routes.py"] = {
+        "content": "\n".join(ROUTES_LINES), "lines": ROUTES_LINES, "authored_shas": ["def456"],
+        "line_count": len(ROUTES_LINES), "blame": blame,
+    }
+    repo["tree"] += ["web/routes.py", "tests/test_routes.py"]
+    repo["test_files"] = ["tests/test_routes.py"]
+    return data
+
+
+def run_with_blame(blame: list | None, **repo_overrides: object) -> dict:
+    from app.services.verifier import exclude_uncounted_citations
+
+    data = blame_ingestion(blame)
+    data["repos"][0].update(repo_overrides)
+    verified = verify_claims([claim(file_path="web/routes.py", start_line=1, end_line=11)], data,
+                             resume_skills=[{"skill_id": "aws", "mention": "AWS"}])
+    return exclude_uncounted_citations(verified, data["repos"])
+
+
+def _code_items(skill: dict) -> list[dict]:
+    return [item for item in skill["evidence"] if item["type"] == "code"]
+
+
+def test_citation_with_no_candidate_written_lines_is_excluded_and_level_recomputed() -> None:
+    verified = run_with_blame([[1, 11, "karpathy"]])
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Used"  # was Demonstrated; only the authored requirements.txt remains
+    assert not _code_items(flask)
+    excluded = [item for item in verified["rejected_claims"] if item["kind"] == "not_written_by_candidate"]
+    assert len(excluded) == 1
+    assert excluded[0]["reason"] == "None of the cited lines were last changed in your commits."
+    assert excluded[0]["failed_checks"] == ["not_written_by_candidate"]
+    assert excluded[0]["lines_written"] == {"written": 0, "cited": 11}
+    assert excluded[0]["url"].endswith("web/routes.py#L1-L11")
+    # With nothing else supporting Flask (and no resume mention), the skill disappears.
+    assert _skill(run_with_blame([[1, 11, "karpathy"]], dependency_contents={}), "flask") is None
+
+
+def test_partly_written_citation_counts_but_cannot_be_demonstrated() -> None:
+    flask = _skill(run_with_blame([[1, 3, "student"], [4, 11, "karpathy"]]), "flask")
+    assert flask["level"] == "Applied"
+    code = _code_items(flask)[0]
+    assert code["lines_written"] == {"written": 3, "cited": 11}
+    assert "demonstrated_by" not in code
+    assert code["record"]["rules_applied"] == ["applied:code_citation"]
+
+
+def test_unknown_blame_counts_normally() -> None:
+    for blame in (None, [[1, 11, None]], [[1, 4, "student"], [5, 11, None]]):
+        verified = run_with_blame(blame)
+        flask = _skill(verified, "flask")
+        code = _code_items(flask)[0]
+        assert code["lines_written"] is None, blame
+        assert next(s for s in code["integrity"] if s["id"] == "line_share")["status"] == "unknown"
+        assert not [item for item in verified["rejected_claims"] if item["kind"] == "not_written_by_candidate"]
+        assert flask["level"] == "Demonstrated", blame
 
 
 def test_failed_claims_are_tagged_unsupported() -> None:

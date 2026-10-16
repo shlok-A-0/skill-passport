@@ -12,7 +12,7 @@ from app.services.jobs import complete_job, fail_job, update_job
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
-from app.services.verifier import exclude_earlier_sources, verify_claims
+from app.services.verifier import exclude_uncounted_citations, verify_claims
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +94,9 @@ def build_passport(
             if source.get("first_commit_date")
         },
     )
-    # Earlier-source matches are removed before role matching, so the match sees the final levels.
-    exclude_earlier_sources(verified, ingestion["repos"])
+    # Earlier-source matches and citations with no candidate-written lines are removed before
+    # role matching, so the match sees the final levels.
+    exclude_uncounted_citations(verified, ingestion["repos"])
     progress("Matching role")
     coverage = build_coverage(ingestion)
     role_match = match_role(verified["skills"], target_role, coverage)

@@ -351,6 +351,41 @@ def test_coverage_is_in_student_and_review_responses(tmp_path, monkeypatch) -> N
         assert client.get(path).json()["coverage"] == passport["coverage"]
 
 
+def test_check_labels_use_the_new_wording(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    for path in ("/passport/p-review", "/passport/p-review/review"):
+        labels = client.get(path).json()["check_labels"]
+        assert labels["authored"] == "You committed to this file"
+        assert labels["lines_written"] == "Cited lines written by you"
+        assert "Authored by you" not in labels.values()
+
+
+def test_not_written_citation_is_listed_for_the_student_with_a_neutral_reason(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = fake_passport("p-unwritten")
+    passport["rejected_claims"] = [{
+        "claim": {"skill_id": "python", "repo": "demo", "file_path": "engine.py", "start_line": 2, "end_line": 12},
+        "failed_checks": ["not_written_by_candidate"],
+        "reason": "None of the cited lines were last changed in your commits.",
+        "url": "https://github.com/demo-user/demo/blob/abc123/engine.py#L2-L12",
+        "lines_written": {"written": 0, "cited": 11},
+        "kind": "not_written_by_candidate",
+    }]
+    storage.save_passport(passport)
+    item = client.get("/passport/p-unwritten").json()["rejected_claims"][0]
+    assert item == {
+        "kind": "not_written_by_candidate",
+        "citation_key": "python:demo:engine.py:2-12",
+        "claim": {"skill_id": "python", "repo": "demo", "file_path": "engine.py", "start_line": 2, "end_line": 12},
+        "url": "https://github.com/demo-user/demo/blob/abc123/engine.py#L2-L12",
+        "source_url": None,
+        "reason": "None of the cited lines were last changed in your commits.",
+        "review_request": None,
+    }
+    response = client.post("/passport/p-unwritten/review-requests", json={"citation_key": "python:demo:engine.py:2-12"})
+    assert response.status_code == 201
+
+
 BANNED_WORDS = ("prove", "proves", "proven", "expert", "mastery", "competence", "fraud", "fake", "copied", "cheat")
 
 

@@ -24,7 +24,13 @@ from app.services.storage import (
     list_review_requests,
     mark_review_request_reviewed,
 )
-from app.services.verifier import EARLIER_SOURCE_KINDS, citation_key
+from app.services.verifier import (
+    CHECK_LABELS,
+    EXCLUDED_KINDS,
+    NOT_WRITTEN_KIND,
+    NOT_WRITTEN_REASON,
+    citation_key,
+)
 
 app = FastAPI(title="Skill Passport", version="0.1.0")
 app.add_middleware(
@@ -48,13 +54,14 @@ def _student_excluded_item(item: dict[str, Any], requests: list[dict[str, Any]])
     claim = item.get("claim") or {}
     key = citation_key(claim)
     request = next((r for r in reversed(requests) if r["citation_key"] == key), None)
+    not_written = item.get("kind") == NOT_WRITTEN_KIND
     return {
-        "kind": "earlier_source",
+        "kind": NOT_WRITTEN_KIND if not_written else "earlier_source",
         "citation_key": key,
         "claim": {field: claim.get(field) for field in ("skill_id", "repo", "file_path", "start_line", "end_line")},
         "url": item.get("url"),
         "source_url": item.get("source_url"),
-        "reason": STUDENT_EXCLUDED_REASON,
+        "reason": NOT_WRITTEN_REASON if not_written else STUDENT_EXCLUDED_REASON,
         "review_request": (
             {"status": request["status"], "created_at": request["created_at"]} if request else None
         ),
@@ -74,9 +81,10 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
         for question in entry.get("questions", []):
             question.pop("good_answer_mentions", None)
     view["rejected_claims"] = [
-        _student_excluded_item(item, requests or []) if item.get("kind") in EARLIER_SOURCE_KINDS else item
+        _student_excluded_item(item, requests or []) if item.get("kind") in EXCLUDED_KINDS else item
         for item in view.get("rejected_claims", [])
     ]
+    view["check_labels"] = CHECK_LABELS
     return view
 
 
@@ -84,7 +92,7 @@ def _excluded_keys(passport: dict[str, Any]) -> set[str]:
     return {
         citation_key(item.get("claim") or {})
         for item in passport.get("rejected_claims", [])
-        if item.get("kind") in EARLIER_SOURCE_KINDS
+        if item.get("kind") in EXCLUDED_KINDS
     }
 
 
@@ -92,6 +100,7 @@ def review_view(passport: dict[str, Any]) -> dict[str, Any]:
     """The full passport for recruiters, with the student's review requests."""
     return {
         **passport,
+        "check_labels": CHECK_LABELS,
         "review_requests": list_review_requests(passport["id"]),
         # Computed on read (deterministic, no LLM), so stored passports get it too.
         "requirement_packets": requirement_packets(passport),

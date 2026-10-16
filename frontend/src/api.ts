@@ -13,6 +13,8 @@ export type Evidence = {
   snippet: string;
   explanation: string;
   checks: Record<string, boolean>;
+  /** Code citations: cited lines git blame attributes to the candidate; null when unknown. */
+  lines_written?: LinesWritten | null;
   integrity?: IntegritySignal[];
   test_file_group?: boolean;
   /** The test that targets this cited file (by name or import), which makes the skill Demonstrated. */
@@ -48,19 +50,26 @@ export type IntegritySignal = {
   candidate_first_seen?: string;
 };
 
+export type LinesWritten = { written: number; cited: number };
+
 /** "copied" is the legacy name stored in older passports; both mean an earlier public source. */
 export const EARLIER_SOURCE_KINDS = new Set(["earlier_source", "copied"]);
+export const NOT_WRITTEN_KIND = "not_written_by_candidate";
+/** Citations removed after verification; students see each one and can request a review. */
+export const EXCLUDED_KINDS = new Set([...EARLIER_SOURCE_KINDS, NOT_WRITTEN_KIND]);
 
 /**
  * "unsupported": failed a verification check. "earlier_source" (legacy "copied"): matches code
  * that appeared earlier elsewhere, so it isn't counted as the candidate's own work.
+ * "not_written_by_candidate": none of the cited lines were last changed in the candidate's commits.
  * "review": the student-safe summary of excluded items.
  */
 export type RejectedClaim = {
   claim?: Record<string, unknown>;
   failed_checks?: string[];
   reason: string;
-  kind?: "unsupported" | "earlier_source" | "copied" | "review";
+  kind?: "unsupported" | "earlier_source" | "copied" | "not_written_by_candidate" | "review";
+  lines_written?: LinesWritten;
   url?: string;
   source_repo?: string;
   source_url?: string;
@@ -176,6 +185,8 @@ export type Passport = {
   updated_at?: string;
   generation_warning?: string | null;
   generation_error?: string | null;
+  /** Labels for the evidence checks, from the backend. */
+  check_labels?: Record<string, string>;
   /** Review endpoints only. */
   review_requests?: ReviewRequest[];
   /** Review endpoints only: one reviewer-ready packet per role requirement. */

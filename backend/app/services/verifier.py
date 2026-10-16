@@ -52,23 +52,61 @@ def _same_user(login: str | None, username: str) -> bool:
 
 def _line_share_signal(
     source: dict[str, Any], start: int, end: int, username: str
-) -> dict[str, str]:
+) -> dict[str, Any]:
+    """How many cited lines git blame attributes to the candidate.
+
+    Unknown (no penalty) when blame is missing, or when any cited line's author can't be
+    identified (commit emails not linked to a GitHub account), since those may be the candidate's.
+    """
     label = "Cited lines written by you"
     blame = source.get("blame")
     if not blame:
         return _signal("line_share", label, "unknown", "Line history (git blame) was not available.")
     cited = end - start + 1
-    yours = sum(
-        max(0, min(end, range_end) - max(start, range_start) + 1)
-        for range_start, range_end, login in blame
-        if _same_user(login, username)
-    )
-    share = yours / cited
-    status = "ok" if share >= MIN_LINE_SHARE else "warn"
-    return _signal(
-        "line_share", label, status,
-        f"{yours} of {cited} cited lines were last changed in your commits.",
-    )
+
+    def overlap(range_start: int, range_end: int) -> int:
+        return max(0, min(end, range_end) - max(start, range_start) + 1)
+
+    yours = sum(overlap(s, e) for s, e, login in blame if _same_user(login, username))
+    others = sum(overlap(s, e) for s, e, login in blame if login and not _same_user(login, username))
+    if yours + others < cited:
+        return _signal(
+            "line_share", label, "unknown",
+            f"{yours} of {cited} cited lines were last changed in your commits; the author of the other "
+            f"{cited - yours - others} could not be identified (commit email not linked to a GitHub account).",
+        )
+    status = "ok" if yours / cited >= MIN_LINE_SHARE else "warn"
+    return {
+        **_signal("line_share", label, status, f"{yours} of {cited} cited lines were last changed in your commits."),
+        "written": yours,
+        "cited": cited,
+    }
+
+
+LINE_SHARE_DETAIL = re.compile(r"^(\d+) of (\d+) cited lines were last changed in your commits\.$")
+
+
+def line_share(item: dict[str, Any]) -> tuple[int, int] | None:
+    """(lines written by the candidate, lines cited), or None when blame couldn't determine it."""
+    signal = next((s for s in item.get("integrity") or [] if s.get("id") == "line_share"), None)
+    if not signal or signal.get("status") == "unknown":
+        return None
+    if isinstance(signal.get("written"), int) and isinstance(signal.get("cited"), int):
+        return signal["written"], signal["cited"]
+    match = LINE_SHARE_DETAIL.match(signal.get("detail", ""))  # passports stored before the counts existed
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def lines_written(item: dict[str, Any]) -> dict[str, int] | None:
+    """The line-share outcome shown next to the checks: {"written": N, "cited": M}, or None if unknown."""
+    share = line_share(item)
+    return {"written": share[0], "cited": share[1]} if share else None
+
+
+def _share_allows_demonstrated(item: dict[str, Any]) -> bool:
+    """A citation mostly written by others can support Applied, never Demonstrated (unknown: no penalty)."""
+    share = line_share(item)
+    return share is None or share[0] / share[1] >= MIN_LINE_SHARE
 
 
 def _commit_share_signal(source: dict[str, Any], username: str) -> dict[str, str]:
@@ -329,6 +367,7 @@ def _verify_claim(
             "checks": checks,
             "integrity": integrity_signals(repo, source, start, end, username),
         }
+        evidence["lines_written"] = lines_written(evidence)
         _attach_record(evidence, source)
     return {
         "verified": not failed_checks,
@@ -395,6 +434,7 @@ def _test_code_evidence(
             },
             "integrity": integrity_signals(repo, source, start, end, username),
         })
+        evidence[-1]["lines_written"] = lines_written(evidence[-1])
         _attach_record(evidence[-1], source)
     return evidence
 
@@ -654,7 +694,7 @@ def compute_level(
             continue
         repo = by_name.get(item["repo"]) or {}
         item.pop("demonstrated_by", None)
-        target = targeting_test(item["file_path"], repo)
+        target = targeting_test(item["file_path"], repo) if _share_allows_demonstrated(item) else None
         rules = ["applied:code_citation"]
         if target:
             item["demonstrated_by"] = target
@@ -704,6 +744,19 @@ def targeting_test(cited_path: str, repo: dict[str, Any]) -> dict[str, str] | No
 
 # Older stored passports used "copied"; both mean the same excluded outcome.
 EARLIER_SOURCE_KINDS = {"earlier_source", "copied"}
+NOT_WRITTEN_KIND = "not_written_by_candidate"
+NOT_WRITTEN_REASON = "None of the cited lines were last changed in your commits."
+# Citations removed from a skill after verification; students see each one and can request a review.
+EXCLUDED_KINDS = EARLIER_SOURCE_KINDS | {NOT_WRITTEN_KIND}
+# Shown next to each code citation. "authored" only means the candidate committed to the file.
+CHECK_LABELS = {
+    "file_exists": "File exists in repository",
+    "lines_valid": "Cited lines are valid",
+    "authored": "You committed to this file",
+    "not_fork": "Repository is not a fork",
+    "signature_found": "Skill signature found in code",
+    "lines_written": "Cited lines written by you",
+}
 
 
 def citation_key(claim: dict[str, Any]) -> str:
@@ -724,41 +777,66 @@ def _earlier_source(item: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
-def exclude_earlier_sources(
+def _excluded_claim(skill_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "skill_id": skill_id,
+        "repo": item["repo"],
+        "file_path": item["file_path"],
+        "start_line": item["start_line"],
+        "end_line": item["end_line"],
+        "explanation": item.get("explanation", ""),
+    }
+
+
+def _exclusion(skill_id: str, item: dict[str, Any]) -> dict[str, Any] | None:
+    """Why this code citation can't count as the candidate's work, or None if it counts."""
+    if item.get("type") != "code":
+        return None
+    signal = _earlier_source(item)
+    if signal is not None:
+        return {
+            "claim": _excluded_claim(skill_id, item),
+            "failed_checks": ["earlier_source"],
+            "reason": signal.get("detail", ""),
+            "url": item.get("url"),
+            "source_repo": signal.get("source_repo"),
+            "source_url": signal.get("source_url"),
+            "source_first_seen": signal.get("source_first_seen"),
+            "candidate_first_seen": signal.get("candidate_first_seen"),
+            "kind": "earlier_source",
+        }
+    share = line_share(item)
+    if share is not None and share[0] == 0:
+        return {
+            "claim": _excluded_claim(skill_id, item),
+            "failed_checks": [NOT_WRITTEN_KIND],
+            "reason": NOT_WRITTEN_REASON,
+            "url": item.get("url"),
+            "lines_written": {"written": 0, "cited": share[1]},
+            "kind": NOT_WRITTEN_KIND,
+        }
+    return None
+
+
+def exclude_uncounted_citations(
     verified: dict[str, Any], repos: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Remove code evidence that matches an earlier public source, and recompute levels.
+    """Remove code citations that can't be attributed to the candidate, and recompute levels.
 
-    Exclusion means "can't attribute to the candidate", not "copied". Only an earlier source
-    (two different cited lines in a file that appeared more than a day earlier elsewhere) is
-    excluded; every other integrity signal stays advisory.
+    Two outcomes exclude a citation: an earlier public source (two different cited lines in a
+    file that appeared more than a day earlier elsewhere; "can't attribute", not "copied"), and
+    blame showing none of the cited lines were last changed by the candidate. Unknown blame and
+    every other integrity signal stay advisory.
     """
     kept_skills = []
     for skill in verified["skills"]:
         kept = []
         for item in skill["evidence"]:
-            signal = _earlier_source(item) if item.get("type") == "code" else None
-            if signal is None:
+            exclusion = _exclusion(skill["skill_id"], item)
+            if exclusion is None:
                 kept.append(item)
-                continue
-            verified["rejected_claims"].append({
-                "claim": {
-                    "skill_id": skill["skill_id"],
-                    "repo": item["repo"],
-                    "file_path": item["file_path"],
-                    "start_line": item["start_line"],
-                    "end_line": item["end_line"],
-                    "explanation": item.get("explanation", ""),
-                },
-                "failed_checks": ["earlier_source"],
-                "reason": signal.get("detail", ""),
-                "url": item.get("url"),
-                "source_repo": signal.get("source_repo"),
-                "source_url": signal.get("source_url"),
-                "source_first_seen": signal.get("source_first_seen"),
-                "candidate_first_seen": signal.get("candidate_first_seen"),
-                "kind": "earlier_source",
-            })
+            else:
+                verified["rejected_claims"].append(exclusion)
         if len(kept) != len(skill["evidence"]):
             skill["evidence"] = kept
             skill["level"] = compute_level(skill["skill_id"], kept, repos)

@@ -155,7 +155,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             requests={passport.review_requests} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">
-          {selected ? <EvidencePanel skill={selected} audience={audience} /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
+          {selected ? <EvidencePanel skill={selected} audience={audience} labels={passport.check_labels} /> :<section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
         </aside>
       </div>
     </div>

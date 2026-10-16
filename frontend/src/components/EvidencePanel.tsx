@@ -3,12 +3,14 @@ import { skillLabel, type Evidence, type PassportSkill } from "../api";
 import LadderPill from "./LadderPill";
 import type { Audience } from "./RejectedClaims";
 
-const checkLabels: Record<string, string> = {
+/** Same wording as the backend's CHECK_LABELS; used when a response doesn't include them. */
+const DEFAULT_LABELS: Record<string, string> = {
   file_exists: "File exists in repository",
   lines_valid: "Cited lines are valid",
-  authored: "Authored by you",
+  authored: "You committed to this file",
   not_fork: "Repository is not a fork",
   signature_found: "Skill signature found in code",
+  lines_written: "Cited lines written by you",
 };
 const GIT_HISTORY = "(commit history)";
 const CODE_CHECKS = ["file_exists", "lines_valid", "authored", "not_fork", "signature_found"];
@@ -17,16 +19,27 @@ const FILE_CHECKS = ["file_exists", "authored", "not_fork"];
 /** Only the checks that apply to this kind of evidence, so nothing shows a red ✗ that was never checked. */
 function applicableChecks(item: Evidence): string[] {
   const keys = item.type === "code" ? CODE_CHECKS
-    : item.test_file_group || item.type === "commit" || item.file_path === GIT_HISTORY ? Object.keys(checkLabels)
+    : item.test_file_group || item.type === "commit" || item.file_path === GIT_HISTORY ? CODE_CHECKS
       : FILE_CHECKS;
   return keys.filter((key) => key in item.checks);
 }
 
-function checkLabel(item: Evidence, key: string): string {
-  return item.file_path === GIT_HISTORY && key === "file_exists" ? "Commit history found" : checkLabels[key];
+/** "Cited lines written by you: N of M": ✗ for none, neutral below half or when unknown. */
+function LinesWrittenRow({ item, label }: { item: Evidence; label: string }) {
+  const share = item.lines_written;
+  if (!share) return <span className="check-neutral"><CircleHelp size={13} /> {label}: Unknown</span>;
+  const text = `${label}: ${share.written} of ${share.cited}`;
+  if (share.written === 0) return <span className="check-fail"><X size={13} /> {text}</span>;
+  if (share.written * 2 < share.cited) return <span className="check-neutral"><CircleHelp size={13} /> {text}</span>;
+  return <span className="check-pass"><Check size={13} /> {text}</span>;
 }
 
-export default function EvidencePanel({ skill, audience }: { skill: PassportSkill; audience: Audience }) {
+export default function EvidencePanel({ skill, audience, labels }: {
+  skill: PassportSkill; audience: Audience; labels?: Record<string, string>;
+}) {
+  const label = (item: Evidence, key: string) => (
+    item.file_path === GIT_HISTORY && key === "file_exists" ? "Commit history found" : labels?.[key] ?? DEFAULT_LABELS[key]
+  );
   return (
     <section className="panel evidence-panel">
       <div className="panel-heading">
@@ -73,10 +86,11 @@ export default function EvidencePanel({ skill, audience }: { skill: PassportSkil
                 const passed = item.checks[key] === true;
                 return (
                   <span className={passed ? "check-pass" : "check-fail"} key={key}>
-                    {passed ? <Check size={13} /> : <X size={13} />} {checkLabel(item, key)}
+                    {passed ? <Check size={13} /> : <X size={13} />} {label(item, key)}
                   </span>
                 );
               })}
+              {item.type === "code" && <LinesWrittenRow item={item} label={label(item, "lines_written")} />}
             </div>
             {audience === "recruiter" && item.integrity && item.integrity.length > 0 && (
               <div className="integrity-list">

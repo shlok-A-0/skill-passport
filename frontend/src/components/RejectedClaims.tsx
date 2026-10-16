@@ -1,12 +1,12 @@
 import { ArrowUpRight, Check, MessageSquare } from "lucide-react";
 import { useState } from "react";
-import { api, citationKey, EARLIER_SOURCE_KINDS, type RejectedClaim, type ReviewRequest } from "../api";
+import { api, citationKey, EXCLUDED_KINDS, NOT_WRITTEN_KIND, type RejectedClaim, type ReviewRequest } from "../api";
 import { skillName } from "../skillNames";
 
 export type Audience = "student" | "recruiter";
 
 function isExcluded(item: RejectedClaim): boolean {
-  return EARLIER_SOURCE_KINDS.has(item.kind ?? "");
+  return EXCLUDED_KINDS.has(item.kind ?? "");
 }
 
 function Where({ item, tag }: { item: RejectedClaim; tag?: string }) {
@@ -98,7 +98,7 @@ function RecruiterExcluded({ item, request, onChanged }: { item: RejectedClaim; 
 
   return (
     <article className="rejected-item">
-      <Where item={item} tag="EARLIER PUBLIC SOURCE" />
+      <Where item={item} tag={item.kind === NOT_WRITTEN_KIND ? "NOT WRITTEN BY CANDIDATE" : "EARLIER PUBLIC SOURCE"} />
       <p>{item.reason}</p>
       <Links item={item} ownLabel="Candidate's lines" />
       {request && (

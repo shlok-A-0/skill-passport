@@ -70,7 +70,7 @@ export default function RecruiterEvidence() {
             onChanged={() => { api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message)); }} />
         </div>
         <aside className="evidence-column">
-          {selected ? <EvidencePanel skill={selected} audience="recruiter" /> : <section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
+          {selected ? <EvidencePanel skill={selected} audience="recruiter" labels={passport.check_labels} /> :<section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}
         </aside>
       </div>
     </div>
