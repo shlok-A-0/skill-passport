@@ -206,11 +206,48 @@ def test_recheck_all_prints_one_line_per_passport_and_survives_failures(monkeypa
 
     monkeypatch.setattr(script, "list_passports", lambda: stored)
     monkeypatch.setattr(script, "recheck_passport", rebuild)
-    assert script.main() == 1
+    assert script.main([]) == 1
     out = capsys.readouterr().out.splitlines()
     assert out[1].split() == ["alice", "met", "2", "->", "4", "of", "8", "rejected", "1", "excluded", "2"]
     assert out[2].startswith("bob") and "FAILED" in out[2]
     assert out[-1] == "Done: 1 rebuilt, 1 failed."
+
+
+def test_recheck_all_only_incomplete_rebuilds_just_what_needs_it(monkeypatch, capsys) -> None:
+    import importlib.util
+
+    from app.config import VERIFIER_VERSION
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "recheck_all.py"
+    spec = importlib.util.spec_from_file_location("recheck_all", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    complete = {"coverage": {"repos": []}, "growth_tasks": [{"skill_id": "sql"}], "role_match": {"met": 2, "total": 8},
+                "verifier_version": VERIFIER_VERSION}
+    record = {"type": "code", "record": {"verifier_version": "2026-10-15"}}
+    stored = [
+        {**complete, "id": "ok", "github_username": "fine"},
+        {**complete, "id": "a", "github_username": "nocov", "coverage": None},
+        {**complete, "id": "b", "github_username": "nogrowth", "growth_tasks": [], "generation_error": "ServerError"},
+        {**complete, "id": "c", "github_username": "oldrules", "verifier_version": None,
+         "skills": [{"skill_id": "python", "evidence": [record]}]},
+        {**complete, "id": "d", "github_username": "unversioned", "verifier_version": None, "skills": []},
+        # No gaps and no error: an empty growth plan is fine.
+        {**complete, "id": "e", "github_username": "nogaps", "growth_tasks": []},
+    ]
+    assert [script.incomplete_reasons(item) for item in stored] == [
+        [], ["no coverage"], ["no growth plan"], ["verifier 2026-10-15"], ["verifier unversioned"], [],
+    ]
+    rebuilt = []
+    monkeypatch.setattr(script, "list_passports", lambda: stored)
+    monkeypatch.setattr(script, "recheck_passport", lambda old: rebuilt.append(old["id"]) or {
+        **old, "rejected_claims": [{"kind": "not_written_by_candidate"}, {"kind": "earlier_source"}]})
+    assert script.main(["--only-incomplete"]) == 0
+    assert rebuilt == ["a", "b", "c", "d"]
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "Re-checking 4 of 6 passport(s) (incomplete or older rules)..."
+    assert "rejected 0  excluded 2" in out[1] and out[1].endswith("[no coverage]")
 
 
 def test_gemini_busy_errors_are_retried(monkeypatch) -> None:

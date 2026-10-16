@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from app.config import VERIFIER_VERSION
 from app.services.claim_proposer import propose_claims
 from app.services.copy_check import add_copy_signals
 from app.services.coverage import build_coverage
@@ -142,6 +143,8 @@ def build_passport(
         "certificate_skill_mentions": certificate_skills,
         "generation_warning": generation_warning,
         "generation_error": generation_error,
+        # The rules this passport was built with; recheck_all.py --only-incomplete rebuilds older ones.
+        "verifier_version": VERIFIER_VERSION,
     }
     if existing:
         # Union of old and new skills, after earlier sources were excluded; a skill
