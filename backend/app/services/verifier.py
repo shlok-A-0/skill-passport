@@ -147,7 +147,8 @@ def _repo_history_signal(repo: dict[str, Any]) -> dict[str, str]:
     detail = f"{total} commits in the repository"
     if by_user is not None:
         detail += f", {by_user} by you"
-    return _signal("repo_history", label, "warn" if total < MIN_REPO_COMMITS else "ok", detail + ".")
+    status = "warn" if total < MIN_REPO_COMMITS else "ok"
+    return {**_signal("repo_history", label, status, detail + "."), "total": total}
 
 
 def _parse_utc(value: Any) -> datetime | None:

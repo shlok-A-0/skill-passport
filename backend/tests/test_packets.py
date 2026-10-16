@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.packets import ask_next, attribution, requirement_packets
+from app.services.packets import ask_next, attribution, attribution_details, requirement_packets
 
 ALL_CHECKS = {"file_exists": True, "lines_valid": True, "authored": True, "not_fork": True, "signature_found": True}
 
@@ -13,7 +13,7 @@ def code(path: str = "api/routes.py", warn: tuple[str, ...] = (), start: int = 1
         "type": "code", "repo": "shop", "file_path": path, "start_line": start, "end_line": end,
         "url": f"https://github.com/s/shop/blob/x/{path}#L{start}-L{end}", "checks": dict(ALL_CHECKS),
         "integrity": [{"id": signal, "status": "warn"} for signal in warn]
-        + [{"id": "repo_history", "status": "warn"}],  # not an attribution signal: ignored
+        + [{"id": "repo_history", "status": "ok", "total": 12, "detail": "12 commits in the repository."}],
     }
 
 
@@ -31,6 +31,79 @@ def test_attribution_high_medium_low_and_not_applicable() -> None:
     # Only dependency or config evidence.
     assert attribution("partial", [dependency()]) == "Low"
     assert attribution("missing", []) == "Not applicable"
+
+
+def capped(signal_id: str, **fields: object) -> dict:
+    """A clean citation (all checks, 20 of 20 lines written) with one warning on its file or repo."""
+    item = code()
+    item["integrity"] = [
+        {"id": "line_share", "status": "ok", "written": 20, "cited": 20},
+        {"id": "repo_history", "status": "ok", "total": 12},
+    ]
+    item["integrity"] = [s for s in item["integrity"] if s["id"] != signal_id]
+    item["integrity"].append({"id": signal_id, "status": "warn", **fields})
+    return item
+
+
+def test_each_repo_or_file_warning_caps_attribution_at_medium() -> None:
+    clean = capped("ai_leftover")
+    clean["integrity"][-1]["status"] = "ok"
+    assert attribution_details("met", [clean]) == ("High", [])
+    expected = {
+        "repo_history": "Capped at Medium: only 1 commit in this repository.",
+        "bulk_upload": "Capped at Medium: a cited file was added in one large upload and not edited since.",
+        "commit_spread": "Capped at Medium: all of the candidate's commits in this repository were made on one day.",
+        "history_import": "Capped at Medium: commits are dated before this repository was created on GitHub.",
+        "ai_leftover": "Capped at Medium: a cited file contains text pasted from an AI chat.",
+        "copy_match": "Capped at Medium: a cited line also appears in another public repository.",
+    }
+    for signal_id, reason in expected.items():
+        fields = {"total": 1} if signal_id == "repo_history" else {}
+        # A clean citation plus one citation carrying the warning: never High.
+        label, reasons = attribution_details("met", [clean, capped(signal_id, **fields), dependency()])
+        assert (label, reasons) == ("Medium", [reason]), signal_id
+        # Alone, a file-level warning that is also a base-rule warning already gives Low.
+        assert attribution("met", [capped(signal_id, **fields)]) in {"Medium", "Low"}, signal_id
+    # The count is read from older passports' detail text too.
+    old = capped("repo_history", detail="2 commits in the repository, 2 by you.")
+    assert attribution_details("met", [old])[1] == ["Capped at Medium: only 2 commits in this repository."]
+
+
+def test_earlier_source_on_the_same_skill_caps_attribution_at_low() -> None:
+    clean = capped("ai_leftover")
+    clean["integrity"][-1]["status"] = "ok"
+    assert attribution("met", [clean], earlier_source=True) == "Low"
+    passport = _passport(
+        [{"skill_id": "flask", "status": "met", "min_level": "Applied", "student_level": "Applied"}],
+        [{"skill_id": "flask", "level": "Applied", "evidence": [clean]}],
+    )
+    passport["rejected_claims"] = [{"kind": "earlier_source", "claim": {"skill_id": "flask"}}]
+    packet = requirement_packets(passport)[0]
+    assert packet["attribution"] == "Low"
+    assert "Capped at Low: other code cited for this skill matched an earlier public source." in packet["uncertain"]
+
+
+def test_thin_history_with_unknown_line_authorship_is_low_limited_history() -> None:
+    item = code()  # no line_share signal: authorship unknown
+    item["integrity"] = [{"id": "repo_history", "status": "warn", "total": 1}]
+    label, reasons = attribution_details("met", [item])
+    assert label == "Low (limited history)"
+    assert reasons[-1] == "Low (limited history): fewer than 4 commits in this repository and line authorship unknown."
+    # Known line authorship in a thin repo: capped at Medium instead.
+    assert attribution("met", [capped("repo_history", total=1)]) == "Medium"
+
+
+def test_capped_warning_is_listed_once_in_whats_uncertain() -> None:
+    passport = _passport(
+        [{"skill_id": "flask", "status": "met", "min_level": "Applied", "student_level": "Applied"}],
+        [{"skill_id": "flask", "level": "Applied", "evidence": [capped("bulk_upload"), capped("repo_history", total=1)]}],
+    )
+    packet = requirement_packets(passport)[0]
+    assert packet["attribution"] == "Medium"
+    assert packet["uncertain"] == [
+        "Capped at Medium: a cited file was added in one large upload and not edited since.",
+        "Capped at Medium: only 1 commit in this repository.",
+    ]
 
 
 def _passport(requirements: list[dict], skills: list[dict], kit: list[dict] | None = None) -> dict:

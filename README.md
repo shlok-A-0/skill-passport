@@ -46,7 +46,7 @@ Three fictional resume PDFs for local demonstrations are in `samples/`. Each inc
 - **Coverage.** Evidence comes from a sample: up to 5 repositories, 6 source files each, and about 8,000 lines sent to the AI step. The one-line summary ("Analysed 5 repositories · 28 of 168 source files · about 6,400 lines") expands to show what wasn't read and why. "Not found" means not found in the analysed files, not that the candidate lacks the skill.
 - **Evidence packet (recruiter view).** Each requirement row is collapsed to its status, attribution and a one-line summary. Clicking it shows four parts:
   - **What supports it:** Met / Partial / Not found, plus up to 2 evidence links, code first.
-  - **Attribution:** High, Medium or Low, for how clearly the cited work traces to the candidate (not their ability).
+  - **Attribution:** High, Medium or Low, for how clearly the cited work traces to the candidate (not their ability). A thin or one-day history, a bulk upload, backdated history, AI chat text or a one-line copy match caps it at Medium; an earlier-source match on the skill caps it at Low; too little history to judge shows "Low (limited history)".
   - **What's uncertain:** short lines such as "Only one citation" or an advisory warning.
   - **What to ask next:** the interview-kit question, or a template question when there isn't one.
 

@@ -108,7 +108,7 @@ export default function RecruiterView() {
                           ? <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>
                           : <span className={`status-pill status-${requirement.status}`}>{packet?.status_label ?? requirement.status}</span>}
                         {packet && packet.attribution !== "Not applicable" && (
-                          <span className={`attribution attribution-${packet.attribution.toLowerCase()}`} title="How clearly the cited work traces to the candidate, not their ability.">Attribution: {packet.attribution}</span>
+                          <span className={`attribution attribution-${packet.attribution.split(" ")[0].toLowerCase()}`} title="How clearly the cited work traces to the candidate, not their ability.">Attribution: {packet.attribution}</span>
                         )}
                         <ChevronDown size={12} className="req-chevron" />
                       </div>

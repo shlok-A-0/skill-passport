@@ -87,7 +87,7 @@ export type RequirementPacket = {
   status: "met" | "partial" | "missing";
   status_label: "Met" | "Partial" | "Not found";
   support: { type: Evidence["type"]; repo: string; file_path: string; start_line: number; end_line: number; url: string }[];
-  attribution: "High" | "Medium" | "Low" | "Not applicable";
+  attribution: "High" | "Medium" | "Low" | "Low (limited history)" | "Not applicable";
   uncertain: string[];
   ask_next: { question: string; good_answer_mentions?: string | null; source: "interview_kit" | "template" };
   summary: string;
