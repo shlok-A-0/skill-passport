@@ -54,7 +54,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 7
+CACHE_SCHEMA_VERSION = 8
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -298,6 +298,29 @@ def _test_contents(
         if content:
             contents[path] = "\n".join(content.splitlines()[:TEST_CONTENT_LINES])
     return contents
+
+
+def _test_authorship(
+    client: httpx.Client, owner: str, repo: str, test_paths: list[str],
+    source_files: dict[str, dict[str, Any]], username: str,
+) -> dict[str, bool]:
+    """Whether the user committed to each test file whose content was read ("Demonstrated" needs it).
+
+    One lookup per test file, so the 5-fetch test budget bounds it. A file whose history can't be
+    read is left out, and a skill it targets is not upgraded.
+    """
+    authored: dict[str, bool] = {}
+    for path in test_paths:
+        if path in source_files:  # already checked when it was read as a source file
+            authored[path] = bool(source_files[path].get("authored_shas"))
+            continue
+        try:
+            authored[path] = bool(_file_authorship(client, owner, repo, path, username))
+        except GitHubRateLimitError:
+            raise
+        except GitHubIngestError:
+            pass
+    return authored
 
 
 def _repo_error_reason(exc: Exception) -> str:
@@ -706,6 +729,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             test_contents = _test_contents(
                 tests, source_files, sizes, lambda path: _optional_content(client, owner, name, path, branch),
             )
+            test_authored = _test_authorship(client, owner, name, list(test_contents), source_files, username)
             repo_results.append(
                 {
                     "name": name,
@@ -725,6 +749,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "config_contents": config_contents,
                     "test_files": tests,
                     "test_contents": test_contents,
+                    "test_authored": test_authored,
                     "source_files": source_files,
                     "authored_paths": authored_paths,
                     "source_file_count": sum(1 for path in tree if _source_candidate(path)),

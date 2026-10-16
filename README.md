@@ -42,7 +42,7 @@ Three fictional resume PDFs for local demonstrations are in `samples/`. Each inc
 
 ## Reading a passport
 
-- **Levels** (evidence of use, not ability): **Unverified**, mentioned on the resume or a certificate with no evidence in the analysed files; **Used**, listed in a dependency or config file the candidate committed to; **Applied**, used in source code they committed to, with exact lines cited; **Demonstrated**, applied and exercised by a test that targets that code (by file name or import).
+- **Levels** (evidence of use, not ability): **Unverified**, mentioned on the resume or a certificate with no evidence in the analysed files; **Used**, listed in a dependency or config file the candidate committed to; **Applied**, used in source code they committed to, with exact lines cited; **Demonstrated**, applied and exercised by a test the candidate committed to that targets that code (by file name or import). A citation counts only if git blame shows the candidate last changed at least one of its lines (unknown blame counts), and only one where they wrote at least half can make a skill Demonstrated.
 - **Coverage.** Evidence comes from a sample: up to 5 repositories, 6 source files each, and about 8,000 lines sent to the AI step. The one-line summary ("Analysed 5 repositories · 28 of 168 source files · about 6,400 lines") expands to show what wasn't read and why. "Not found" means not found in the analysed files, not that the candidate lacks the skill.
 - **Evidence packet (recruiter view).** Each requirement row is collapsed to its status, attribution and a one-line summary. Clicking it shows four parts:
   - **What supports it:** Met / Partial / Not found, plus up to 2 evidence links, code first.

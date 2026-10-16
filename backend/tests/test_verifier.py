@@ -283,6 +283,7 @@ def two_module_ingestion(**repo_overrides: object) -> dict:
     }
     repo["tree"] = ["billing/engine.py", "web/server.py", "tests/test_engine.py", "Dockerfile", "requirements.txt"]
     repo["test_files"] = ["tests/test_engine.py"]
+    repo["test_authored"] = {"tests/test_engine.py": True}  # the student committed to the test
     repo.update(repo_overrides)
     return data
 
@@ -315,6 +316,7 @@ def test_import_match_in_python_tests() -> None:
     data = two_module_ingestion(
         test_files=["tests/test_billing.py"],
         test_contents={"tests/test_billing.py": "import pytest\nfrom billing.engine import load\n"},
+        test_authored={"tests/test_billing.py": True},
     )
     pandas = next(item for item in verify_claims(TWO_MODULE_CLAIMS, data)["skills"] if item["skill_id"] == "pandas")
     assert pandas["level"] == "Demonstrated"
@@ -967,6 +969,7 @@ def blame_ingestion(blame: list | None) -> dict:
     }
     repo["tree"] += ["web/routes.py", "tests/test_routes.py"]
     repo["test_files"] = ["tests/test_routes.py"]
+    repo["test_authored"] = {"tests/test_routes.py": True}
     return data
 
 
@@ -1017,6 +1020,61 @@ def test_unknown_blame_counts_normally() -> None:
         assert next(s for s in code["integrity"] if s["id"] == "line_share")["status"] == "unknown"
         assert not [item for item in verified["rejected_claims"] if item["kind"] == "not_written_by_candidate"]
         assert flask["level"] == "Demonstrated", blame
+
+
+def _flask_routes(blame: list | None = None, end_line: int = 11, **repo_overrides: object) -> dict:
+    data = blame_ingestion(blame)
+    data["repos"][0].update(repo_overrides)
+    verified = verify_claims([claim(file_path="web/routes.py", start_line=1, end_line=end_line)], data)
+    return _skill(verified, "flask")
+
+
+def test_candidate_committed_test_targeting_authored_code_is_demonstrated() -> None:
+    flask = _flask_routes([[1, 11, "student"]])
+    assert flask["level"] == "Demonstrated"
+    assert _code_items(flask)[0]["demonstrated_by"] == {"path": "tests/test_routes.py", "match": "name"}
+
+
+def test_test_written_by_someone_else_leaves_the_skill_applied() -> None:
+    flask = _flask_routes([[1, 11, "student"]], test_authored={"tests/test_routes.py": False})
+    assert flask["level"] == "Applied"
+    assert "demonstrated_by" not in _code_items(flask)[0]
+    # The same holds for an import match: karpathy's test importing the module doesn't count.
+    flask = _flask_routes(
+        [[1, 11, "student"]], test_files=["tests/test_api.py"],
+        test_contents={"tests/test_api.py": "from web.routes import orders\n"},
+        test_authored={"tests/test_api.py": False},
+    )
+    assert flask["level"] == "Applied"
+
+
+def test_test_author_lookup_error_leaves_the_skill_applied() -> None:
+    # Ingestion leaves a test out of test_authored when its history couldn't be read.
+    assert _flask_routes([[1, 11, "student"]], test_authored={})["level"] == "Applied"
+
+
+def test_low_line_share_with_a_committed_test_stays_applied() -> None:
+    # 2 of 10 cited lines (20%) written by the candidate, plus a test they committed to.
+    flask = _flask_routes([[1, 2, "student"], [3, 11, "karpathy"]], end_line=10)
+    assert _code_items(flask)[0]["lines_written"] == {"written": 2, "cited": 10}
+    assert flask["level"] == "Applied"
+
+
+def test_ingestion_records_who_committed_to_each_read_test_file(monkeypatch) -> None:
+    from app.services import github_ingest
+
+    def authorship(client, owner, repo, path, username):
+        if path == "tests/test_broken.py":
+            raise github_ingest.GitHubIngestError("GitHub API returned 500")
+        return ["sha1"] if path == "tests/test_mine.py" else []
+
+    monkeypatch.setattr(github_ingest, "_file_authorship", authorship)
+    source_files = {"tests/test_read.py": {"authored_shas": ["sha2"]}}
+    result = github_ingest._test_authorship(
+        object(), "student", "demo", ["tests/test_mine.py", "tests/test_theirs.py", "tests/test_broken.py",
+                                      "tests/test_read.py"], source_files, "student",
+    )
+    assert result == {"tests/test_mine.py": True, "tests/test_theirs.py": False, "tests/test_read.py": True}
 
 
 def test_failed_claims_are_tagged_unsupported() -> None:

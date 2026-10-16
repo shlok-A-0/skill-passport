@@ -16,7 +16,7 @@ LEVEL_DESCRIPTIONS = {
     "Claimed": "Mentioned on the resume or a certificate; no evidence in the analysed files.",
     "Used": "Listed in a dependency or config file the candidate committed to.",
     "Applied": "Used in source code the candidate committed to (exact lines cited).",
-    "Demonstrated": "Applied, and exercised by tests that target that code.",
+    "Demonstrated": "Applied, and exercised by tests the candidate committed to that target that code.",
 }
 LEVEL_NOTE = "Levels show evidence of use in the candidate's code, not how well the skill is used."
 # Integrity signals are advisory: they are shown next to the evidence but never change
@@ -685,8 +685,9 @@ def compute_level(
     level = "Applied" if any(item["type"] == "code" for item in counted) else (
         "Used" if counted else "Claimed"
     )
-    # Demonstrated is skill-specific: one of this skill's cited files must be targeted by a
-    # test in the same repo. A test, CI workflow or Dockerfile elsewhere no longer upgrades it.
+    # Demonstrated is skill-specific: one of this skill's counted citations (line share 50%+ or
+    # unknown) must be targeted by a test in the same repo that the candidate committed to.
+    # A test, CI workflow or Dockerfile elsewhere never upgrades it.
     by_name = {repo["name"]: repo for repo in repos}
     demonstrated = False
     for item in evidence:
@@ -694,7 +695,10 @@ def compute_level(
             continue
         repo = by_name.get(item["repo"]) or {}
         item.pop("demonstrated_by", None)
-        target = targeting_test(item["file_path"], repo) if _share_allows_demonstrated(item) else None
+        target = (
+            targeting_test(item["file_path"], repo, committed_only=True)
+            if _share_allows_demonstrated(item) else None
+        )
         rules = ["applied:code_citation"]
         if target:
             item["demonstrated_by"] = target
@@ -723,21 +727,38 @@ def _imports_module(content: str, stem: str) -> bool:
     return bool(re.search(python, content) or re.search(javascript, content))
 
 
-def targeting_test(cited_path: str, repo: dict[str, Any]) -> dict[str, str] | None:
-    """The test file in `repo` that targets `cited_path` by name or by import, if any."""
+def committed_to_test(repo: dict[str, Any], path: str) -> bool:
+    """Whether the candidate committed to this test file; unknown (lookup failed or not read) is False."""
+    authored = (repo.get("test_authored") or {}).get(path)
+    if authored is not None:
+        return bool(authored)
+    source = (repo.get("source_files") or {}).get(path)
+    return bool(source and source.get("authored_shas"))
+
+
+def targeting_test(
+    cited_path: str, repo: dict[str, Any], committed_only: bool = False
+) -> dict[str, str] | None:
+    """The test file in `repo` that targets `cited_path` by name or by import, if any.
+
+    With `committed_only`, only tests the candidate committed to count (the "Demonstrated" rule).
+    """
     stem = module_stem(cited_path)
     if not stem:
         return None  # too short or generic (__init__, index, main, utils, app) to match safely
-    tests = [path for path in repo.get("test_files", []) if path != cited_path]
-    for path in tests:
-        if _name_targets(path, stem):
+
+    def eligible(path: str) -> bool:
+        return path != cited_path and (not committed_only or committed_to_test(repo, path))
+
+    for path in repo.get("test_files", []):
+        if eligible(path) and _name_targets(path, stem):
             return {"path": path, "match": "name"}
     contents = dict(repo.get("test_contents") or {})
     for path, source in (repo.get("source_files") or {}).items():
         if is_test_path(path):
             contents.setdefault(path, source.get("content", ""))
     for path, content in contents.items():
-        if path != cited_path and _imports_module(content, stem):
+        if eligible(path) and _imports_module(content, stem):
             return {"path": path, "match": "import"}
     return None
 
