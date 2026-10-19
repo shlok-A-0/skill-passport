@@ -8,6 +8,7 @@ from app.services.storage import (
     get_stored_job,
     has_active_job_for_target,
     reconcile_interrupted_jobs,
+    reserve_stored_job,
     update_stored_job,
 )
 
@@ -24,6 +25,10 @@ JOB_STEPS = [
 
 def create_job(job_id: str, target: str = "") -> None:
     create_stored_job(job_id, target)
+
+
+def reserve_job(job_id: str, target: str = "", max_active: int = 5) -> tuple[bool, str | None]:
+    return reserve_stored_job(job_id, target, max_active)
 
 
 def update_job(job_id: str, step: str) -> None:

@@ -1,15 +1,6 @@
 import { AlertTriangle, ArrowUpRight, Award, ShieldCheck, Users, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
@@ -164,15 +155,21 @@ export default function PlacementCell() {
           <div className="panel-heading"><div><div className="eyebrow">SHARED LEARNING GAPS</div><h2>Requirements most often not found</h2></div></div>
           <div className="gap-chart">
             {gaps.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={gaps} layout="vertical" margin={{ top: 4, right: 14, left: 6, bottom: 4 }}>
-                  <CartesianGrid stroke="#edf0f4" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tickFormatter={(value: number) => `${value}%`} tick={{ fontSize: 10, fill: "#858b99" }} />
-                  <YAxis type="category" dataKey="skill" width={100} tick={{ fontSize: 10, fill: "#525b71" }} />
-                  <Tooltip formatter={(value) => [`${value}% not found in analysed files`, "Not found"]} />
-                  <Bar dataKey="percent" fill="#f26b1d" radius={[0, 5, 5, 0]} barSize={13} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="gap-bars-list">
+                {gaps.map((item) => (
+                  <div key={item.skill} className="gap-bar-row">
+                    <span className="gap-bar-label" title={item.skill}>{item.skill}</span>
+                    <div className="gap-bar-track">
+                      <div
+                        className="gap-bar-fill"
+                        style={{ width: `${item.percent}%` }}
+                        title={`${item.percent}% not found in analysed files`}
+                      />
+                    </div>
+                    <span className="gap-bar-val">{item.percent}%</span>
+                  </div>
+                ))}
+              </div>
             ) : <div className="empty-state">No role requirements to compare.</div>}
           </div>
           {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: {topGap.skill}</strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}

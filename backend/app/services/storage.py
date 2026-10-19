@@ -153,6 +153,74 @@ def mark_review_request_reviewed(request_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_review_requests_by_passports() -> dict[str, list[dict[str, Any]]]:
+    """Batch fetch all review requests grouped by passport_id (eliminates N+1 queries)."""
+    initialize_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM review_requests ORDER BY created_at, id"
+        ).fetchall()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        item = dict(row)
+        grouped.setdefault(item["passport_id"], []).append(item)
+    return grouped
+
+
+def reserve_stored_job(job_id: str, target: str = "", max_active: int = 5) -> tuple[bool, str | None]:
+    """Atomically verify active job limits and duplicate targets, then reserve the job slot."""
+    initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
+    norm_target = target.strip().lower() if target else None
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        if norm_target:
+            existing = connection.execute(
+                "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
+                (norm_target,),
+            ).fetchone()
+            if existing:
+                return False, "duplicate"
+
+        row = connection.execute(
+            "SELECT COUNT(*) as count FROM jobs WHERE status IN ('queued', 'running')"
+        ).fetchone()
+        if row and int(row["count"]) >= max_active:
+            return False, "capacity"
+
+        connection.execute(
+            """
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                status = 'queued',
+                step = 'Queued',
+                completed_steps = '[]',
+                error = NULL,
+                passport_id = NULL,
+                target = excluded.target,
+                created_at = excluded.created_at
+            """,
+            (job_id, norm_target, now),
+        )
+        return True, None
+
+
+def prune_old_jobs(max_age_days: int = 7) -> int:
+    """Prune completed or failed jobs older than max_age_days to keep database minimal."""
+    initialize_storage()
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM jobs
+            WHERE status IN ('done', 'failed')
+              AND datetime(created_at) < datetime('now', ?)
+            """,
+            (f"-{max_age_days} days",),
+        )
+        return cursor.rowcount
+
+
 def create_stored_job(job_id: str, target: str = "") -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()

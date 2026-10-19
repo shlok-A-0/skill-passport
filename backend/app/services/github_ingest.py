@@ -789,6 +789,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "history": history,
                     "blame": _file_blame(client, owner, name, head_sha, path),
                     "commit_verification": head_verification,
+                    "commit_verification_scope": "head",
                     # When this file first appeared here; compared with matches found elsewhere.
                     "first_commit_date": (history or {}).get("first_commit_date")
                     or (oldest_commit_date(client, owner, name, path) if history else None),
@@ -812,6 +813,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "default_branch": branch,
                     "head_sha": head_sha,
                     "commit_verification": head_verification,
+                    "commit_verification_scope": "head",
                     "ci_status": ci_status,
                     "pushed_at": repo.get("pushed_at"),
                     "created_at": repo.get("created_at"),

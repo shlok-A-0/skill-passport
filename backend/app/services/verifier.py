@@ -7,7 +7,12 @@ from typing import Any
 from urllib.parse import quote
 
 from app.config import VERIFIER_VERSION
-from app.services.ast_verifier import check_test_has_assertions, js_has_signature, python_ast_has_signature
+from app.services.ast_verifier import (
+    check_test_has_assertions,
+    js_has_signature,
+    python_ast_has_signature,
+    test_targets_implementation_with_assertions,
+)
 from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
@@ -239,13 +244,25 @@ def _ai_leftover_signal(source: dict[str, Any]) -> dict[str, str]:
 
 
 def _commit_signature_signal(source: dict[str, Any]) -> dict[str, str]:
-    label = "Cryptographic commit signature"
     verification = source.get("commit_verification")
+    scope = source.get("commit_verification_scope", "head")
+    label = "Head commit cryptographic signature" if scope == "head" else "Cryptographic commit signature"
     if not verification:
         return _signal("commit_signature", label, "unknown", "Commit signature verification was not available.")
     if verification.get("verified"):
-        return _signal("commit_signature", label, "ok", "Commit is cryptographically signed (verified GPG/SSH key).")
-    return _signal("commit_signature", label, "unknown", f"Commit is standard Git commit ({verification.get('reason', 'unsigned')}).")
+        detail = (
+            "Repository head commit is cryptographically signed (verified GPG/SSH key). "
+            "Individual historical commit for cited lines was not separately verified."
+            if scope == "head"
+            else "Commit is cryptographically signed (verified GPG/SSH key)."
+        )
+        return _signal("commit_signature", label, "ok", detail)
+    detail = (
+        f"Repository head commit is standard Git commit ({verification.get('reason', 'unsigned')})."
+        if scope == "head"
+        else f"Commit is standard Git commit ({verification.get('reason', 'unsigned')})."
+    )
+    return _signal("commit_signature", label, "unknown", detail)
 
 
 def integrity_signals(
@@ -745,7 +762,11 @@ def compute_level(
         if target:
             item["demonstrated_by"] = target
             demonstrated = True
-            rules.append(f"demonstrated:test_{target['match']}_match")
+            ci_status = repo.get("ci_status") or {}
+            if ci_status.get("has_successful_run"):
+                rules.append(f"demonstrated:test_{target['match']}_match_ci_verified")
+            else:
+                rules.append(f"demonstrated:test_{target['match']}_match")
         if "record" in item:
             item["record"]["rules_applied"] = rules
         # Context only, never a level change.
@@ -780,7 +801,7 @@ def committed_to_test(repo: dict[str, Any], path: str) -> bool:
 
 def targeting_test(
     cited_path: str, repo: dict[str, Any], committed_only: bool = False
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     """The test file in `repo` that targets `cited_path` by name or by import, if any.
 
     With `committed_only`, only tests the candidate committed to count (the "Demonstrated" rule).
@@ -805,9 +826,9 @@ def targeting_test(
                 source = (repo.get("source_files") or {}).get(path)
                 content = source.get("content") if source else None
             # Meaningful test check: if test content is available, it must contain executable assertions
-            # An empty string, placeholder function, or comment-only assertion strictly fails
+            # and actively exercise or reference the cited implementation/module.
             if content is not None:
-                if not content.strip() or not check_test_has_assertions(content, path):
+                if not content.strip() or not test_targets_implementation_with_assertions(content, path, stem):
                     return False
         return True
 

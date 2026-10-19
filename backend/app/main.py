@@ -1,30 +1,50 @@
 import copy
 import hmac
 import logging
+import time
 import uuid
 from typing import Any
 
-from fastapi import FastAPI
-from fastapi import BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    FastAPI,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.config import FRONTEND_ORIGINS, RECRUITER_KEY, REQUIRE_RECRUITER_AUTH
+from app.config import (
+    ALLOW_DEBUG_ENDPOINTS,
+    FRONTEND_ORIGINS,
+    RECRUITER_KEY,
+    REQUIRE_RECRUITER_AUTH,
+)
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import (
+    complete_job,
     create_job,
+    fail_job,
     get_active_jobs_count,
     get_job,
     is_active_job_running_for,
+    reserve_job,
+    update_job,
 )
 from app.services.packets import requirement_packets
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import (
     add_review_request,
     get_passport,
+    get_review_requests_by_passports,
     list_passports,
     list_review_requests,
     mark_review_request_reviewed,
@@ -45,7 +65,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(debug_router)
+if ALLOW_DEBUG_ENDPOINTS:
+    app.include_router(debug_router)
+
+# In-memory sliding window rate limiter per client IP
+_ip_rate_records: dict[str, list[float]] = {}
+
+
+def check_rate_limit(request: Request, action: str, max_requests: int, window_seconds: float) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"{client_ip}:{action}"
+    now = time.time()
+    records = [t for t in _ip_rate_records.get(key, []) if now - t < window_seconds]
+    if len(records) >= max_requests:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded for {action}. Please try again later.",
+        )
+    records.append(now)
+    _ip_rate_records[key] = records
 
 
 STUDENT_EXCLUDED_REASON = (
@@ -160,44 +198,74 @@ def skills() -> list[dict[str, str]]:
     ]
 
 
+MAX_CERTIFICATES = 5
+MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB aggregate limit
+
+
 @app.post("/passport/create", status_code=202)
 async def create_passport(
     background_tasks: BackgroundTasks,
+    request: Request,
     github_username: str = Form(...),
     resume: UploadFile = File(...),
     target_role: str = Form(...),
     certificates: list[UploadFile] | None = File(default=None),
     is_demo: bool = Form(default=False),
 ) -> dict[str, str]:
+    check_rate_limit(request, "create_passport", max_requests=20, window_seconds=600)
     if resume.content_type != "application/pdf":
         raise HTTPException(status_code=415, detail="Resume must be a PDF file.")
+    if certificates and len(certificates) > MAX_CERTIFICATES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {MAX_CERTIFICATES} certificates may be uploaded.",
+        )
     role_ids = {role["id"] for role in get_roles()}
     role_names = {role["name"] for role in get_roles()}
     if target_role not in role_ids | role_names:
         raise HTTPException(status_code=422, detail="Unknown target role.")
+
+    # Atomic job slot reservation before accepting large file bodies
+    job_id = str(uuid.uuid4())
+    reserved, reason = reserve_job(job_id, target=github_username, max_active=5)
+    if not reserved:
+        if reason == "capacity":
+            raise HTTPException(
+                status_code=429,
+                detail="Server is currently processing maximum concurrent verification jobs. Please wait a moment.",
+            )
+        if reason == "duplicate":
+            raise HTTPException(
+                status_code=409,
+                detail=f"A verification job for '{github_username}' is already in progress.",
+            )
+
+    total_bytes = 0
     resume_bytes = await resume.read()
-    if len(resume_bytes) > 10 * 1024 * 1024:
+    total_bytes += len(resume_bytes)
+    if len(resume_bytes) > MAX_SINGLE_FILE_BYTES:
+        fail_job(job_id, "Resume PDF exceeds 10 MB limit.")
         raise HTTPException(status_code=413, detail="Resume PDF must be 10 MB or smaller.")
+
     cert_bytes = []
     for certificate in certificates or []:
         if certificate.content_type != "application/pdf":
+            fail_job(job_id, "Non-PDF certificate rejected.")
             raise HTTPException(status_code=415, detail="Certificates must be PDF files.")
         content = await certificate.read()
-        if len(content) > 10 * 1024 * 1024:
+        total_bytes += len(content)
+        if len(content) > MAX_SINGLE_FILE_BYTES:
+            fail_job(job_id, "Certificate PDF exceeds 10 MB limit.")
             raise HTTPException(status_code=413, detail="Each certificate must be 10 MB or smaller.")
+        if total_bytes > MAX_TOTAL_UPLOAD_BYTES:
+            fail_job(job_id, "Aggregate upload exceeds 25 MB limit.")
+            raise HTTPException(
+                status_code=413,
+                detail="Total upload size across resume and certificates must be 25 MB or smaller.",
+            )
         cert_bytes.append(content)
-    if get_active_jobs_count() >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail="Server is currently processing maximum concurrent verification jobs. Please wait a moment.",
-        )
-    if is_active_job_running_for(github_username):
-        raise HTTPException(
-            status_code=409,
-            detail=f"A verification job for '{github_username}' is already in progress.",
-        )
-    job_id = str(uuid.uuid4())
-    create_job(job_id, target=github_username)
+
     background_tasks.add_task(
         run_passport_job,
         job_id,
@@ -218,7 +286,7 @@ def passport_job(job_id: str) -> dict:
     return {
         "job_id": job.get("job_id", job_id),
         "status": job.get("status"),
-        "step": job.get("step"),
+        "step": job.get("step") or "Queued",
         "completed_steps": job.get("completed_steps", []),
         "passport_id": job.get("passport_id"),
         "error": job.get("error"),
@@ -246,12 +314,22 @@ def review_passport(passport_id: str) -> dict:
 def passports(x_recruiter_key: str | None = Header(default=None)) -> list[dict]:
     if REQUIRE_RECRUITER_AUTH:
         require_recruiter(x_recruiter_key)
-    return [student_view(item, list_review_requests(item["id"])) for item in list_passports()]
+    all_requests = get_review_requests_by_passports()
+    return [student_view(item, all_requests.get(item["id"], [])) for item in list_passports()]
 
 
 @app.get("/passports/review", dependencies=[Depends(require_recruiter)])
 def review_passports() -> list[dict]:
-    return [review_view(item) for item in list_passports()]
+    all_requests = get_review_requests_by_passports()
+    return [
+        {
+            **item,
+            "check_labels": CHECK_LABELS,
+            "review_requests": all_requests.get(item["id"], []),
+            "requirement_packets": requirement_packets(item),
+        }
+        for item in list_passports()
+    ]
 
 
 class ReviewRequestBody(BaseModel):
@@ -282,18 +360,36 @@ def mark_reviewed(request_id: str) -> dict:
 
 
 @app.post("/passport/{passport_id}/recheck")
-def recheck_passport_endpoint(passport_id: str) -> dict:
-    # Named differently from pipeline.recheck_passport, which this calls.
+def recheck_passport_endpoint(passport_id: str, request: Request) -> dict:
+    check_rate_limit(request, "recheck_passport", max_requests=10, window_seconds=300)
     existing = get_passport(passport_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Passport not found.")
-    if is_active_job_running_for(passport_id):
-        raise HTTPException(status_code=409, detail="A re-check job is already in progress for this passport.")
+
+    target_user = existing.get("github_username") or passport_id
+    recheck_job_id = str(uuid.uuid4())
+    reserved, reason = reserve_job(recheck_job_id, target=target_user, max_active=5)
+    if not reserved:
+        if reason == "duplicate":
+            raise HTTPException(
+                status_code=409,
+                detail=f"A verification or re-check job for '{target_user}' is already in progress.",
+            )
+        if reason == "capacity":
+            raise HTTPException(
+                status_code=429,
+                detail="Server is currently processing maximum concurrent verification jobs. Please wait a moment.",
+            )
+
     try:
+        update_job(recheck_job_id, "Reading GitHub")
         result = recheck_passport(existing)
+        complete_job(recheck_job_id, passport_id)
     except Exception as exc:
+        fail_job(recheck_job_id, str(exc))
         logging.getLogger(__name__).exception("Passport re-check failed: %s", passport_id)
         raise HTTPException(status_code=502, detail=f"Re-check failed: {exc}") from exc
+
     return {
         "passport": student_view(result, list_review_requests(passport_id)),
         "level_changes": result.get("level_changes", []),

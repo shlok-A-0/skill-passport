@@ -527,3 +527,88 @@ def test_jobs_persistence_and_error() -> None:
     assert done["status"] == "done"
     assert done["passport_id"] == "passport-abc"
 
+
+def test_certificate_upload_count_and_aggregate_size_limits(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    client = TestClient(main_module.app)
+    resume = ("resume.pdf", b"%PDF-1.4 " + b"x" * 1024, "application/pdf")
+
+    # 1. More than 5 certificates is rejected
+    six_certs = [("cert.pdf", b"%PDF-1.4 cert", "application/pdf")] * 6
+    res = client.post(
+        "/passport/create",
+        data={"github_username": "student-certs", "target_role": "backend-intern"},
+        files=[("resume", resume)] + [("certificates", cert) for cert in six_certs],
+    )
+    assert res.status_code == 422
+    assert "At most 5 certificates" in res.json()["detail"]
+
+    # 2. Total upload exceeding 25 MB aggregate limit is rejected
+    big_resume = ("resume.pdf", b"%PDF-1.4 " + b"a" * (9 * 1024 * 1024), "application/pdf")
+    big_cert1 = ("c1.pdf", b"%PDF-1.4 " + b"b" * (9 * 1024 * 1024), "application/pdf")
+    big_cert2 = ("c2.pdf", b"%PDF-1.4 " + b"c" * (9 * 1024 * 1024), "application/pdf")
+    res_big = client.post(
+        "/passport/create",
+        data={"github_username": "student-heavy", "target_role": "backend-intern"},
+        files=[("resume", big_resume), ("certificates", big_cert1), ("certificates", big_cert2)],
+    )
+    assert res_big.status_code == 413
+    assert "Total upload size across resume and certificates must be 25 MB or smaller" in res_big.json()["detail"]
+
+
+def test_debug_endpoints_disabled_or_protected(tmp_path, monkeypatch) -> None:
+    from app import config
+    client = TestClient(main_module.app)
+
+    # 1. When ALLOW_DEBUG_ENDPOINTS is False, returns 404
+    monkeypatch.setattr(config, "ALLOW_DEBUG_ENDPOINTS", False)
+    assert client.get("/debug/github/testuser").status_code == 404
+
+    # 2. When REQUIRE_RECRUITER_AUTH is active, debug routes fail closed without recruiter key
+    monkeypatch.setattr(config, "ALLOW_DEBUG_ENDPOINTS", True)
+    monkeypatch.setattr(config, "REQUIRE_RECRUITER_AUTH", True)
+    monkeypatch.setattr(config, "RECRUITER_KEY", "secret-key")
+    monkeypatch.setattr(main_module, "RECRUITER_KEY", "secret-key")
+
+    res_unauth = client.get("/debug/github/testuser")
+    assert res_unauth.status_code == 401
+
+    # 3. Resume debug upload size enforcement
+    big_pdf = b"%PDF-1.4 " + b"x" * (11 * 1024 * 1024)
+    res_oversized = client.post(
+        "/debug/resume",
+        files={"resume": ("resume.pdf", big_pdf, "application/pdf")},
+        headers={"X-Recruiter-Key": "secret-key"},
+    )
+    assert res_oversized.status_code == 413
+
+
+def test_recheck_concurrent_job_and_rate_limit(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    # 1. While a job is running for the candidate, recheck returns 409
+    storage.create_stored_job("active-recheck-job", target="demo-user")
+    storage.update_stored_job("active-recheck-job", "Reading GitHub", [])
+    res_conflict = client.post("/passport/p-review/recheck")
+    assert res_conflict.status_code == 409
+    assert "already in progress" in res_conflict.json()["detail"]
+
+
+def test_commit_signature_head_scope_labeling() -> None:
+    from app.services.verifier import _commit_signature_signal
+    # When scope is head, it explicitly identifies head commit scope
+    head_source = {
+        "commit_verification": {"verified": True},
+        "commit_verification_scope": "head",
+    }
+    signal = _commit_signature_signal(head_source)
+    assert signal["label"] == "Head commit cryptographic signature"
+    assert "Individual historical commit for cited lines was not separately verified" in signal["detail"]
+
+    # When scope is cited, it confirms the commit is cryptographically signed
+    cited_source = {
+        "commit_verification": {"verified": True},
+        "commit_verification_scope": "cited",
+    }
+    signal_cited = _commit_signature_signal(cited_source)
+    assert signal_cited["label"] == "Cryptographic commit signature"
+

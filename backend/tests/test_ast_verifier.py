@@ -175,10 +175,22 @@ def test_targeting_test_rejects_empty_test_when_committed_only() -> None:
 
 def test_targeting_test_accepts_test_with_assertions_when_committed_only() -> None:
     from app.services.verifier import targeting_test
-    real_test = "def test_it():\n    assert 1 == 1\n"
+    real_test = "import engine\n\ndef test_it():\n    assert engine.run() is True\n"
     repo = {
         "test_files": ["tests/test_engine.py"],
         "test_contents": {"tests/test_engine.py": real_test},
         "test_authored": {"tests/test_engine.py": True},
     }
     assert targeting_test("pkg/engine.py", repo, committed_only=True) == {"path": "tests/test_engine.py", "match": "name"}
+
+
+def test_targeting_test_rejects_unrelated_assertions_in_matching_filename() -> None:
+    from app.services.verifier import targeting_test
+    # A test named test_engine.py that has assertions for an unrelated function calc()
+    unrelated_test = "def test_calculation():\n    assert calc(10) == 20\n"
+    repo = {
+        "test_files": ["tests/test_engine.py"],
+        "test_contents": {"tests/test_engine.py": unrelated_test},
+        "test_authored": {"tests/test_engine.py": True},
+    }
+    assert targeting_test("pkg/engine.py", repo, committed_only=True) is None
