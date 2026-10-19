@@ -1,6 +1,6 @@
 import { BadgeCheck, BookOpenCheck, BriefcaseBusiness, LayoutDashboard, ShieldCheck } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api";
 import CreatePassport from "./pages/CreatePassport";
 import StudentPassport from "./pages/StudentPassport";
@@ -30,13 +30,15 @@ function LatestPassportRedirect({ view }: { view: "passport" | "recruiter" }) {
 }
 
 function App() {
+  const location = useLocation();
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <Link className="brand" to="/"><span className="brand-mark"><ShieldCheck size={20} /></span><span>Skill Passport<small>PROOF, NOT CLAIMS</small></span></Link>
-        <nav>
-          <NavLink to="/">Create</NavLink>
-          <NavLink to="/student">Student</NavLink>
+        <nav aria-label="Primary navigation">
+          <NavLink to="/" end>Create</NavLink>
+          <NavLink to="/student" className={({ isActive }) => isActive || location.pathname.startsWith("/passport/") ? "active" : undefined}>Student</NavLink>
           <NavLink to="/recruiter">Recruiter</NavLink>
           <NavLink to="/placement">Placement Cell</NavLink>
         </nav>
