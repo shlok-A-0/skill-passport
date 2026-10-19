@@ -276,6 +276,19 @@ def test_review_endpoints_require_matching_recruiter_key_when_set(tmp_path, monk
     assert client.get("/passport/p-review").status_code == 200
 
 
+def test_review_endpoints_fail_closed_in_production_mode(tmp_path, monkeypatch) -> None:
+    # In production without RECRUITER_KEY configured, fail-closed with 500
+    monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
+    client_unconfigured = _review_client(tmp_path, monkeypatch, recruiter_key="")
+    assert client_unconfigured.get("/passport/p-review/review").status_code == 500
+
+    # In production with RECRUITER_KEY configured, unauthenticated requests get 401
+    client_configured = _review_client(tmp_path, monkeypatch, recruiter_key="prod-secret")
+    assert client_configured.get("/passport/p-review/review").status_code == 401
+    assert client_configured.get("/passport/p-review/review", headers={"X-Recruiter-Key": "prod-secret"}).status_code == 200
+
+
+
 def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     monkeypatch.setattr(

@@ -54,7 +54,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 8
+CACHE_SCHEMA_VERSION = 9
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -491,6 +491,36 @@ def oldest_commit_date(client: httpx.Client, owner: str, repo: str, path: str) -
     return _commit_date(commits[-1])
 
 
+def _fetch_ci_status(
+    client: httpx.Client, owner: str, repo: str, head_sha: str
+) -> dict[str, Any] | None:
+    """Fetch GitHub Check Runs on head_sha to verify actual CI run completion."""
+    if not head_sha:
+        return None
+    try:
+        data = _request(
+            client,
+            f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits/{quote(head_sha)}/check-runs",
+        )
+    except GitHubRateLimitError:
+        raise
+    except GitHubIngestError:
+        return None
+    check_runs = data.get("check_runs", [])
+    total = data.get("total_count", len(check_runs))
+    completed_success = sum(
+        1 for run in check_runs
+        if run.get("status") == "completed" and run.get("conclusion") in ("success", "neutral")
+    )
+    latest_conclusion = check_runs[0].get("conclusion") if check_runs else None
+    return {
+        "total_checks": total,
+        "successful_checks": completed_success,
+        "has_successful_run": completed_success > 0,
+        "latest_conclusion": latest_conclusion,
+    }
+
+
 def _file_history(
     client: httpx.Client, owner: str, repo: str, path: str, username: str
 ) -> dict[str, Any] | None:
@@ -730,6 +760,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 tests, source_files, sizes, lambda path: _optional_content(client, owner, name, path, branch),
             )
             test_authored = _test_authorship(client, owner, name, list(test_contents), source_files, username)
+            has_ci_config = any(path.startswith(CI_DIRS) or path in CI_FILES for path in configs)
+            ci_status = _fetch_ci_status(client, owner, name, head_sha) if has_ci_config else None
             repo_results.append(
                 {
                     "name": name,
@@ -737,6 +769,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "owner": owner,
                     "default_branch": branch,
                     "head_sha": head_sha,
+                    "ci_status": ci_status,
                     "pushed_at": repo.get("pushed_at"),
                     "created_at": repo.get("created_at"),
                     "html_url": repo.get("html_url"),

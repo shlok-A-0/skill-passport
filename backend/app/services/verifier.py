@@ -666,6 +666,28 @@ def _config_evidence(
     lines = content.splitlines()
     end = max(1, min(len(lines), 12))
     sha = repo.get("head_sha") or "HEAD"
+    is_ci = path.startswith(CI_DIRS) or path in CI_FILES
+    ci_status = (repo.get("ci_status") or {}) if is_ci else None
+
+    checks = {
+        "file_exists": path in repo.get("tree", []),
+        "lines_valid": bool(content) and end <= len(lines),
+        "authored": _path_authored(repo, path),
+        "not_fork": not repo.get("is_fork", False),
+        "signature_found": True,
+    }
+    explanation = f"{skill_name} is referenced by {path}."
+    if is_ci and ci_status is not None:
+        if ci_status.get("has_successful_run"):
+            checks["ci_run_verified"] = True
+            explanation = f"{skill_name} workflow in {path}; verified successful CI run on {sha[:7]}."
+        elif ci_status.get("latest_conclusion"):
+            checks["ci_run_verified"] = False
+            explanation = f"{skill_name} workflow in {path}; last recorded CI run was '{ci_status.get('latest_conclusion')}'."
+        else:
+            checks["ci_run_verified"] = False
+            explanation = f"{skill_name} workflow in {path} (no recorded CI runs on GitHub Actions)."
+
     return {
         "type": evidence_type,
         "repo": repo["name"],
@@ -675,14 +697,8 @@ def _config_evidence(
         "commit_sha": sha,
         "url": _make_url(repo, sha, path, 1, end),
         "snippet": "\n".join(lines[:end]),
-        "explanation": f"{skill_name} is referenced by {path}.",
-        "checks": {
-            "file_exists": path in repo.get("tree", []),
-            "lines_valid": bool(content) and end <= len(lines),
-            "authored": _path_authored(repo, path),
-            "not_fork": not repo.get("is_fork", False),
-            "signature_found": True,
-        },
+        "explanation": explanation,
+        "checks": checks,
     }
 
 
@@ -811,6 +827,7 @@ CHECK_LABELS = {
     "not_fork": "Repository is not a fork",
     "signature_found": "Skill signature found in code",
     "lines_written": "Cited lines written by you",
+    "ci_run_verified": "Verified passing CI run",
 }
 
 

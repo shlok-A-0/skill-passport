@@ -1087,3 +1087,46 @@ def test_language_claim_needs_matching_file_extension() -> None:
     data = plain_python_ingestion()
     assert verify_one_claim(claim(skill_id="python", file_path="util.py", start_line=1, end_line=4), data)["verified"]
     assert not verify_one_claim(claim(skill_id="javascript", file_path="util.py", start_line=1, end_line=4), data)["verified"]
+
+
+def test_ci_evidence_verifies_successful_ci_runs() -> None:
+    from app.services.verifier import _deterministic_evidence
+    from app.services.framework import get_skills
+    cicd_skill = next(s for s in get_skills() if s["id"] == "cicd")
+    repo = {
+        "name": "demo",
+        "full_name": "user/demo",
+        "head_sha": "abc1234567",
+        "tree": [".github/workflows/ci.yml"],
+        "config_files": [".github/workflows/ci.yml"],
+        "config_contents": {".github/workflows/ci.yml": "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"},
+        "authored_paths": {".github/workflows/ci.yml": True},
+        "ci_status": {"has_successful_run": True, "total_checks": 1, "successful_checks": 1},
+    }
+    evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item["checks"]["ci_run_verified"] is True
+    assert "verified successful CI run" in item["explanation"]
+
+
+def test_ci_evidence_flags_failed_or_missing_runs() -> None:
+    from app.services.verifier import _deterministic_evidence
+    from app.services.framework import get_skills
+    cicd_skill = next(s for s in get_skills() if s["id"] == "cicd")
+    repo = {
+        "name": "demo",
+        "full_name": "user/demo",
+        "head_sha": "def7890123",
+        "tree": [".github/workflows/ci.yml"],
+        "config_files": [".github/workflows/ci.yml"],
+        "config_contents": {".github/workflows/ci.yml": "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"},
+        "authored_paths": {".github/workflows/ci.yml": True},
+        "ci_status": {"has_successful_run": False, "latest_conclusion": "failure"},
+    }
+    evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item["checks"]["ci_run_verified"] is False
+    assert "failure" in item["explanation"]
+

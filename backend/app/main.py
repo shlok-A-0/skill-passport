@@ -9,7 +9,7 @@ from fastapi import BackgroundTasks, Depends, File, Form, Header, HTTPException,
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.config import FRONTEND_ORIGINS, RECRUITER_KEY
+from app.config import FRONTEND_ORIGINS, RECRUITER_KEY, REQUIRE_RECRUITER_AUTH
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
@@ -108,11 +108,23 @@ def review_view(passport: dict[str, Any]) -> dict[str, Any]:
 
 
 def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> None:
-    """Review endpoints are open in local dev; with RECRUITER_KEY set, the header must match."""
-    if RECRUITER_KEY and not hmac.compare_digest(
-        (x_recruiter_key or "").encode(), RECRUITER_KEY.encode()
-    ):
-        raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
+    """Review endpoints require valid authentication with fail-closed security.
+
+    In production (or when REQUIRE_RECRUITER_AUTH is enabled):
+    - If RECRUITER_KEY is not configured on the server, fails closed with 500 (misconfigured security).
+    - If X-Recruiter-Key header does not match, fails closed with 401.
+    In local development without RECRUITER_KEY, endpoints are open for local dev convenience.
+    """
+    if REQUIRE_RECRUITER_AUTH and not RECRUITER_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Recruiter authentication is required in production, but RECRUITER_KEY is not configured.",
+        )
+    if RECRUITER_KEY or REQUIRE_RECRUITER_AUTH:
+        if not x_recruiter_key or not hmac.compare_digest(
+            (x_recruiter_key or "").encode(), RECRUITER_KEY.encode()
+        ):
+            raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
 
 
 @app.get("/health")
