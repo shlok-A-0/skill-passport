@@ -378,10 +378,8 @@ def review_passport(passport_id: str) -> dict:
     return review_view(_stored_passport(passport_id))
 
 
-@app.get("/passports")
-def passports(x_recruiter_key: str | None = Header(default=None)) -> list[dict]:
-    if REQUIRE_RECRUITER_AUTH:
-        require_recruiter(x_recruiter_key)
+@app.get("/passports", dependencies=[Depends(require_recruiter)])
+def passports() -> list[dict]:
     all_requests = get_review_requests_by_passports()
     return [student_view(item, all_requests.get(item["id"], [])) for item in list_passports()]
 

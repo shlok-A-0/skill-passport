@@ -290,6 +290,16 @@ def test_review_endpoints_require_matching_recruiter_key_when_set(tmp_path, monk
     assert client.get("/passport/p-review").status_code == 200
 
 
+def test_passports_list_enforces_recruiter_key_when_set(tmp_path, monkeypatch) -> None:
+    # Even outside production, a configured RECRUITER_KEY must protect the full list route.
+    client = _review_client(tmp_path, monkeypatch, recruiter_key="s3cret")
+    assert client.get("/passports").status_code == 401
+    assert client.get("/passports", headers={"X-Recruiter-Key": "wrong"}).status_code == 401
+    listing = client.get("/passports", headers={"X-Recruiter-Key": "s3cret"})
+    assert listing.status_code == 200
+    assert listing.json()[0]["id"] == "p-review"
+
+
 def test_review_endpoints_fail_closed_in_production_mode(tmp_path, monkeypatch) -> None:
     # In production without RECRUITER_KEY configured, fail-closed with 500
     monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
