@@ -25,8 +25,11 @@ def python_ast_has_signature(
     window_end = end_line + 5
 
     for node in ast.walk(tree):
-        lineno = getattr(node, "lineno", None)
-        if lineno is None or not (window_start <= lineno <= window_end):
+        start_l = getattr(node, "lineno", None)
+        if start_l is None:
+            continue
+        end_l = getattr(node, "end_lineno", start_l)
+        if not (start_l <= window_end and end_l >= window_start):
             continue
 
         # 1. Imports
@@ -46,8 +49,9 @@ def python_ast_has_signature(
         # 2. Function decorators (e.g. @app.route)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for decorator in node.decorator_list:
-                dec_lineno = getattr(decorator, "lineno", lineno)
-                if window_start <= dec_lineno <= window_end:
+                dec_start = getattr(decorator, "lineno", start_l)
+                dec_end = getattr(decorator, "end_lineno", dec_start)
+                if dec_start <= window_end and dec_end >= window_start:
                     dec_str = ast.unparse(decorator) if hasattr(ast, "unparse") else ""
                     for sig in signatures:
                         clean_sig = sig.lstrip("@").rstrip("(")
@@ -108,12 +112,24 @@ def js_has_signature(window_text: str, signatures: list[str]) -> bool:
     return False
 
 
+def _is_trivial_assert(node: ast.Assert) -> bool:
+    """Check if an assert statement is trivial/vacuous like `assert True` or `assert 1 == 1`."""
+    test = node.test
+    if isinstance(test, ast.Constant):
+        return True
+    if isinstance(test, ast.Compare):
+        if isinstance(test.left, ast.Constant) and all(isinstance(c, ast.Constant) for c in test.comparators):
+            return True
+    return False
+
+
 def _node_has_assertion(node: ast.AST) -> bool:
-    """Check if an AST node contains an assertion or test failure call."""
+    """Check if an AST node contains an executable assertion or test failure call."""
     for child in ast.walk(node):
         if isinstance(child, ast.Assert):
-            return True
-        if isinstance(child, ast.Call):
+            if not _is_trivial_assert(child):
+                return True
+        elif isinstance(child, ast.Call):
             name = ""
             if isinstance(child.func, ast.Name):
                 name = child.func.id
@@ -124,20 +140,85 @@ def _node_has_assertion(node: ast.AST) -> bool:
                 or name in {"raises", "fail", "assert_called", "assert_called_once", "assert_called_with"}
             ):
                 return True
+        elif isinstance(child, ast.With):
+            for item in child.items:
+                ctx = item.context_expr
+                c_name = ""
+                if isinstance(ctx, ast.Call):
+                    if isinstance(ctx.func, ast.Name):
+                        c_name = ctx.func.id
+                    elif isinstance(ctx.func, ast.Attribute):
+                        c_name = ctx.func.attr
+                if c_name in {"raises", "assertRaises"}:
+                    return True
     return False
 
 
-def _node_references_symbols(node: ast.AST, symbols: set[str]) -> bool:
-    """Check if an AST node references any of the target symbol names."""
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name) and child.id.lower() in symbols:
-            return True
-        if isinstance(child, ast.Attribute) and child.attr.lower() in symbols:
-            return True
-        if isinstance(child, ast.Constant) and isinstance(child.value, str):
-            val_lower = child.value.lower()
-            if any(sym in val_lower for sym in symbols):
+def _test_function_exercises_target(fn: ast.AST, target_symbols: set[str]) -> bool:
+    """Check if a test function has non-trivial assertions that evaluate or exercise target symbols."""
+    derived_symbols = set(target_symbols)
+
+    def expr_references(expr: ast.AST) -> bool:
+        for child in ast.walk(expr):
+            if isinstance(child, ast.Name) and child.id.lower() in derived_symbols:
                 return True
+            if isinstance(child, ast.Attribute) and child.attr.lower() in derived_symbols:
+                return True
+        return False
+
+    body = getattr(fn, "body", [fn])
+    for stmt in body:
+        if isinstance(stmt, ast.Assign):
+            if expr_references(stmt.value):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name):
+                        derived_symbols.add(target.id.lower())
+                    elif isinstance(target, (ast.Tuple, ast.List)):
+                        for elt in target.elts:
+                            if isinstance(elt, ast.Name):
+                                derived_symbols.add(elt.id.lower())
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value:
+            if expr_references(stmt.value):
+                if isinstance(stmt.target, ast.Name):
+                    derived_symbols.add(stmt.target.id.lower())
+
+    for child in ast.walk(fn):
+        if isinstance(child, ast.Assert):
+            if not _is_trivial_assert(child) and expr_references(child.test):
+                return True
+        elif isinstance(child, ast.Call):
+            name = ""
+            if isinstance(child.func, ast.Name):
+                name = child.func.id
+            elif isinstance(child.func, ast.Attribute):
+                name = child.func.attr
+
+            if name.startswith("assert") or name in {"assert_called", "assert_called_once", "assert_called_with"}:
+                if isinstance(child.func, ast.Attribute) and expr_references(child.func.value):
+                    return True
+                if any(expr_references(arg) for arg in child.args):
+                    return True
+                if any(expr_references(kw.value) for kw in child.keywords):
+                    return True
+
+        elif isinstance(child, ast.With):
+            is_raises_mgr = False
+            for item in child.items:
+                ctx_expr = item.context_expr
+                ctx_name = ""
+                if isinstance(ctx_expr, ast.Call):
+                    if isinstance(ctx_expr.func, ast.Name):
+                        ctx_name = ctx_expr.func.id
+                    elif isinstance(ctx_expr.func, ast.Attribute):
+                        ctx_name = ctx_expr.func.attr
+                if ctx_name in {"raises", "assertRaises"}:
+                    is_raises_mgr = True
+                    break
+            if is_raises_mgr:
+                for stmt in child.body:
+                    if expr_references(stmt):
+                        return True
+
     return False
 
 
@@ -150,6 +231,7 @@ def check_test_has_assertions(content: str, path: str) -> bool:
     - Commented-out assertions (e.g. `# assert x == 1`)
     - Test-framework imports without tests (e.g. `import pytest`)
     - Test suite declarations without assertions (e.g. `describe('suite', () => {})`)
+    - Dummy assertions (e.g. `assert True`, `assert 1 == 1`)
     """
     if not content or not content.strip():
         return False
@@ -223,15 +305,14 @@ def test_targets_implementation_with_assertions(content: str, path: str, module_
                     test_functions.append(node)
 
         if test_functions:
-            # Check if any test function has BOTH an assertion and references the target implementation
+            # Check if any test function has an assertion that directly evaluates or exercises target
             for fn in test_functions:
-                if _node_has_assertion(fn) and _node_references_symbols(fn, target_symbols):
+                if _test_function_exercises_target(fn, target_symbols):
                     return True
-            # If test functions exist but none exercise the cited implementation, reject
             return False
 
         # Fallback for flat script-style tests without functions
-        return _node_has_assertion(tree) and _node_references_symbols(tree, target_symbols)
+        return _test_function_exercises_target(tree, target_symbols)
 
     # JavaScript / TypeScript
     if suffix in ("js", "jsx", "ts", "tsx", "mjs", "cjs"):
@@ -258,3 +339,4 @@ def test_targets_implementation_with_assertions(content: str, path: str, module_
         return False
     stem_pattern = rf"(?<![A-Za-z0-9_]){re.escape(stem_lower)}(?![A-Za-z0-9_])"
     return bool(re.search(stem_pattern, stripped, re.IGNORECASE))
+

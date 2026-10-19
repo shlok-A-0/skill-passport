@@ -194,3 +194,112 @@ def test_targeting_test_rejects_unrelated_assertions_in_matching_filename() -> N
         "test_authored": {"tests/test_engine.py": True},
     }
     assert targeting_test("pkg/engine.py", repo, committed_only=True) is None
+
+
+def test_adversarial_pytest_import_without_tests_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+import pytest
+import engine
+# File imports pytest and engine, but contains no tests or assertions
+"""
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_adversarial_placeholder_test_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+import pytest
+from engine import run
+
+def test_run():
+    pass
+"""
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_adversarial_test_never_calls_target_code_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+import pytest
+import engine
+
+def test_unrelated():
+    x = 10 + 20
+    assert x == 30
+"""
+    # Test function has valid assertion, but never calls or references engine
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_adversarial_dummy_assertion_assert_true_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+from engine import calculate
+
+def test_calculate():
+    calculate(10)
+    assert True
+"""
+    # Target is called, but assertion is a dummy assert True
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_adversarial_dummy_assertion_assert_constant_compare_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+from engine import calculate
+
+def test_calculate():
+    calculate(10)
+    assert 1 == 1
+"""
+    # Target is called, but assertion is assert 1 == 1
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_adversarial_derived_variable_assertion_accepted() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+from engine import calculate
+
+def test_calculate():
+    result = calculate(10)
+    assert result == 20
+"""
+    # Result assigned from target and checked in assert
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is True
+
+
+def test_adversarial_multiline_statement_ast_boundary_overlap() -> None:
+    from app.services.ast_verifier import python_ast_has_signature
+    multiline_code = """
+def long_function(
+    param_one: str,
+    param_two: int,
+    param_three: bool,
+):
+    from flask import Flask
+    app = Flask(
+        __name__,
+        static_folder="static",
+        template_folder="templates",
+    )
+    return app
+"""
+    # Multiline call Flask(...) spans lines 8 to 12.
+    # Citation is lines 10 to 11.
+    assert python_ast_has_signature(multiline_code, 10, 11, ["Flask("]) is True
+
+
+def test_backend_startup_and_import_integrity() -> None:
+    import app.config
+    import app.main
+    import app.services.ast_verifier
+    import app.services.verifier
+    # Verify all expected symbols exist and are callable
+    assert hasattr(app.services.ast_verifier, "test_targets_implementation_with_assertions")
+    assert hasattr(app.services.verifier, "targeting_test")
+    assert hasattr(app.services.verifier, "verify_claims")
+    assert hasattr(app.main, "app")
+

@@ -612,3 +612,71 @@ def test_commit_signature_head_scope_labeling() -> None:
     signal_cited = _commit_signature_signal(cited_source)
     assert signal_cited["label"] == "Cryptographic commit signature"
 
+
+def test_debug_routes_absent_when_app_env_production(monkeypatch) -> None:
+    import importlib
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("ALLOW_DEBUG_ENDPOINTS", raising=False)
+    from app import config
+    importlib.reload(config)
+    from app import main
+    importlib.reload(main)
+    try:
+        debug_paths = [r.path for r in main.app.routes if r.path.startswith("/debug")]
+        assert debug_paths == []
+        client = TestClient(main.app)
+        assert client.get("/debug/github/octocat").status_code == 404
+        assert client.post("/debug/resume").status_code == 404
+    finally:
+        monkeypatch.delenv("APP_ENV", raising=False)
+        importlib.reload(config)
+        importlib.reload(main)
+
+
+def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, monkeypatch) -> None:
+    db_file = tmp_path / "test_reserve.db"
+    monkeypatch.setattr(storage, "DATABASE_PATH", db_file)
+    storage.initialize_storage()
+
+    client = TestClient(main_module.app)
+    resume_pdf = ("resume.pdf", b"%PDF-1.4 valid", "application/pdf")
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: None)
+
+    # 1. First reservation succeeds
+    res1 = client.post(
+        "/passport/create",
+        data={"github_username": "CandidateAlpha", "target_role": "backend-intern"},
+        files={"resume": resume_pdf},
+    )
+    assert res1.status_code == 202
+    job1_id = res1.json()["job_id"]
+    assert job1_id
+
+    # 2. Duplicate reservation for normalized candidate key (case-insensitive, trimmed) returns 409
+    res_dup = client.post(
+        "/passport/create",
+        data={"github_username": " candidatealpha ", "target_role": "backend-intern"},
+        files={"resume": resume_pdf},
+    )
+    assert res_dup.status_code == 409
+    assert "already in progress" in res_dup.json()["detail"]
+
+    # 3. Add 4 more active jobs to hit the max limit of 5
+    for i in range(2, 6):
+        res = client.post(
+            "/passport/create",
+            data={"github_username": f"Candidate_{i}", "target_role": "backend-intern"},
+            files={"resume": resume_pdf},
+        )
+        assert res.status_code == 202
+
+    # 4. 6th simultaneous reservation exceeds max_active=5 capacity and returns 429
+    res_cap = client.post(
+        "/passport/create",
+        data={"github_username": "Candidate_Overflow", "target_role": "backend-intern"},
+        files={"resume": resume_pdf},
+    )
+    assert res_cap.status_code == 429
+    assert "maximum concurrent verification jobs" in res_cap.json()["detail"]
+
+

@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUpRight, Award, ShieldCheck, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, Users, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
@@ -60,6 +60,54 @@ export default function PlacementCell() {
   const topGap = gaps.find((gap) => gap.percent > 0);
   const demoPresent = passports.some((passport) => passport.is_demo);
 
+  const downloadCohortCsv = () => {
+    if (!ranked.length) return;
+    const headers = [
+      "Rank",
+      "Candidate",
+      "Is Demo",
+      "Must-Have Met",
+      "Must-Have Total",
+      "All Met",
+      "Total Requirements",
+      "Code-Backed Skills",
+      "Verifiability Tier",
+      "Checks Passed",
+      "Checks Total",
+      "Earlier Sources",
+      "Warnings Count",
+    ];
+    const csvRows = [headers.join(",")];
+    ranked.forEach((row, idx) => {
+      csvRows.push(
+        [
+          idx + 1,
+          `"${row.passport.github_username}"`,
+          row.passport.is_demo ? "Yes" : "No",
+          row.mustMet,
+          row.mustTotal,
+          row.met,
+          requirements.length,
+          row.verify.codeSkills,
+          `"${row.verify.tier}"`,
+          row.verify.passed,
+          row.verify.checked,
+          row.verify.earlierSources,
+          row.verify.warnings.length,
+        ].join(",")
+      );
+    });
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `cohort_${role?.id ?? "candidates"}_report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="placement-page">
       <header className="placement-heading">
@@ -76,7 +124,20 @@ export default function PlacementCell() {
       <section className="panel ranking-panel">
         <div className="panel-heading">
           <div><div className="eyebrow">CANDIDATE RANKING · {role?.name ?? "ROLE"}</div><h2>Who has the strongest evidence</h2></div>
-          <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            {ranked.length > 0 && (
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ padding: "0.35rem 0.75rem", fontSize: "0.8rem", display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
+                onClick={downloadCohortCsv}
+                title="Download candidate ranking as CSV"
+              >
+                <Download size={13} /> Export CSV
+              </button>
+            )}
+            <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
+          </div>
         </div>
         {!ranked.length ? <div className="empty-state">No passports yet. Generate student passports to rank candidates.</div> : (
           <>

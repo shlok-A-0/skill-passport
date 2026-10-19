@@ -31,7 +31,6 @@ from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import (
     complete_job,
-    create_job,
     fail_job,
     get_active_jobs_count,
     get_job,
@@ -227,8 +226,9 @@ async def create_passport(
         raise HTTPException(status_code=422, detail="Unknown target role.")
 
     # Atomic job slot reservation before accepting large file bodies
+    candidate_key = github_username.strip().lower()
     job_id = str(uuid.uuid4())
-    reserved, reason = reserve_job(job_id, target=github_username, max_active=5)
+    reserved, reason = reserve_job(job_id, target=candidate_key, max_active=5)
     if not reserved:
         if reason == "capacity":
             raise HTTPException(
