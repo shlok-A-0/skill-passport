@@ -508,16 +508,55 @@ def _fetch_ci_status(
         return None
     check_runs = data.get("check_runs", [])
     total = data.get("total_count", len(check_runs))
+    if total == 0:
+        return {
+            "total_checks": 0,
+            "successful_checks": 0,
+            "failed_checks": 0,
+            "in_progress_checks": 0,
+            "has_successful_run": False,
+            "status": "unavailable",
+            "summary": "No CI check runs recorded for commit",
+            "latest_conclusion": None,
+        }
+
     completed_success = sum(
         1 for run in check_runs
         if run.get("status") == "completed" and run.get("conclusion") in ("success", "neutral")
     )
-    latest_conclusion = check_runs[0].get("conclusion") if check_runs else None
+    failed_checks = sum(
+        1 for run in check_runs
+        if run.get("conclusion") in ("failure", "timed_out", "cancelled", "action_required")
+    )
+    in_progress_checks = sum(
+        1 for run in check_runs
+        if run.get("status") in ("in_progress", "queued")
+    )
+
+    has_successful_run = total > 0 and failed_checks == 0 and in_progress_checks == 0 and completed_success == total
+
+    if has_successful_run:
+        status = "passed"
+        summary = f"All {total} CI check(s) passed"
+    elif failed_checks > 0:
+        status = "failed"
+        summary = f"{failed_checks} of {total} CI check(s) failed"
+    elif in_progress_checks > 0:
+        status = "in_progress"
+        summary = f"{in_progress_checks} of {total} CI check(s) in progress"
+    else:
+        status = "partial"
+        summary = f"{completed_success} of {total} CI check(s) passed"
+
     return {
         "total_checks": total,
         "successful_checks": completed_success,
-        "has_successful_run": completed_success > 0,
-        "latest_conclusion": latest_conclusion,
+        "failed_checks": failed_checks,
+        "in_progress_checks": in_progress_checks,
+        "has_successful_run": has_successful_run,
+        "status": status,
+        "summary": summary,
+        "latest_conclusion": check_runs[0].get("conclusion") if check_runs else None,
     }
 
 
@@ -661,6 +700,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             if not repo.get("default_branch"):
                 tree_response = {"tree": [], "truncated": False}
                 head_sha = ""
+                head_verification = None
             else:
                 try:
                     branch_commit = _request(
@@ -668,6 +708,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                         f"{API_ROOT}/repos/{quote(owner)}/{quote(name)}/commits/{quote(branch, safe='')}",
                     )
                     head_sha = branch_commit.get("sha", "")
+                    head_verification = (branch_commit.get("commit") or {}).get("verification")
                     tree_response = _request(
                         client,
                         f"{API_ROOT}/repos/{quote(owner)}/{quote(name)}/git/trees/{quote(branch, safe='')}",
@@ -747,6 +788,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "line_count": len(lines),
                     "history": history,
                     "blame": _file_blame(client, owner, name, head_sha, path),
+                    "commit_verification": head_verification,
                     # When this file first appeared here; compared with matches found elsewhere.
                     "first_commit_date": (history or {}).get("first_commit_date")
                     or (oldest_commit_date(client, owner, name, path) if history else None),
@@ -769,6 +811,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "owner": owner,
                     "default_branch": branch,
                     "head_sha": head_sha,
+                    "commit_verification": head_verification,
                     "ci_status": ci_status,
                     "pushed_at": repo.get("pushed_at"),
                     "created_at": repo.get("created_at"),

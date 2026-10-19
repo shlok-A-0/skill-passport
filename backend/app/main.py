@@ -14,7 +14,12 @@ from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
-from app.services.jobs import create_job, get_job
+from app.services.jobs import (
+    create_job,
+    get_active_jobs_count,
+    get_job,
+    is_active_job_running_for,
+)
 from app.services.packets import requirement_packets
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import (
@@ -181,8 +186,18 @@ async def create_passport(
         if len(content) > 10 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Each certificate must be 10 MB or smaller.")
         cert_bytes.append(content)
+    if get_active_jobs_count() >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Server is currently processing maximum concurrent verification jobs. Please wait a moment.",
+        )
+    if is_active_job_running_for(github_username):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A verification job for '{github_username}' is already in progress.",
+        )
     job_id = str(uuid.uuid4())
-    create_job(job_id)
+    create_job(job_id, target=github_username)
     background_tasks.add_task(
         run_passport_job,
         job_id,
@@ -200,7 +215,14 @@ def passport_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return job
+    return {
+        "job_id": job.get("job_id", job_id),
+        "status": job.get("status"),
+        "step": job.get("step"),
+        "completed_steps": job.get("completed_steps", []),
+        "passport_id": job.get("passport_id"),
+        "error": job.get("error"),
+    }
 
 
 def _stored_passport(passport_id: str) -> dict:
@@ -221,7 +243,9 @@ def review_passport(passport_id: str) -> dict:
 
 
 @app.get("/passports")
-def passports() -> list[dict]:
+def passports(x_recruiter_key: str | None = Header(default=None)) -> list[dict]:
+    if REQUIRE_RECRUITER_AUTH:
+        require_recruiter(x_recruiter_key)
     return [student_view(item, list_review_requests(item["id"])) for item in list_passports()]
 
 
@@ -263,6 +287,8 @@ def recheck_passport_endpoint(passport_id: str) -> dict:
     existing = get_passport(passport_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Passport not found.")
+    if is_active_job_running_for(passport_id):
+        raise HTTPException(status_code=409, detail="A re-check job is already in progress for this passport.")
     try:
         result = recheck_passport(existing)
     except Exception as exc:

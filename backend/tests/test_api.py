@@ -288,6 +288,59 @@ def test_review_endpoints_fail_closed_in_production_mode(tmp_path, monkeypatch) 
     assert client_configured.get("/passport/p-review/review", headers={"X-Recruiter-Key": "prod-secret"}).status_code == 200
 
 
+def test_commit_signature_integration_in_recruiter_view(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport_data = passport_with_fraud_signals("p-sig")
+    python_skill = next(s for s in passport_data["skills"] if s["skill_id"] == "python")
+    code_evidence = python_skill["evidence"][0]
+    code_evidence["integrity"] = [
+        {
+            "id": "commit_signature",
+            "label": "Cryptographic commit signature",
+            "status": "ok",
+            "detail": "Commit is cryptographically signed (verified GPG/SSH key).",
+        }
+    ]
+    storage.save_passport(passport_data)
+    review = client.get("/passport/p-sig/review").json()
+    signals = review["skills"][0]["evidence"][0]["integrity"]
+    sig_signal = next(s for s in signals if s["id"] == "commit_signature")
+    assert sig_signal["status"] == "ok"
+    assert "verified GPG/SSH key" in sig_signal["detail"]
+
+
+def test_api_concurrency_and_active_job_limits(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    # Stub run_passport_job so the background task doesn't actually run
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: None)
+    client = TestClient(main_module.app)
+    resume_file = ("resume.pdf", b"%PDF-1.4 test", "application/pdf")
+
+    # 1. Active duplicate username guard
+    storage.create_stored_job("job-1", target="active-user")
+    storage.update_stored_job("job-1", "Reading GitHub", [])
+    res = client.post(
+        "/passport/create",
+        data={"github_username": "active-user", "target_role": "backend-intern"},
+        files={"resume": resume_file},
+    )
+    assert res.status_code == 409
+    assert "already in progress" in res.json()["detail"]
+
+    # 2. Concurrency limit guard (5 jobs)
+    for i in range(2, 6):
+        storage.create_stored_job(f"job-{i}", target=f"user-{i}")
+        storage.update_stored_job(f"job-{i}", "Reading GitHub", [])
+    res_max = client.post(
+        "/passport/create",
+        data={"github_username": "new-user", "target_role": "backend-intern"},
+        files={"resume": ("resume.pdf", b"%PDF-1.4 test", "application/pdf")},
+    )
+    assert res_max.status_code == 429
+    assert "maximum concurrent verification jobs" in res_max.json()["detail"]
+
+
+
 
 def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)

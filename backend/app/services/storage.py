@@ -43,10 +43,15 @@ def initialize_storage() -> None:
                 completed_steps TEXT NOT NULL DEFAULT '[]',
                 error TEXT,
                 passport_id TEXT,
+                target TEXT,
                 created_at TEXT NOT NULL
             )
             """
         )
+        try:
+            connection.execute("ALTER TABLE jobs ADD COLUMN target TEXT")
+        except sqlite3.OperationalError:
+            pass
         # Students asking for a human look at an excluded citation. Keyed by passport id and
         # citation key, so requests survive re-checks; they never change levels or exclusions.
         connection.execute(
@@ -148,24 +153,62 @@ def mark_review_request_reviewed(request_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def create_stored_job(job_id: str) -> None:
+def create_stored_job(job_id: str, target: str = "") -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
+    norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, created_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
                 completed_steps = '[]',
                 error = NULL,
                 passport_id = NULL,
+                target = excluded.target,
                 created_at = excluded.created_at
             """,
-            (job_id, now),
+            (job_id, norm_target, now),
         )
+
+
+def count_active_jobs() -> int:
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) as count FROM jobs WHERE status IN ('queued', 'running')"
+        ).fetchone()
+    return int(row["count"]) if row else 0
+
+
+def has_active_job_for_target(target: str) -> bool:
+    if not target:
+        return False
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
+            (target.strip().lower(),),
+        ).fetchone()
+    return bool(row)
+
+
+def reconcile_interrupted_jobs() -> int:
+    """Startup reconciliation: mark any uncompleted jobs as interrupted with retry note."""
+    initialize_storage()
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed',
+                error = 'Job interrupted by server restart. Ready to be retried.'
+            WHERE status IN ('queued', 'running')
+            """
+        )
+        return cursor.rowcount
 
 
 def update_stored_job(job_id: str, step: str, completed_steps: list[str]) -> None:

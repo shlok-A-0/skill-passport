@@ -72,10 +72,37 @@ def match_role(
             item["status"] == "met",
         )
     )
+
+    must_items = [r for r in requirements if r["importance"] == "must"]
+    optional_items = [r for r in requirements if r["importance"] != "must"]
+
+    mandatory_met = sum(1 for r in must_items if r["status"] == "met")
+    mandatory_total = len(must_items)
+    mandatory_gaps = mandatory_total - mandatory_met
+
+    optional_met = sum(1 for r in optional_items if r["status"] == "met")
+    optional_total = len(optional_items)
+    optional_gaps = optional_total - optional_met
+
+    if mandatory_gaps == 0:
+        headline = f"All {mandatory_total} mandatory requirements met"
+        if optional_total > 0:
+            headline += f" ({optional_met}/{optional_total} optional met)"
+    else:
+        gap_suffix = "s" if mandatory_gaps != 1 else ""
+        headline = f"{mandatory_met} of {mandatory_total} mandatory requirements met ({mandatory_gaps} mandatory gap{gap_suffix})"
+
     return {
         "role_id": role["id"],
         "role_name": role["name"],
         "met": met_count,
         "total": len(requirements),
+        "headline": headline,
+        "mandatory_met": mandatory_met,
+        "mandatory_total": mandatory_total,
+        "mandatory_gaps": mandatory_gaps,
+        "optional_met": optional_met,
+        "optional_total": optional_total,
+        "optional_gaps": optional_gaps,
         "requirements": requirements,
     }

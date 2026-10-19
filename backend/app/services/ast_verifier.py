@@ -1,4 +1,5 @@
 import ast
+import re
 from typing import Any
 
 
@@ -13,7 +14,7 @@ def python_ast_has_signature(
     Returns:
         True: AST found valid syntax node matching the signature.
         False: File parsed successfully, but signatures only appear in comments/strings or not at all.
-        None: File had syntax errors or incomplete fragment; fallback to lexical check.
+        None: File had syntax errors or incomplete fragment.
     """
     try:
         tree = ast.parse(source_content)
@@ -83,46 +84,77 @@ def python_ast_has_signature(
     return False
 
 
-def check_test_has_assertions(content: str, path: str) -> bool:
-    """Verify that a test file contains executable assertions or test functions, not just empty imports.
+def strip_js_comments_and_strings(code: str) -> str:
+    """Strip single-line comments, block comments, and string literals from JS/TS code."""
+    pattern = r'/\*[\s\S]*?\*/|//.*?$|"(?:\\.|[^\\"\n])*"|\'(?:\\.|[^\\\'\n])*\'|`(?:\\.|[^\\`])*`'
+    return re.sub(pattern, " ", code, flags=re.MULTILINE)
 
-    Protects against completely empty or dead test files while accommodating both full test suites
-    and mock fixtures.
+
+def js_has_signature(window_text: str, signatures: list[str]) -> bool:
+    """Verify that a signature in JS/TS exists in actual code, not inside comments or strings."""
+    stripped = strip_js_comments_and_strings(window_text)
+    for sig in signatures:
+        escaped = re.escape(sig)
+        if sig[:1].isalnum() or sig[:1] == "_":
+            escaped = r"(?<![A-Za-z0-9_])" + escaped
+        if re.search(escaped, stripped, re.IGNORECASE):
+            return True
+    return False
+
+
+def check_test_has_assertions(content: str, path: str) -> bool:
+    """Verify that a test file contains executable assertions or behavioural verification logic.
+
+    Strictly rejects:
+    - Empty or whitespace-only files
+    - Placeholder test functions (e.g. `def test_foo(): pass`)
+    - Commented-out assertions (e.g. `# assert x == 1`)
+    - Test-framework imports without tests (e.g. `import pytest`)
+    - Test suite declarations without assertions (e.g. `describe('suite', () => {})`)
     """
     if not content or not content.strip():
         return False
+
     suffix = path.lower().split(".")[-1]
     if suffix == "py":
         try:
             tree = ast.parse(content)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Assert):
-                    return True
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if node.name.startswith("test_") or node.name.endswith("_test"):
-                        return True
-                if isinstance(node, ast.Call):
-                    name = ""
-                    if isinstance(node.func, ast.Name):
-                        name = node.func.id
-                    elif isinstance(node.func, ast.Attribute):
-                        name = node.func.attr
-                    if name.startswith("assert") or name in {"raises", "fail"}:
-                        return True
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
-                    # Explicit import of test framework
-                    names = [a.name for a in getattr(node, "names", [])]
-                    mod = getattr(node, "module", "") or ""
-                    if any("pytest" in n or "unittest" in n for n in names) or "pytest" in mod or "unittest" in mod:
-                        return True
+        except (SyntaxError, ValueError):
             return False
-        except Exception:
-            return "assert" in content or "test" in content.lower()
-    # JavaScript / TypeScript / other languages: check for test suite keywords or assertions
-    test_keywords = (
-        "expect(", "assert.", "assert(", "should.", "toBe(", "toEqual(", "toBeTruthy(",
-        "test(", "it(", "describe("
+
+        for node in ast.walk(tree):
+            # 1. Direct Python assert statement
+            if isinstance(node, ast.Assert):
+                return True
+
+            # 2. Function calls to assertion helpers
+            if isinstance(node, ast.Call):
+                name = ""
+                if isinstance(node.func, ast.Name):
+                    name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    name = node.func.attr
+                # Standard unittest, pytest, numpy, torch, mock assertion helpers
+                if (
+                    name.startswith("assert")
+                    or name in {"raises", "fail", "assert_called", "assert_called_once", "assert_called_with"}
+                ):
+                    return True
+
+        return False
+
+    # JavaScript / TypeScript / other languages: must contain actual assertion calls
+    if suffix in ("js", "jsx", "ts", "tsx", "mjs", "cjs"):
+        stripped = strip_js_comments_and_strings(content)
+        assertion_tokens = (
+            "expect(", "assert.", "assert(", ".to.equal(", ".to.be.",
+            ".to.have.", ".should.", "t.is(", "t.assert(", "t.equal(", "t.truthy("
+        )
+        return any(token in stripped for token in assertion_tokens)
+
+    # General fallback for compiled languages (Go, Java, Rust): check for assertion calls
+    general_assertion_tokens = (
+        "assert.", "require.", "t.Error", "t.Fatal", "t.Fail",
+        "assertEquals", "assertTrue", "assertFalse", "assertThat", "assert_eq!"
     )
-    return any(keyword in content for keyword in test_keywords)
-
-
+    return any(token in content for token in general_assertion_tokens)

@@ -2,9 +2,12 @@ from typing import Any
 
 from app.services.storage import (
     complete_stored_job,
+    count_active_jobs,
     create_stored_job,
     fail_stored_job,
     get_stored_job,
+    has_active_job_for_target,
+    reconcile_interrupted_jobs,
     update_stored_job,
 )
 
@@ -19,8 +22,8 @@ JOB_STEPS = [
 ]
 
 
-def create_job(job_id: str) -> None:
-    create_stored_job(job_id)
+def create_job(job_id: str, target: str = "") -> None:
+    create_stored_job(job_id, target)
 
 
 def update_job(job_id: str, step: str) -> None:
@@ -41,3 +44,17 @@ def fail_job(job_id: str, error: str) -> None:
 def get_job(job_id: str) -> dict[str, Any] | None:
     return get_stored_job(job_id)
 
+
+def is_active_job_running_for(target: str) -> bool:
+    return has_active_job_for_target(target)
+
+
+def get_active_jobs_count() -> int:
+    return count_active_jobs()
+
+
+# Reconcile any interrupted jobs when the backend boots
+try:
+    reconcile_interrupted_jobs()
+except Exception:
+    pass

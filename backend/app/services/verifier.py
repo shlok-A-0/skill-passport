@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.config import VERIFIER_VERSION
-from app.services.ast_verifier import check_test_has_assertions, python_ast_has_signature
+from app.services.ast_verifier import check_test_has_assertions, js_has_signature, python_ast_has_signature
 from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
@@ -306,9 +306,11 @@ def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: 
         # rather than being inside a comment or string literal.
         full_content = "\n".join(lines)
         ast_result = python_ast_has_signature(full_content, start, end, signatures)
-        if ast_result is not None:
-            return ast_result
+        # Safe behaviour: invalid Python syntax or AST parsing failure strictly rejects signature
+        return bool(ast_result)
     window = "\n".join(lines[max(0, start - 1 - 5): min(len(lines), end + 5)])
+    if extension in {".js", ".jsx", ".ts", ".tsx"}:
+        return js_has_signature(window, signatures)
     return any(
         _signature_pattern(signature).search(window)
         for signature in signatures
@@ -680,10 +682,13 @@ def _config_evidence(
     if is_ci and ci_status is not None:
         if ci_status.get("has_successful_run"):
             checks["ci_run_verified"] = True
-            explanation = f"{skill_name} workflow in {path}; verified successful CI run on {sha[:7]}."
-        elif ci_status.get("latest_conclusion"):
+            explanation = f"{skill_name} workflow in {path}; {ci_status.get('summary', 'all checks passed')} on {sha[:7]}."
+        elif ci_status.get("status") == "failed":
             checks["ci_run_verified"] = False
-            explanation = f"{skill_name} workflow in {path}; last recorded CI run was '{ci_status.get('latest_conclusion')}'."
+            explanation = f"{skill_name} workflow in {path}; CI check run failed ({ci_status.get('summary', 'checks failed')})."
+        elif ci_status.get("status") == "in_progress":
+            checks["ci_run_verified"] = False
+            explanation = f"{skill_name} workflow in {path}; CI checks currently in progress ({ci_status.get('summary')})."
         else:
             checks["ci_run_verified"] = False
             explanation = f"{skill_name} workflow in {path} (no recorded CI runs on GitHub Actions)."
@@ -798,10 +803,12 @@ def targeting_test(
             content = contents.get(path)
             if content is None:
                 source = (repo.get("source_files") or {}).get(path)
-                content = source.get("content", "") if source else ""
-            # Meaningful test check: test must contain executable assertions or test functions to qualify
-            if content and not check_test_has_assertions(content, path):
-                return False
+                content = source.get("content") if source else None
+            # Meaningful test check: if test content is available, it must contain executable assertions
+            # An empty string, placeholder function, or comment-only assertion strictly fails
+            if content is not None:
+                if not content.strip() or not check_test_has_assertions(content, path):
+                    return False
         return True
 
     for path in repo.get("test_files", []):

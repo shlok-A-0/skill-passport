@@ -35,11 +35,38 @@ def test_role_match_distinguishes_met_partial_and_claimed_missing() -> None:
     result = match_role(skills, role)
     assert result["met"] == 1
     assert result["total"] == 3
+    assert result["mandatory_met"] == 1
+    assert result["mandatory_total"] == 2
+    assert result["mandatory_gaps"] == 1
+    assert result["optional_met"] == 0
+    assert result["optional_total"] == 1
+    assert result["headline"] == "1 of 2 mandatory requirements met (1 mandatory gap)"
     assert [item["status"] for item in result["requirements"]] == [
         "partial", "met", "missing",
     ]
     assert result["requirements"][0]["reason"].startswith("Requires Applied; found Used")
     assert result["requirements"][2]["student_level"] == "Claimed"
+
+
+def test_role_match_headline_when_all_mandatory_met() -> None:
+    skills = [
+        {"skill_id": "python", "level": "Applied", "evidence": [{"type": "code"}]},
+        {"skill_id": "docker", "level": "Applied", "evidence": [{"type": "code"}]},
+    ]
+    role = {
+        "id": "test-role",
+        "name": "Test role",
+        "requirements": [
+            {"skill_id": "docker", "importance": "must", "min_level": "Applied"},
+            {"skill_id": "python", "importance": "must", "min_level": "Applied"},
+            {"skill_id": "sql", "importance": "nice", "min_level": "Used"},
+        ],
+    }
+    result = match_role(skills, role)
+    assert result["mandatory_met"] == 2
+    assert result["mandatory_total"] == 2
+    assert result["mandatory_gaps"] == 0
+    assert result["headline"] == "All 2 mandatory requirements met (0/1 optional met)"
 
 
 def test_missing_requirement_reason_includes_coverage_counts() -> None:

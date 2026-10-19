@@ -315,7 +315,7 @@ def test_a_dockerfile_or_ci_alone_no_longer_upgrades_anything() -> None:
 def test_import_match_in_python_tests() -> None:
     data = two_module_ingestion(
         test_files=["tests/test_billing.py"],
-        test_contents={"tests/test_billing.py": "import pytest\nfrom billing.engine import load\n"},
+        test_contents={"tests/test_billing.py": "import pytest\nfrom billing.engine import load\n\ndef test_billing():\n    assert load('test.csv') is not None\n"},
         test_authored={"tests/test_billing.py": True},
     )
     pandas = next(item for item in verify_claims(TWO_MODULE_CLAIMS, data)["skills"] if item["skill_id"] == "pandas")
@@ -1101,13 +1101,21 @@ def test_ci_evidence_verifies_successful_ci_runs() -> None:
         "config_files": [".github/workflows/ci.yml"],
         "config_contents": {".github/workflows/ci.yml": "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"},
         "authored_paths": {".github/workflows/ci.yml": True},
-        "ci_status": {"has_successful_run": True, "total_checks": 1, "successful_checks": 1},
+        "ci_status": {
+            "has_successful_run": True,
+            "total_checks": 1,
+            "successful_checks": 1,
+            "failed_checks": 0,
+            "in_progress_checks": 0,
+            "status": "passed",
+            "summary": "All 1 CI check(s) passed",
+        },
     }
     evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
     assert len(evidence) == 1
     item = evidence[0]
     assert item["checks"]["ci_run_verified"] is True
-    assert "verified successful CI run" in item["explanation"]
+    assert "All 1 CI check(s) passed" in item["explanation"]
 
 
 def test_ci_evidence_flags_failed_or_missing_runs() -> None:
@@ -1122,11 +1130,20 @@ def test_ci_evidence_flags_failed_or_missing_runs() -> None:
         "config_files": [".github/workflows/ci.yml"],
         "config_contents": {".github/workflows/ci.yml": "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"},
         "authored_paths": {".github/workflows/ci.yml": True},
-        "ci_status": {"has_successful_run": False, "latest_conclusion": "failure"},
+        "ci_status": {
+            "has_successful_run": False,
+            "total_checks": 2,
+            "successful_checks": 1,
+            "failed_checks": 1,
+            "in_progress_checks": 0,
+            "status": "failed",
+            "summary": "1 of 2 CI check(s) failed",
+        },
     }
     evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
     assert len(evidence) == 1
     item = evidence[0]
     assert item["checks"]["ci_run_verified"] is False
-    assert "failure" in item["explanation"]
+    assert "failed" in item["explanation"]
+
 
