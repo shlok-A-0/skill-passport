@@ -15,16 +15,21 @@ function LatestPassportRedirect({ view }: { view: "passport" | "recruiter" }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.passports()
+    if (view === "passport") {
+      setPassportId(api.latestPassportId() ?? "");
+      setLoading(false);
+      return;
+    }
+    api.reviewPassports()
       .then((passports) => setPassportId(passports[0]?.id ?? ""))
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [view]);
 
   if (loading) return <div className="page-message">Loading latest passport…</div>;
   if (error) return <div className="notice notice-error">{error}</div>;
   if (!passportId) {
-    return <div className="page-message">No passports yet. <Link to="/">Create one first.</Link></div>;
+    return <div className="page-message">{view === "passport" ? "No passport in this browser session." : "No passports yet."} <Link to="/">Create one first.</Link></div>;
   }
   return <Navigate replace to={`/${view}/${passportId}`} />;
 }

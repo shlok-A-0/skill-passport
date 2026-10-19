@@ -23,12 +23,17 @@ JOB_STEPS = [
 ]
 
 
-def create_job(job_id: str, target: str = "") -> None:
-    create_stored_job(job_id, target)
+def create_job(job_id: str, target: str = "", access_token_hash: str | None = None) -> None:
+    create_stored_job(job_id, target, access_token_hash)
 
 
-def reserve_job(job_id: str, target: str = "", max_active: int = 5) -> tuple[bool, str | None]:
-    return reserve_stored_job(job_id, target, max_active)
+def reserve_job(
+    job_id: str,
+    target: str = "",
+    max_active: int = 5,
+    access_token_hash: str | None = None,
+) -> tuple[bool, str | None]:
+    return reserve_stored_job(job_id, target, max_active, access_token_hash)
 
 
 def update_job(job_id: str, step: str) -> None:

@@ -8,7 +8,7 @@ router = APIRouter(prefix="/debug", tags=["debug"])
 
 
 def require_debug_access(x_recruiter_key: str | None = Header(default=None)) -> None:
-    if not getattr(config, "ALLOW_DEBUG_ENDPOINTS", True):
+    if not getattr(config, "ALLOW_DEBUG_ENDPOINTS", False):
         raise HTTPException(status_code=404, detail="Debug endpoints are disabled.")
     if getattr(config, "REQUIRE_RECRUITER_AUTH", False):
         # Debug endpoints must be protected when authentication is enforced

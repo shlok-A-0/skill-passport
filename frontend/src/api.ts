@@ -266,11 +266,20 @@ async function reviewRequest<T>(path: string, options: RequestInit = {}): Promis
 
 export const api = {
   roles: () => request<Role[]>("/roles"),
-  createPassport: (data: FormData) =>
-    request<{ job_id: string }>("/passport/create", { method: "POST", body: data }),
-  job: (id: string) => request<PassportJob>(`/jobs/${id}`),
+  createPassport: async (data: FormData) => {
+    const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
+    sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);
+    return created;
+  },
+  latestPassportId: () => sessionStorage.getItem("passport-latest-id"),
+  job: async (id: string) => {
+    const job = await request<PassportJob>(`/jobs/${id}`, {
+      headers: { "X-Passport-Token": sessionStorage.getItem(`passport-token:${id}`) ?? "" },
+    });
+    if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
+    return job;
+  },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
-  passports: () => request<Passport[]>("/passports"),
   reviewPassport: (id: string) => reviewRequest<Passport>(`/passport/${id}/review`),
   reviewPassports: () => reviewRequest<Passport[]>("/passports/review"),
   requestReview: (passportId: string, citation_key: string, note: string) =>
@@ -281,10 +290,13 @@ export const api = {
     }),
   markReviewed: (requestId: string) =>
     reviewRequest<ReviewRequest>(`/review-requests/${requestId}/mark-reviewed`, { method: "POST" }),
-  recheck: (id: string) =>
-    request<{ passport: Passport; level_changes: Passport["level_changes"] }>(
+  recheck: (id: string) => {
+    const token = sessionStorage.getItem(`passport-token:${id}`);
+    if (!token) throw new Error("Re-check is only available in the browser session that created this passport.");
+    return request<{ passport: Passport; level_changes: Passport["level_changes"] }>(
       `/passport/${id}/recheck`,
-      { method: "POST" },
-    ),
+      { method: "POST", headers: { "X-Passport-Token": token } },
+    );
+  },
   badge: (id: string) => request<Record<string, unknown>>(`/passport/${id}/badge`),
 };

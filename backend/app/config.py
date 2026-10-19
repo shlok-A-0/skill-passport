@@ -35,11 +35,8 @@ REQUIRE_RECRUITER_AUTH = (
 )
 # When set, the recruiter review endpoints require a matching X-Recruiter-Key header.
 RECRUITER_KEY = os.getenv("RECRUITER_KEY", "")
-# Debug endpoints are strictly disabled in production unless explicitly enabled via environment
-ALLOW_DEBUG_ENDPOINTS = (
-    os.getenv("ALLOW_DEBUG_ENDPOINTS", "false" if APP_ENV == "production" else "true").lower()
-    in ("true", "1", "yes")
-)
+# Debug endpoints require explicit opt-in in every environment.
+ALLOW_DEBUG_ENDPOINTS = os.getenv("ALLOW_DEBUG_ENDPOINTS", "false").lower() in ("true", "1", "yes")
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_PATH = BASE_DIR / "skill_passport.db"

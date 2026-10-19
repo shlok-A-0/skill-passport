@@ -1,6 +1,8 @@
 import copy
+import hashlib
 import hmac
 import logging
+import secrets
 import time
 import uuid
 from typing import Any
@@ -171,6 +173,29 @@ def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> Non
             raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
 
 
+def _valid_passport_token(job: dict[str, Any] | None, token: str | None) -> bool:
+    expected = job.get("access_token_hash") if job else None
+    if not expected or not token:
+        return False
+    actual = hashlib.sha256(token.encode()).hexdigest()
+    return hmac.compare_digest(actual, expected)
+
+
+def _require_passport_access(
+    passport_id: str,
+    token: str | None,
+    recruiter_key: str | None = None,
+) -> None:
+    job = get_job(passport_id)
+    if _valid_passport_token(job, token):
+        return
+    if RECRUITER_KEY and recruiter_key and hmac.compare_digest(
+        recruiter_key.encode(), RECRUITER_KEY.encode()
+    ):
+        return
+    raise HTTPException(status_code=404, detail="Passport not found.")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "skill-passport"}
@@ -260,7 +285,14 @@ async def create_passport(
     # Atomic job slot reservation before accepting large file bodies
     candidate_key = github_username.strip().lower()
     job_id = str(uuid.uuid4())
-    reserved, reason = reserve_job(job_id, target=candidate_key, max_active=5)
+    access_token = secrets.token_urlsafe(32)
+    access_token_hash = hashlib.sha256(access_token.encode()).hexdigest()
+    reserved, reason = reserve_job(
+        job_id,
+        target=candidate_key,
+        max_active=5,
+        access_token_hash=access_token_hash,
+    )
     if not reserved:
         if reason == "capacity":
             raise HTTPException(
@@ -308,13 +340,16 @@ async def create_passport(
         cert_bytes,
         is_demo,
     )
-    return {"job_id": job_id}
+    return {"job_id": job_id, "access_token": access_token}
 
 
 @app.get("/jobs/{job_id}")
-def passport_job(job_id: str) -> dict:
+def passport_job(
+    job_id: str,
+    x_passport_token: str | None = Header(default=None),
+) -> dict:
     job = get_job(job_id)
-    if not job:
+    if not job or not _valid_passport_token(job, x_passport_token):
         raise HTTPException(status_code=404, detail="Job not found.")
     return {
         "job_id": job.get("job_id", job_id),
@@ -322,7 +357,7 @@ def passport_job(job_id: str) -> dict:
         "step": job.get("step") or "Queued",
         "completed_steps": job.get("completed_steps", []),
         "passport_id": job.get("passport_id"),
-        "error": job.get("error"),
+        "error": "Passport generation failed. Please try again." if job.get("status") == "failed" else None,
     }
 
 
@@ -393,7 +428,13 @@ def mark_reviewed(request_id: str) -> dict:
 
 
 @app.post("/passport/{passport_id}/recheck")
-def recheck_passport_endpoint(passport_id: str, request: Request) -> dict:
+def recheck_passport_endpoint(
+    passport_id: str,
+    request: Request,
+    x_passport_token: str | None = Header(default=None),
+    x_recruiter_key: str | None = Header(default=None),
+) -> dict:
+    _require_passport_access(passport_id, x_passport_token, x_recruiter_key)
     check_rate_limit(request, "recheck_passport", max_requests=10, window_seconds=300)
     existing = get_passport(passport_id)
     if not existing:
@@ -420,8 +461,8 @@ def recheck_passport_endpoint(passport_id: str, request: Request) -> dict:
         complete_job(recheck_job_id, passport_id)
     except Exception as exc:
         fail_job(recheck_job_id, str(exc))
-        logging.getLogger(__name__).exception("Passport re-check failed: %s", passport_id)
-        raise HTTPException(status_code=502, detail=f"Re-check failed: {exc}") from exc
+        logging.getLogger(__name__).exception("Passport re-check failed (job %s)", recheck_job_id)
+        raise HTTPException(status_code=502, detail="Re-check failed. Please try again.") from exc
 
     return {
         "passport": student_view(result, list_review_requests(passport_id)),

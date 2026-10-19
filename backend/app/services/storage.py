@@ -43,6 +43,7 @@ def initialize_storage() -> None:
                 completed_steps TEXT NOT NULL DEFAULT '[]',
                 error TEXT,
                 passport_id TEXT,
+                access_token_hash TEXT,
                 target TEXT,
                 created_at TEXT NOT NULL
             )
@@ -54,6 +55,10 @@ def initialize_storage() -> None:
             pass
         try:
             connection.execute("ALTER TABLE jobs ADD COLUMN updated_at TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            connection.execute("ALTER TABLE jobs ADD COLUMN access_token_hash TEXT")
         except sqlite3.OperationalError:
             pass
         # Students asking for a human look at an excluded citation. Keyed by passport id and
@@ -182,7 +187,12 @@ def get_review_requests_by_passports() -> dict[str, list[dict[str, Any]]]:
     return grouped
 
 
-def reserve_stored_job(job_id: str, target: str = "", max_active: int = 5) -> tuple[bool, str | None]:
+def reserve_stored_job(
+    job_id: str,
+    target: str = "",
+    max_active: int = 5,
+    access_token_hash: str | None = None,
+) -> tuple[bool, str | None]:
     """Atomically verify active job limits and duplicate targets, then reserve the job slot."""
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
@@ -205,19 +215,20 @@ def reserve_stored_job(job_id: str, target: str = "", max_active: int = 5) -> tu
 
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at, updated_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
                 completed_steps = '[]',
                 error = NULL,
                 passport_id = NULL,
+                access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             """,
-            (job_id, norm_target, now, now),
+            (job_id, access_token_hash, norm_target, now, now),
         )
         return True, None
 
@@ -237,26 +248,31 @@ def prune_old_jobs(max_age_days: int = 7) -> int:
         return cursor.rowcount
 
 
-def create_stored_job(job_id: str, target: str = "") -> None:
+def create_stored_job(
+    job_id: str,
+    target: str = "",
+    access_token_hash: str | None = None,
+) -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
     norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at, updated_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
                 completed_steps = '[]',
                 error = NULL,
                 passport_id = NULL,
+                access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             """,
-            (job_id, norm_target, now, now),
+            (job_id, access_token_hash, norm_target, now, now),
         )
 
 
@@ -394,4 +410,3 @@ def check_storage_rate_limit(key: str, max_requests: int, window_seconds: float)
             (key, now),
         )
         return True
-

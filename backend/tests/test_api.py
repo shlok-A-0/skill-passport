@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,7 +83,12 @@ def test_create_job_persist_and_get_passport(tmp_path, monkeypatch) -> None:
     )
     assert response.status_code == 202
     job_id = response.json()["job_id"]
-    assert client.get(f"/jobs/{job_id}").json()["status"] == "done"
+    access_token = response.json()["access_token"]
+    assert access_token
+    assert client.get(f"/jobs/{job_id}").status_code == 404
+    job_response = client.get(f"/jobs/{job_id}", headers={"X-Passport-Token": access_token})
+    assert job_response.json()["status"] == "done"
+    assert "access_token_hash" not in job_response.json()
     passport = client.get(f"/passport/{job_id}")
     assert passport.status_code == 200
     assert passport.json()["is_demo"] is True
@@ -147,16 +153,21 @@ def _keys_and_values(data: object) -> tuple[set, list]:
     return keys, values
 
 
+STUDENT_WORDS_NOT_ALLOWED = ("fraud", "fake", "copied", "cheat")
+REVIEW_OWNER_TOKEN = "review-owner-session-secret"
+
+
 def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
     monkeypatch.setattr(main_module, "RECRUITER_KEY", recruiter_key)
     storage.save_passport(passport_with_fraud_signals("p-review"))
+    storage.create_stored_job(
+        "p-review",
+        target="demo-user",
+        access_token_hash=hashlib.sha256(REVIEW_OWNER_TOKEN.encode()).hexdigest(),
+    )
+    storage.complete_stored_job("p-review", "p-review", [])
     return TestClient(main_module.app)
-
-
-STUDENT_WORDS_NOT_ALLOWED = ("fraud", "fake", "copied", "cheat")
-
-
 def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review").json(), client.get("/passports").json()):
@@ -238,7 +249,10 @@ def test_review_requests_survive_recheck_and_never_change_levels(tmp_path, monke
         return result
 
     monkeypatch.setattr(main_module, "recheck_passport", rebuild)
-    student = client.post("/passport/p-review/recheck").json()["passport"]
+    student = client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
+    ).json()["passport"]
     excluded = next(item for item in student["rejected_claims"] if item.get("citation_key") == EXCLUDED_KEY)
     assert excluded["review_request"]["status"] == "open"
     requests = client.get("/passport/p-review/review").json()["review_requests"]
@@ -348,7 +362,10 @@ def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
         main_module, "recheck_passport",
         lambda existing: {**passport_with_fraud_signals(existing["id"]), "level_changes": []},
     )
-    keys, values = _keys_and_values(client.post("/passport/p-review/recheck").json())
+    keys, values = _keys_and_values(client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
+    ).json())
     assert not {"integrity", "good_answer_mentions"} & keys
     assert "copied" not in values
 
@@ -362,7 +379,10 @@ def test_recheck_endpoint_calls_the_pipeline_not_itself(tmp_path, monkeypatch) -
     calls = []
     monkeypatch.setattr(pipeline, "build_passport", lambda **kwargs: calls.append(kwargs) or {
         **passport_with_fraud_signals("p-review"), "level_changes": []})
-    response = client.post("/passport/p-review/recheck")
+    response = client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
+    )
     assert response.status_code == 200
     assert calls[0]["passport_id"] == "p-review" and calls[0]["force_refresh"] is True
 
@@ -569,6 +589,9 @@ def test_debug_endpoints_disabled_or_protected(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(config, "REQUIRE_RECRUITER_AUTH", True)
     monkeypatch.setattr(config, "RECRUITER_KEY", "secret-key")
     monkeypatch.setattr(main_module, "RECRUITER_KEY", "secret-key")
+    monkeypatch.setattr(main_module, "ALLOW_DEBUG_ENDPOINTS", True)
+    if not any(route.path == "/debug/github/{username}" for route in main_module.app.routes):
+        main_module.app.include_router(main_module.debug_router)
 
     res_unauth = client.get("/debug/github/testuser")
     assert res_unauth.status_code == 401
@@ -585,12 +608,69 @@ def test_debug_endpoints_disabled_or_protected(tmp_path, monkeypatch) -> None:
 
 def test_recheck_concurrent_job_and_rate_limit(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
+    access_token = REVIEW_OWNER_TOKEN
+    storage.create_stored_job(
+        "p-review",
+        target="demo-user",
+        access_token_hash=hashlib.sha256(access_token.encode()).hexdigest(),
+    )
+    storage.complete_stored_job("p-review", "p-review", [])
     # 1. While a job is running for the candidate, recheck returns 409
     storage.create_stored_job("active-recheck-job", target="demo-user")
     storage.update_stored_job("active-recheck-job", "Reading GitHub", [])
-    res_conflict = client.post("/passport/p-review/recheck")
+    res_conflict = client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": access_token},
+    )
     assert res_conflict.status_code == 409
     assert "already in progress" in res_conflict.json()["detail"]
+
+
+def test_recheck_requires_owner_token_and_hides_upstream_error(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    access_token = REVIEW_OWNER_TOKEN
+    storage.create_stored_job(
+        "p-review",
+        target="demo-user",
+        access_token_hash=hashlib.sha256(access_token.encode()).hexdigest(),
+    )
+    storage.complete_stored_job("p-review", "p-review", [])
+    called = False
+
+    def fail_recheck(_passport):
+        nonlocal called
+        called = True
+        raise RuntimeError("private upstream response")
+
+    monkeypatch.setattr(main_module, "recheck_passport", fail_recheck)
+    assert client.post("/passport/p-review/recheck").status_code == 404
+    assert not called
+
+    response = client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": access_token},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Re-check failed. Please try again."
+    assert "private upstream response" not in response.text
+
+
+def test_job_status_requires_token_and_redacts_job_errors(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    access_token = "owner-session-secret"
+    token_hash = hashlib.sha256(access_token.encode()).hexdigest()
+    storage.create_stored_job("failed-job", access_token_hash=token_hash)
+    storage.fail_stored_job("failed-job", "private provider response")
+    client = TestClient(main_module.app)
+
+    assert client.get("/jobs/failed-job").status_code == 404
+    response = client.get(
+        "/jobs/failed-job",
+        headers={"X-Passport-Token": access_token},
+    )
+    assert response.status_code == 200
+    assert response.json()["error"] == "Passport generation failed. Please try again."
+    assert "private provider response" not in response.text
 
 
 def test_commit_signature_head_scope_labeling() -> None:
@@ -629,6 +709,22 @@ def test_debug_routes_absent_when_app_env_production(monkeypatch) -> None:
         assert client.post("/debug/resume").status_code == 404
     finally:
         monkeypatch.delenv("APP_ENV", raising=False)
+        importlib.reload(config)
+        importlib.reload(main)
+
+
+def test_debug_routes_disabled_by_default(monkeypatch) -> None:
+    import importlib
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ALLOW_DEBUG_ENDPOINTS", raising=False)
+    from app import config
+    importlib.reload(config)
+    from app import main
+    importlib.reload(main)
+    try:
+        assert config.ALLOW_DEBUG_ENDPOINTS is False
+        assert not any(r.path.startswith("/debug") for r in main.app.routes)
+    finally:
         importlib.reload(config)
         importlib.reload(main)
 
@@ -768,7 +864,3 @@ def test_upload_validation_failure_cleans_up_reserved_job(tmp_path, monkeypatch)
     # Verify the job is marked failed, so the candidate is NOT locked out by 409
     active = storage.has_active_job_for_target("failing-candidate")
     assert active is False
-
-
-
-
