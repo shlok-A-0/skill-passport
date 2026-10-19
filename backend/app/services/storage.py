@@ -52,6 +52,10 @@ def initialize_storage() -> None:
             connection.execute("ALTER TABLE jobs ADD COLUMN target TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            connection.execute("ALTER TABLE jobs ADD COLUMN updated_at TEXT")
+        except sqlite3.OperationalError:
+            pass
         # Students asking for a human look at an excluded citation. Keyed by passport id and
         # citation key, so requests survive re-checks; they never change levels or exclusions.
         connection.execute(
@@ -201,8 +205,8 @@ def reserve_stored_job(job_id: str, target: str = "", max_active: int = 5) -> tu
 
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at, updated_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
@@ -210,9 +214,10 @@ def reserve_stored_job(job_id: str, target: str = "", max_active: int = 5) -> tu
                 error = NULL,
                 passport_id = NULL,
                 target = excluded.target,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             """,
-            (job_id, norm_target, now),
+            (job_id, norm_target, now, now),
         )
         return True, None
 
@@ -239,8 +244,8 @@ def create_stored_job(job_id: str, target: str = "") -> None:
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at, updated_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
@@ -248,9 +253,10 @@ def create_stored_job(job_id: str, target: str = "") -> None:
                 error = NULL,
                 passport_id = NULL,
                 target = excluded.target,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             """,
-            (job_id, norm_target, now),
+            (job_id, norm_target, now, now),
         )
 
 
@@ -275,57 +281,77 @@ def has_active_job_for_target(target: str) -> bool:
     return bool(row)
 
 
-def reconcile_interrupted_jobs() -> int:
-    """Startup reconciliation: mark any uncompleted jobs as interrupted with retry note."""
+def reconcile_interrupted_jobs(stale_seconds: int = 600) -> int:
+    """Startup reconciliation: mark uncompleted jobs as interrupted only if they have been
+    stale without updates for longer than stale_seconds (default 10 minutes).
+    Active jobs owned by other concurrent workers are preserved.
+    """
     initialize_storage()
     with _connect() as connection:
         cursor = connection.execute(
             """
             UPDATE jobs
             SET status = 'failed',
-                error = 'Job interrupted by server restart. Ready to be retried.'
+                error = 'Job interrupted or timed out. Ready to be retried.'
             WHERE status IN ('queued', 'running')
-            """
+              AND datetime(COALESCE(updated_at, created_at)) < datetime('now', ? || ' seconds')
+            """,
+            (f"-{stale_seconds}",),
+        )
+        return cursor.rowcount
+
+
+def prune_old_rate_limits(max_age_seconds: int = 3600) -> int:
+    """Prune all rate limit records older than max_age_seconds to prevent table growth from inactive keys."""
+    initialize_storage()
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM rate_limits WHERE timestamp < ?",
+            (cutoff,),
         )
         return cursor.rowcount
 
 
 def update_stored_job(job_id: str, step: str, completed_steps: list[str]) -> None:
     initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
     with _connect() as connection:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'running', step = ?, completed_steps = ?
+            SET status = 'running', step = ?, completed_steps = ?, updated_at = ?
             WHERE id = ?
             """,
-            (step, json.dumps(completed_steps), job_id),
+            (step, json.dumps(completed_steps), now, job_id),
         )
 
 
 def complete_stored_job(job_id: str, passport_id: str, completed_steps: list[str]) -> None:
     initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
     with _connect() as connection:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?
+            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?, updated_at = ?
             WHERE id = ?
             """,
-            (json.dumps(completed_steps), passport_id, job_id),
+            (json.dumps(completed_steps), passport_id, now, job_id),
         )
 
 
 def fail_stored_job(job_id: str, error: str) -> None:
     initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
     with _connect() as connection:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'failed', error = ?
+            SET status = 'failed', error = ?, updated_at = ?
             WHERE id = ?
             """,
-            (error, job_id),
+            (error, now, job_id),
         )
 
 

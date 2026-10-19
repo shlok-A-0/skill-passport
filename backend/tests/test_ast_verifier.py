@@ -329,3 +329,30 @@ def test_engine():
     assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
 
 
+def test_regression_nested_unused_function_assertion_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+import engine
+
+def test_engine():
+    def unused():
+        assert engine.run() == "expected"
+    assert True
+"""
+    # Assertion inside uncalled nested function must NOT qualify the test
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_regression_meaningful_target_result_assertion_accepted() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+import engine
+
+def test_engine():
+    result = engine.run()
+    assert result == "expected"
+"""
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is True
+
+
+

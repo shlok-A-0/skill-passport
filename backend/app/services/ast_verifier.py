@@ -123,9 +123,19 @@ def _is_trivial_assert(node: ast.Assert) -> bool:
     return False
 
 
+def _walk_test_body(node: ast.AST):
+    """Walk an AST node while skipping recursive descent into nested function or class definitions."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield child
+        yield from _walk_test_body(child)
+
+
 def _node_has_assertion(node: ast.AST) -> bool:
     """Check if an AST node contains an executable assertion or test failure call."""
-    for child in ast.walk(node):
+    walker = _walk_test_body(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else ast.walk(node)
+    for child in walker:
         if isinstance(child, ast.Assert):
             if not _is_trivial_assert(child):
                 return True
@@ -168,6 +178,8 @@ def _test_function_exercises_target(fn: ast.AST, target_symbols: set[str]) -> bo
 
     body = getattr(fn, "body", [fn])
     for stmt in body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
         if isinstance(stmt, ast.Assign):
             if expr_references(stmt.value):
                 for target in stmt.targets:
@@ -182,7 +194,7 @@ def _test_function_exercises_target(fn: ast.AST, target_symbols: set[str]) -> bo
                 if isinstance(stmt.target, ast.Name):
                     derived_symbols.add(stmt.target.id.lower())
 
-    for child in ast.walk(fn):
+    for child in _walk_test_body(fn):
         if isinstance(child, ast.Assert):
             if not _is_trivial_assert(child) and expr_references(child.test):
                 return True

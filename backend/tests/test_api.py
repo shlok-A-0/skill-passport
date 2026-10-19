@@ -700,4 +700,75 @@ def test_persistent_shared_storage_rate_limit(tmp_path, monkeypatch) -> None:
     assert storage.check_storage_rate_limit("192.168.1.1:create_passport", max_requests=3, window_seconds=10.0) is True
 
 
+def test_rate_limiter_storage_failure_fails_closed_with_503(monkeypatch) -> None:
+    def broken_limiter(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(main_module, "check_storage_rate_limit", broken_limiter)
+    client = TestClient(main_module.app)
+    res = client.post(
+        "/passport/create",
+        data={"github_username": "testuser", "target_role": "backend-intern"},
+        files={"resume": ("resume.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    # Fail closed with 503 Service Unavailable, not silent downgrade
+    assert res.status_code == 503
+    assert "Rate limiting service temporarily unavailable" in res.json()["detail"]
+
+
+def test_multi_worker_startup_reconciliation_preserves_active_jobs(tmp_path, monkeypatch) -> None:
+    db_file = tmp_path / "test_reconcile.db"
+    monkeypatch.setattr(storage, "DATABASE_PATH", db_file)
+    storage.initialize_storage()
+
+    # Worker A creates an active job just now
+    storage.create_stored_job("active-worker-job", target="candidate-worker")
+    storage.update_stored_job("active-worker-job", "Reading GitHub", [])
+
+    # A dead job created 2 hours ago from a dead worker
+    with storage._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, target, created_at, updated_at)
+            VALUES ('dead-job', 'running', 'Reading resume', '[]', NULL, NULL, 'dead-candidate',
+                    datetime('now', '-7200 seconds'), datetime('now', '-7200 seconds'))
+            """
+        )
+
+    # Worker B starts up and runs reconciliation with 10-minute timeout
+    reconciled_count = storage.reconcile_interrupted_jobs(stale_seconds=600)
+    assert reconciled_count == 1
+
+    # Active job remains running; dead job was marked failed
+    active_job = storage.get_stored_job("active-worker-job")
+    assert active_job["status"] == "running"
+
+    dead_job = storage.get_stored_job("dead-job")
+    assert dead_job["status"] == "failed"
+    assert "interrupted or timed out" in dead_job["error"]
+
+
+def test_upload_validation_failure_cleans_up_reserved_job(tmp_path, monkeypatch) -> None:
+    db_file = tmp_path / "test_cleanup.db"
+    monkeypatch.setattr(storage, "DATABASE_PATH", db_file)
+    storage.initialize_storage()
+
+    client = TestClient(main_module.app)
+    # Upload with non-PDF certificate triggers 415 during file processing
+    res = client.post(
+        "/passport/create",
+        data={"github_username": "failing-candidate", "target_role": "backend-intern"},
+        files=[
+            ("resume", ("resume.pdf", b"%PDF-1.4 valid", "application/pdf")),
+            ("certificates", ("cert.txt", b"not a pdf", "text/plain")),
+        ],
+    )
+    assert res.status_code == 415
+
+    # Verify the job is marked failed, so the candidate is NOT locked out by 409
+    active = storage.has_active_job_for_target("failing-candidate")
+    assert active is False
+
+
+
 

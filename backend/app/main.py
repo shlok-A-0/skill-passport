@@ -68,26 +68,17 @@ app.add_middleware(
 if ALLOW_DEBUG_ENDPOINTS:
     app.include_router(debug_router)
 
-# In-memory sliding window fallback for rate limiting
-_ip_rate_records: dict[str, list[float]] = {}
-
-
 def check_rate_limit(request: Request, action: str, max_requests: int, window_seconds: float) -> None:
     client_ip = request.client.host if request.client else "unknown"
     key = f"{client_ip}:{action}"
     try:
         allowed = check_storage_rate_limit(key, max_requests, window_seconds)
-    except Exception:
-        now = time.time()
-        records = [t for t in _ip_rate_records.get(key, []) if now - t < window_seconds]
-        if len(records) >= max_requests:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded for {action}. Please try again later.",
-            )
-        records.append(now)
-        _ip_rate_records[key] = records
-        return
+    except Exception as exc:
+        logging.getLogger(__name__).error("Rate limiter storage failure for %s: %s", key, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Rate limiting service temporarily unavailable. Please try again shortly.",
+        ) from exc
 
     if not allowed:
         raise HTTPException(
@@ -213,6 +204,36 @@ MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB aggregate limit
 
 
+async def stream_and_validate_file(
+    file: UploadFile,
+    max_bytes: int,
+    current_aggregate: int,
+    max_aggregate: int,
+    error_label: str = "File",
+    chunk_size: int = 64 * 1024,
+) -> tuple[bytes, int]:
+    """Stream chunks from upload while enforcing single-file and aggregate limits before full buffering."""
+    chunks = []
+    file_bytes = 0
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        file_bytes += len(chunk)
+        if file_bytes > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{error_label} must be {max_bytes // (1024 * 1024)} MB or smaller.",
+            )
+        if current_aggregate + file_bytes > max_aggregate:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total upload size across resume and certificates must be {max_aggregate // (1024 * 1024)} MB or smaller.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks), current_aggregate + file_bytes
+
+
 @app.post("/passport/create", status_code=202)
 async def create_passport(
     background_tasks: BackgroundTasks,
@@ -252,30 +273,31 @@ async def create_passport(
                 detail=f"A verification job for '{github_username}' is already in progress.",
             )
 
-    total_bytes = 0
-    resume_bytes = await resume.read()
-    total_bytes += len(resume_bytes)
-    if len(resume_bytes) > MAX_SINGLE_FILE_BYTES:
-        fail_job(job_id, "Resume PDF exceeds 10 MB limit.")
-        raise HTTPException(status_code=413, detail="Resume PDF must be 10 MB or smaller.")
+    try:
+        total_bytes = 0
+        resume_bytes, total_bytes = await stream_and_validate_file(
+            resume,
+            max_bytes=MAX_SINGLE_FILE_BYTES,
+            current_aggregate=total_bytes,
+            max_aggregate=MAX_TOTAL_UPLOAD_BYTES,
+            error_label="Resume PDF",
+        )
 
-    cert_bytes = []
-    for certificate in certificates or []:
-        if certificate.content_type != "application/pdf":
-            fail_job(job_id, "Non-PDF certificate rejected.")
-            raise HTTPException(status_code=415, detail="Certificates must be PDF files.")
-        content = await certificate.read()
-        total_bytes += len(content)
-        if len(content) > MAX_SINGLE_FILE_BYTES:
-            fail_job(job_id, "Certificate PDF exceeds 10 MB limit.")
-            raise HTTPException(status_code=413, detail="Each certificate must be 10 MB or smaller.")
-        if total_bytes > MAX_TOTAL_UPLOAD_BYTES:
-            fail_job(job_id, "Aggregate upload exceeds 25 MB limit.")
-            raise HTTPException(
-                status_code=413,
-                detail="Total upload size across resume and certificates must be 25 MB or smaller.",
+        cert_bytes = []
+        for certificate in certificates or []:
+            if certificate.content_type != "application/pdf":
+                raise HTTPException(status_code=415, detail="Certificates must be PDF files.")
+            content, total_bytes = await stream_and_validate_file(
+                certificate,
+                max_bytes=MAX_SINGLE_FILE_BYTES,
+                current_aggregate=total_bytes,
+                max_aggregate=MAX_TOTAL_UPLOAD_BYTES,
+                error_label="Each certificate",
             )
-        cert_bytes.append(content)
+            cert_bytes.append(content)
+    except Exception as exc:
+        fail_job(job_id, f"Upload rejected: {exc}")
+        raise
 
     background_tasks.add_task(
         run_passport_job,
