@@ -303,3 +303,29 @@ def test_backend_startup_and_import_integrity() -> None:
     assert hasattr(app.services.verifier, "verify_claims")
     assert hasattr(app.main, "app")
 
+
+def test_regression_string_constant_not_counted_as_symbol_reference() -> None:
+    from app.services.ast_verifier import (
+        check_test_has_assertions,
+        test_targets_implementation_with_assertions,
+    )
+    code = """
+def test_engine():
+    assert "engine" == "engine"
+"""
+    # 1. check_test_has_assertions must reject constant comparisons as trivial vacuous asserts
+    assert check_test_has_assertions(code, "test_engine.py") is False
+    # 2. test_targets_implementation_with_assertions must not count arbitrary string constants as symbol references
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+
+def test_regression_variable_assigned_from_string_rejected() -> None:
+    from app.services.ast_verifier import test_targets_implementation_with_assertions
+    code = """
+def test_engine():
+    s = "engine"
+    assert len(s) == 6
+"""
+    assert test_targets_implementation_with_assertions(code, "test_engine.py", "engine") is False
+
+

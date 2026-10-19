@@ -67,6 +67,17 @@ def initialize_storage() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                key TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rate_limits_key_ts ON rate_limits (key, timestamp)"
+        )
     _initialized_dbs.add(db_key)
 
 
@@ -330,3 +341,31 @@ def get_stored_job(job_id: str) -> dict[str, Any] | None:
     data["job_id"] = data.pop("id")
     data["completed_steps"] = json.loads(data["completed_steps"])
     return data
+
+
+def check_storage_rate_limit(key: str, max_requests: int, window_seconds: float) -> bool:
+    """Persistent sliding-window rate limit backed by SQLite WAL mode.
+    Shared across multiple workers and survives process restarts.
+    """
+    initialize_storage()
+    now = datetime.now(timezone.utc).timestamp()
+    cutoff = now - window_seconds
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        connection.execute(
+            "DELETE FROM rate_limits WHERE key = ? AND timestamp < ?",
+            (key, cutoff),
+        )
+        row = connection.execute(
+            "SELECT COUNT(*) as count FROM rate_limits WHERE key = ?",
+            (key,),
+        ).fetchone()
+        count = int(row["count"]) if row else 0
+        if count >= max_requests:
+            return False
+        connection.execute(
+            "INSERT INTO rate_limits (key, timestamp) VALUES (?, ?)",
+            (key, now),
+        )
+        return True
+

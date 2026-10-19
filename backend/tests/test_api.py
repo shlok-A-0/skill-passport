@@ -680,3 +680,24 @@ def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, mon
     assert "maximum concurrent verification jobs" in res_cap.json()["detail"]
 
 
+def test_persistent_shared_storage_rate_limit(tmp_path, monkeypatch) -> None:
+    db_file = tmp_path / "test_rate.db"
+    monkeypatch.setattr(storage, "DATABASE_PATH", db_file)
+    storage.initialize_storage()
+
+    key = "127.0.0.1:create_passport"
+    # Allow 3 requests per 10 seconds
+    assert storage.check_storage_rate_limit(key, max_requests=3, window_seconds=10.0) is True
+    assert storage.check_storage_rate_limit(key, max_requests=3, window_seconds=10.0) is True
+    assert storage.check_storage_rate_limit(key, max_requests=3, window_seconds=10.0) is True
+    # 4th request exceeds rate limit
+    assert storage.check_storage_rate_limit(key, max_requests=3, window_seconds=10.0) is False
+
+    # Simulate another worker or process restart reading the same database
+    assert storage.check_storage_rate_limit(key, max_requests=3, window_seconds=10.0) is False
+
+    # Different IP/key is unaffected
+    assert storage.check_storage_rate_limit("192.168.1.1:create_passport", max_requests=3, window_seconds=10.0) is True
+
+
+

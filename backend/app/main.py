@@ -42,6 +42,7 @@ from app.services.packets import requirement_packets
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import (
     add_review_request,
+    check_storage_rate_limit,
     get_passport,
     get_review_requests_by_passports,
     list_passports,
@@ -67,22 +68,32 @@ app.add_middleware(
 if ALLOW_DEBUG_ENDPOINTS:
     app.include_router(debug_router)
 
-# In-memory sliding window rate limiter per client IP
+# In-memory sliding window fallback for rate limiting
 _ip_rate_records: dict[str, list[float]] = {}
 
 
 def check_rate_limit(request: Request, action: str, max_requests: int, window_seconds: float) -> None:
     client_ip = request.client.host if request.client else "unknown"
     key = f"{client_ip}:{action}"
-    now = time.time()
-    records = [t for t in _ip_rate_records.get(key, []) if now - t < window_seconds]
-    if len(records) >= max_requests:
+    try:
+        allowed = check_storage_rate_limit(key, max_requests, window_seconds)
+    except Exception:
+        now = time.time()
+        records = [t for t in _ip_rate_records.get(key, []) if now - t < window_seconds]
+        if len(records) >= max_requests:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded for {action}. Please try again later.",
+            )
+        records.append(now)
+        _ip_rate_records[key] = records
+        return
+
+    if not allowed:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded for {action}. Please try again later.",
         )
-    records.append(now)
-    _ip_rate_records[key] = records
 
 
 STUDENT_EXCLUDED_REASON = (
