@@ -1,9 +1,13 @@
-from datetime import datetime, timezone
-from threading import Lock
 from typing import Any
 
-_lock = Lock()
-_jobs: dict[str, dict[str, Any]] = {}
+from app.services.storage import (
+    complete_stored_job,
+    create_stored_job,
+    fail_stored_job,
+    get_stored_job,
+    update_stored_job,
+)
+
 JOB_STEPS = [
     "Reading GitHub",
     "Reading resume",
@@ -16,44 +20,24 @@ JOB_STEPS = [
 
 
 def create_job(job_id: str) -> None:
-    with _lock:
-        _jobs[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "step": "Queued",
-            "completed_steps": [],
-            "error": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
+    create_stored_job(job_id)
 
 
 def update_job(job_id: str, step: str) -> None:
-    with _lock:
-        job = _jobs[job_id]
-        job["status"] = "running"
-        job["step"] = step
-        job["completed_steps"] = [
-            item for item in JOB_STEPS[: JOB_STEPS.index(step)]
-        ] if step in JOB_STEPS else job["completed_steps"]
+    completed = [
+        item for item in JOB_STEPS[: JOB_STEPS.index(step)]
+    ] if step in JOB_STEPS else []
+    update_stored_job(job_id, step, completed)
 
 
 def complete_job(job_id: str, passport_id: str) -> None:
-    with _lock:
-        job = _jobs[job_id]
-        job["status"] = "done"
-        job["step"] = "Done"
-        job["completed_steps"] = JOB_STEPS.copy()
-        job["passport_id"] = passport_id
+    complete_stored_job(job_id, passport_id, JOB_STEPS.copy())
 
 
 def fail_job(job_id: str, error: str) -> None:
-    with _lock:
-        job = _jobs[job_id]
-        job["status"] = "failed"
-        job["error"] = error
+    fail_stored_job(job_id, error)
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    with _lock:
-        job = _jobs.get(job_id)
-        return dict(job) if job else None
+    return get_stored_job(job_id)
+

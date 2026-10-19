@@ -5,10 +5,13 @@ import App from "./App";
 import { loadSkillNames } from "./skillNames";
 import "./styles.css";
 
-loadSkillNames().finally(() => ReactDOM.createRoot(document.getElementById("root")!).render(
+// Non-blocking load: skill names cache updates in the background without delaying first paint
+loadSkillNames();
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <App />
     </BrowserRouter>
   </React.StrictMode>,
-));
+);

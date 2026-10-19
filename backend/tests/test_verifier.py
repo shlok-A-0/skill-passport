@@ -527,6 +527,7 @@ def test_integrity_signals_pass_for_incremental_own_work() -> None:
         "creator_login": "student", "creator_sha": "c0",
         "creation": {"files_changed": 2, "total_additions": 30, "file_additions": 4},
     }
+    source["commit_verification"] = {"verified": True, "reason": "valid"}
     repo["commit_counts"] = {"total": 24, "by_user": 24}
     repo["created_at"] = "2024-01-01T00:00:00Z"
     repo["user_commits"] = _commits("2024-01-02", "2024-01-09", "2024-02-01")

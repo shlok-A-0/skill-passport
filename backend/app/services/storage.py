@@ -8,13 +8,21 @@ from app.config import DATABASE_PATH
 
 
 def _connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(DATABASE_PATH, timeout=10)
+    connection = sqlite3.connect(DATABASE_PATH, timeout=30)
     connection.row_factory = sqlite3.Row
     return connection
 
 
+_initialized_dbs: set[str] = set()
+
+
 def initialize_storage() -> None:
+    db_key = str(DATABASE_PATH)
+    if db_key in _initialized_dbs:
+        return
     with _connect() as connection:
+        connection.execute("PRAGMA journal_mode = WAL;")
+        connection.execute("PRAGMA synchronous = NORMAL;")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS passports (
@@ -23,6 +31,19 @@ def initialize_storage() -> None:
                 github_username TEXT NOT NULL,
                 target_role TEXT NOT NULL,
                 payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                step TEXT NOT NULL,
+                completed_steps TEXT NOT NULL DEFAULT '[]',
+                error TEXT,
+                passport_id TEXT,
+                created_at TEXT NOT NULL
             )
             """
         )
@@ -41,6 +62,7 @@ def initialize_storage() -> None:
             )
             """
         )
+    _initialized_dbs.add(db_key)
 
 
 def save_passport(passport: dict[str, Any]) -> None:
@@ -124,3 +146,76 @@ def mark_review_request_reviewed(request_id: str) -> dict[str, Any] | None:
         )
         row = connection.execute("SELECT * FROM review_requests WHERE id = ?", (request_id,)).fetchone()
     return dict(row) if row else None
+
+
+def create_stored_job(job_id: str) -> None:
+    initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, created_at)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                status = 'queued',
+                step = 'Queued',
+                completed_steps = '[]',
+                error = NULL,
+                passport_id = NULL,
+                created_at = excluded.created_at
+            """,
+            (job_id, now),
+        )
+
+
+def update_stored_job(job_id: str, step: str, completed_steps: list[str]) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'running', step = ?, completed_steps = ?
+            WHERE id = ?
+            """,
+            (step, json.dumps(completed_steps), job_id),
+        )
+
+
+def complete_stored_job(job_id: str, passport_id: str, completed_steps: list[str]) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?
+            WHERE id = ?
+            """,
+            (json.dumps(completed_steps), passport_id, job_id),
+        )
+
+
+def fail_stored_job(job_id: str, error: str) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed', error = ?
+            WHERE id = ?
+            """,
+            (error, job_id),
+        )
+
+
+def get_stored_job(job_id: str) -> dict[str, Any] | None:
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    data["job_id"] = data.pop("id")
+    data["completed_steps"] = json.loads(data["completed_steps"])
+    return data

@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.config import VERIFIER_VERSION
+from app.services.ast_verifier import check_test_has_assertions, python_ast_has_signature
 from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
@@ -237,6 +238,16 @@ def _ai_leftover_signal(source: dict[str, Any]) -> dict[str, str]:
     )
 
 
+def _commit_signature_signal(source: dict[str, Any]) -> dict[str, str]:
+    label = "Cryptographic commit signature"
+    verification = source.get("commit_verification")
+    if not verification:
+        return _signal("commit_signature", label, "unknown", "Commit signature verification was not available.")
+    if verification.get("verified"):
+        return _signal("commit_signature", label, "ok", "Commit is cryptographically signed (verified GPG/SSH key).")
+    return _signal("commit_signature", label, "unknown", f"Commit is standard Git commit ({verification.get('reason', 'unsigned')}).")
+
+
 def integrity_signals(
     repo: dict[str, Any], source: dict[str, Any], start: int, end: int, username: str
 ) -> list[dict[str, str]]:
@@ -248,6 +259,7 @@ def integrity_signals(
         _commit_spread_signal(repo),
         _history_import_signal(repo),
         _ai_leftover_signal(source),
+        _commit_signature_signal(source),
     ]
 
 
@@ -288,10 +300,18 @@ def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: 
     if extensions and extension not in extensions:
         return False
     # Frameworks, tools and practices need an actual signature near the cited lines.
+    signatures = skill.get("code_signatures", [])
+    if extension == ".py":
+        # Syntax-aware AST check for Python: verifies the citation binds to a real syntax node
+        # rather than being inside a comment or string literal.
+        full_content = "\n".join(lines)
+        ast_result = python_ast_has_signature(full_content, start, end, signatures)
+        if ast_result is not None:
+            return ast_result
     window = "\n".join(lines[max(0, start - 1 - 5): min(len(lines), end + 5)])
     return any(
         _signature_pattern(signature).search(window)
-        for signature in skill.get("code_signatures", [])
+        for signature in signatures
     )
 
 
@@ -748,16 +768,29 @@ def targeting_test(
     if not stem:
         return None  # too short or generic (__init__, index, main, utils, app) to match safely
 
-    def eligible(path: str) -> bool:
-        return path != cited_path and (not committed_only or committed_to_test(repo, path))
-
-    for path in repo.get("test_files", []):
-        if eligible(path) and _name_targets(path, stem):
-            return {"path": path, "match": "name"}
     contents = dict(repo.get("test_contents") or {})
     for path, source in (repo.get("source_files") or {}).items():
         if is_test_path(path):
             contents.setdefault(path, source.get("content", ""))
+
+    def eligible(path: str) -> bool:
+        if path == cited_path:
+            return False
+        if committed_only:
+            if not committed_to_test(repo, path):
+                return False
+            content = contents.get(path)
+            if content is None:
+                source = (repo.get("source_files") or {}).get(path)
+                content = source.get("content", "") if source else ""
+            # Meaningful test check: test must contain executable assertions or test functions to qualify
+            if content and not check_test_has_assertions(content, path):
+                return False
+        return True
+
+    for path in repo.get("test_files", []):
+        if eligible(path) and _name_targets(path, stem):
+            return {"path": path, "match": "name"}
     for path, content in contents.items():
         if eligible(path) and _imports_module(content, stem):
             return {"path": path, "match": "import"}

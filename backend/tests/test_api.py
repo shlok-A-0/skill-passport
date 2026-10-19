@@ -430,3 +430,34 @@ def test_badge_contains_verified_achievement_only_and_is_unsigned() -> None:
     assert badge["prototypeNote"] == "unsigned prototype"
     assert "proof" not in badge
     assert "credentialStatus" not in badge
+
+
+def test_jobs_persistence_and_error() -> None:
+    from app.services.jobs import complete_job, create_job, fail_job, get_job, update_job
+
+    job_id = "test-persistent-job"
+    create_job(job_id)
+    queued = get_job(job_id)
+    assert queued is not None
+    assert queued["status"] == "queued"
+    assert queued["step"] == "Queued"
+
+    update_job(job_id, "Reading resume")
+    running = get_job(job_id)
+    assert running is not None
+    assert running["status"] == "running"
+    assert running["step"] == "Reading resume"
+    assert running["completed_steps"] == ["Reading GitHub"]
+
+    fail_job(job_id, "Temporary error")
+    failed = get_job(job_id)
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["error"] == "Temporary error"
+
+    complete_job(job_id, "passport-abc")
+    done = get_job(job_id)
+    assert done is not None
+    assert done["status"] == "done"
+    assert done["passport_id"] == "passport-abc"
+
