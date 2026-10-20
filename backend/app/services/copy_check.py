@@ -18,6 +18,7 @@ import httpx
 
 from app.config import CACHE_DIR, GITHUB_TOKEN
 from app.services.github_ingest import oldest_commit_date
+from app.services.json_cache import write_json_cache
 
 API_ROOT = "https://api.github.com"
 MAX_SEARCHES = 8  # GitHub code search allows ~10 requests/minute
@@ -74,7 +75,7 @@ def _code_search(client: httpx.Client, query: str) -> dict[str, Any] | None:
         data = response.json()
     except (httpx.HTTPError, ValueError):
         return None  # rate limit or search error: report "not checked"
-    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    write_json_cache(cache_path, data)
     return data
 
 

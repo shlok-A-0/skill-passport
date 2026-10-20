@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -92,6 +93,35 @@ def test_growth_failure_after_retry_returns_empty_lists_and_error(monkeypatch, t
     assert result["growth_tasks"] == [] and result["interview_kit"] == []
     assert result["generation_error"] and secret not in result["generation_error"]
     assert len(sent) == 2
+
+
+def test_malformed_growth_cache_is_removed_and_regenerated(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(growth_and_kit, "CACHE_DIR", tmp_path)
+    skills, role_match, ingestion = _growth_inputs()
+    prompt, _, _ = growth_and_kit._build_prompt(skills, role_match, ingestion)
+    cache_key = hashlib.sha256(
+        f"{growth_and_kit.GEMINI_MODEL}\0{prompt}".encode("utf-8")
+    ).hexdigest()
+    cache_path = tmp_path / f"growth-{cache_key}.json"
+    cache_path.write_text("{broken json", encoding="utf-8")
+    reply = json.dumps({
+        "growth_tasks": [_task("docker", "demo")],
+        "interview_kit": [_kit("flask")],
+    })
+    sent = _fake_gemini(monkeypatch, growth_and_kit, [reply])
+
+    def generate(_client, contents):
+        assert not cache_path.exists()
+        sent.append(contents)
+        return reply
+
+    monkeypatch.setattr(growth_and_kit, "generate_json", generate)
+
+    result = growth_and_kit.generate_growth_and_kit(skills, role_match, ingestion)
+
+    assert result["growth_tasks"][0]["skill_id"] == "docker"
+    assert json.loads(cache_path.read_text(encoding="utf-8")) == result
+    assert len(sent) == 1
 
 
 def _code_evidence(start: int, end: int, line_share: str | None = None) -> dict:
