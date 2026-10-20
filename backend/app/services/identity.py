@@ -73,6 +73,13 @@ def _connect() -> sqlite3.Connection:
         connection.execute("ALTER TABLE ownership_challenges ADD COLUMN passport_id TEXT")
     except sqlite3.OperationalError:
         pass
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ownership_challenges_unused_expiry
+        ON ownership_challenges (expires_at)
+        WHERE verified_at IS NULL
+        """
+    )
     return connection
 
 
@@ -92,6 +99,12 @@ def create_challenge(github_username: str) -> dict[str, Any]:
         "expires_at": (now + CHALLENGE_TTL).isoformat(),
     }
     with _connect() as connection:
+        # Keep verified rows: ownership_for_passport() uses them to build recruiter signals.
+        # Unused codes have no lasting value once expired and can be safely discarded.
+        connection.execute(
+            "DELETE FROM ownership_challenges WHERE verified_at IS NULL AND expires_at <= ?",
+            (now.isoformat(),),
+        )
         connection.execute(
             """
             INSERT INTO ownership_challenges (id, github_username, code, created_at, expires_at)
@@ -120,7 +133,24 @@ def _fetch_recent_gists(username: str) -> list[dict[str, Any]]:
     except httpx.HTTPError as exc:
         raise OwnershipError("Could not reach GitHub to check the gist. Please try again.") from exc
     if response.status_code == 404:
-        raise OwnershipError(f"GitHub account '{username}' was not found.")
+        raise OwnershipError("We couldn’t find that GitHub account. Check the username spelling and try again.")
+    if response.status_code in (403, 429):
+        remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
+        message = response.reason_phrase
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                message = body.get("message", message)
+        except (ValueError, AttributeError):
+            pass
+        if response.status_code == 429 or remaining == "0" or "rate limit" in str(message).lower():
+            raise OwnershipError("GitHub is temporarily rate-limited. Please wait a few minutes and try again.")
+        raise OwnershipError(
+            "GitHub denied access while checking public gists. Please try again later; "
+            "contact the site administrator if this continues."
+        )
+    if response.status_code == 401:
+        raise OwnershipError("The server couldn’t authenticate with GitHub. Please contact the site administrator.")
     if not response.is_success:
         raise OwnershipError(
             f"GitHub returned an error ({response.status_code}) while checking gists. Please try again."

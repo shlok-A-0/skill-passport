@@ -346,3 +346,27 @@ def test_only_real_rate_limits_are_rate_limit_errors() -> None:
     with pytest.raises(GitHubIngestError) as error:
         call(Response(403, "Repository access blocked", "4000"))
     assert not isinstance(error.value, GitHubRateLimitError)
+
+
+def test_user_profile_not_found_has_specific_error() -> None:
+    class Response:
+        status_code = 404
+        reason_phrase = "Not Found"
+
+    class Client:
+        def get(self, _url, **_kwargs):
+            return Response()
+
+    with pytest.raises(github_ingest.GitHubUserNotFoundError):
+        github_ingest._get(Client(), "https://api.github.com/users/missing-user")
+
+
+@pytest.mark.parametrize("username", ["-octocat", "octocat-", "octo--cat", "", "octo_cat"])
+def test_invalid_github_username_format_is_rejected(username: str) -> None:
+    with pytest.raises(ValueError, match="single hyphens"):
+        github_ingest.validate_github_username(username)
+
+
+@pytest.mark.parametrize("username", ["octocat", "Octo-Cat", "a" * 39])
+def test_valid_github_username_format_is_accepted(username: str) -> None:
+    assert github_ingest.validate_github_username(username) == username

@@ -1,9 +1,40 @@
 import sys
 from pathlib import Path
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import pipeline
+
+
+def test_public_job_errors_are_specific_without_exposing_details(monkeypatch) -> None:
+    from app.services.github_ingest import GitHubRateLimitError, GitHubUserNotFoundError
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading GitHub"})
+    missing = pipeline._public_job_error("job", GitHubUserNotFoundError("private URL detail"))
+    assert "GitHub account" in missing and "spelling" in missing
+    assert "private URL detail" not in missing
+    limited = pipeline._public_job_error("job", GitHubRateLimitError("private rate reset detail"))
+    assert "rate-limited" in limited and "private rate reset detail" not in limited
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading resume"})
+    unreadable = pipeline._public_job_error("job", ValueError("No readable text found in the resume PDF."))
+    assert "text-based PDF" in unreadable
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Proposing skills"})
+    gemini_network = pipeline._public_job_error("job", httpx.ConnectError("private connection detail"))
+    assert "Skill suggestions" in gemini_network
+    assert "reading GitHub" not in gemini_network
+    assert "private connection detail" not in gemini_network
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading GitHub"})
+    github_network = pipeline._public_job_error("job", httpx.ConnectError("private connection detail"))
+    assert "reading GitHub" in github_network
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading certificates"})
+    bad_certificate = pipeline._public_job_error("job", ValueError("No readable text found in the certificate PDF."))
+    assert "uploaded certificate" in bad_certificate
 
 
 def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatch) -> None:
