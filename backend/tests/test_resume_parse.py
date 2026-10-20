@@ -79,6 +79,16 @@ def test_redacted_text_handles_comma_separated_labeled_name() -> None:
     assert "[REDACTED NAME]" in result and "Python" in result
 
 
+@pytest.mark.parametrize(
+    "name", ["李明", "María de la Cruz Fernández López", "Smith, Jordan"]
+)
+def test_redacted_text_handles_arbitrary_labeled_names(name: str) -> None:
+    result = redact_personal_data(f"Name: {name} | Python\nExperience")
+    assert name not in result
+    assert "[REDACTED NAME]" in result
+    assert "Python" in result
+
+
 def test_job_title_header_is_not_redacted_as_a_name() -> None:
     result = redact_personal_data("Software Engineer | Python | React\nExperience")
     assert "Software Engineer" in result
