@@ -35,12 +35,17 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
     )
     for index, line in enumerate(lines[:8]):
         candidate = line.strip()
+        header_name = re.split(r"\s*(?:\||•|·|—|–|(?<=\s)-(?=\s))\s*", candidate, maxsplit=1)[0].strip()
         if (
             candidate.lower() not in section_headings
-            and name_pattern.fullmatch(candidate)
-            and not any(char in candidate for char in "@:/")
+            and header_name.lower() != "demo data"
+            and (
+                name_pattern.fullmatch(candidate)
+                or (header_name != candidate and name_pattern.fullmatch(header_name))
+            )
+            and not any(char in header_name for char in "@:/")
         ):
-            lines[index] = "[REDACTED NAME]"
+            lines[index] = candidate.replace(header_name, "[REDACTED NAME]", 1)
             break
     return "\n".join(lines)
 

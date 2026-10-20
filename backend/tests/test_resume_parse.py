@@ -48,6 +48,14 @@ def test_redaction_removes_identifiers_and_institution_lines() -> None:
     assert "Python" in result
 
 
+@pytest.mark.parametrize("separator", ["|", "•", "·", "—", "–", " - "])
+def test_redacted_text_hides_name_before_separated_skills(separator: str) -> None:
+    result = redact_personal_data(f"Jordan Smith {separator} Python {separator} React\nExperience")
+    assert "Jordan Smith" not in result
+    assert "[REDACTED NAME]" in result
+    assert "Python" in result and "React" in result
+
+
 def test_resume_skill_mentions_do_not_retain_names_from_shared_header_lines() -> None:
     mentions = match_resume_skills("Jordan Smith | Python | React")
     relevant = [item for item in mentions if item["skill_id"] in {"python", "react"}]
