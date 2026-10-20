@@ -110,6 +110,13 @@ def test_malformed_growth_cache_is_removed_and_regenerated(monkeypatch, tmp_path
     })
     sent = _fake_gemini(monkeypatch, growth_and_kit, [reply])
 
+    def generate(_client, contents):
+        assert not cache_path.exists()
+        sent.append(contents)
+        return reply
+
+    monkeypatch.setattr(growth_and_kit, "generate_json", generate)
+
     result = growth_and_kit.generate_growth_and_kit(skills, role_match, ingestion)
 
     assert result["growth_tasks"][0]["skill_id"] == "docker"
