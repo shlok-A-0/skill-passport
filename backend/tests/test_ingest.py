@@ -10,6 +10,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import github_ingest
+from app.services.coverage import build_coverage
 from app.services.github_ingest import GitHubIngestError, GitHubRateLimitError
 
 API = github_ingest.API_ROOT
@@ -425,3 +426,52 @@ def test_invalid_github_username_format_is_rejected(username: str) -> None:
 @pytest.mark.parametrize("username", ["octocat", "Octo-Cat", "a" * 39])
 def test_valid_github_username_format_is_accepted(username: str) -> None:
     assert github_ingest.validate_github_username(username) == username
+
+
+def test_repository_listing_pages_past_excluded_repositories(monkeypatch) -> None:
+    excluded = [
+        {"name": f"fork-{index}", "fork": True, "visibility": "public"}
+        for index in range(github_ingest.GITHUB_REPOS_PER_PAGE)
+    ]
+    eligible = [
+        {
+            "name": f"project-{index}", "fork": False, "visibility": "public",
+            "pushed_at": f"2026-10-{21-index:02d}",
+        }
+        for index in range(github_ingest.MAX_REPOS)
+    ]
+    calls = []
+
+    def fake_request(_client, _url, **kwargs):
+        page = kwargs["params"]["page"]
+        calls.append(page)
+        return excluded if page == 1 else eligible
+
+    monkeypatch.setattr(github_ingest, "_request", fake_request)
+
+    repos, selected, skipped, truncated = github_ingest._list_candidate_repositories(object(), "student")
+
+    assert calls == [1, 2]
+    assert len(repos) == 105
+    assert [repo["name"] for repo in selected] == [repo["name"] for repo in eligible]
+    assert len(skipped) == 100
+    assert truncated is False
+
+
+def test_repository_listing_reports_page_limit_without_enough_eligible_repos(monkeypatch) -> None:
+    monkeypatch.setattr(github_ingest, "MAX_REPO_LIST_PAGES", 2)
+    monkeypatch.setattr(
+        github_ingest,
+        "_request",
+        lambda *_args, **_kwargs: [
+            {"name": "fork", "fork": True, "visibility": "public"}
+        ] * github_ingest.GITHUB_REPOS_PER_PAGE,
+    )
+
+    repos, selected, _skipped, truncated = github_ingest._list_candidate_repositories(object(), "student")
+
+    assert len(repos) == 200
+    assert selected == []
+    assert truncated is True
+    coverage = build_coverage({"repos": [], "repo_listing_truncated": truncated})
+    assert any("scan limit" in note for note in coverage["notes"])

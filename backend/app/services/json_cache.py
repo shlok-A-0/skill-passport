@@ -8,18 +8,25 @@ from typing import Any
 
 MAX_CACHE_AGE_SECONDS = 30 * 24 * 60 * 60
 MAX_CACHE_BYTES = 512 * 1024 * 1024
+MAX_TEMP_AGE_SECONDS = 60 * 60
 
 
 def prune_json_cache(directory: Path) -> int:
     """Remove old cache files and then oldest files until the directory is bounded."""
     now = time.time()
-    files = [path for path in directory.iterdir() if path.is_file() and path.name.endswith(".json")]
     removed = 0
     retained = []
     total_bytes = 0
-    for path in files:
+    for path in directory.iterdir():
         try:
             stat = path.stat()
+            if path.is_file() and path.name.startswith(".") and path.name.endswith(".tmp"):
+                if now - stat.st_mtime > MAX_TEMP_AGE_SECONDS:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                continue
+            if not path.is_file() or not path.name.endswith(".json"):
+                continue
             if now - stat.st_mtime > MAX_CACHE_AGE_SECONDS:
                 path.unlink(missing_ok=True)
                 removed += 1

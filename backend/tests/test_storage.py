@@ -101,6 +101,50 @@ def test_readiness_checks_writes_and_rolls_back_probe_rows(tmp_path, monkeypatch
         assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
+def test_passport_and_job_completion_are_atomic_and_keep_owner_token(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "atomic.sqlite")
+    storage.create_stored_job("passport-atomic", access_token_hash="owner-hash")
+    passport = {
+        "id": "passport-atomic",
+        "created_at": "2026-10-21T00:00:00+00:00",
+        "github_username": "student",
+        "target_role": "role",
+    }
+
+    storage.save_passport_and_complete_job(passport, "passport-atomic", ["Done"])
+
+    assert storage.get_passport("passport-atomic") == passport
+    assert storage.get_stored_job("passport-atomic")["status"] == "done"
+    assert storage.get_passport_owner_token_hash("passport-atomic") == "owner-hash"
+
+    storage.create_stored_job("inactive")
+    storage.fail_stored_job("inactive", "failed")
+    failed_passport = {**passport, "id": "must-roll-back"}
+    try:
+        storage.save_passport_and_complete_job(failed_passport, "inactive", ["Done"])
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("inactive jobs must not commit a passport")
+    assert storage.get_passport("must-roll-back") is None
+
+
+def test_job_reservation_prunes_old_history_and_uses_active_indexes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "job-indexes.sqlite")
+    storage.create_stored_job("old")
+    storage.complete_stored_job("old", "old-passport", [])
+    with storage._connect() as connection:
+        connection.execute("UPDATE jobs SET created_at = datetime('now', '-31 days') WHERE id = 'old'")
+
+    reserved, reason = storage.reserve_stored_job("new", target="student")
+
+    assert reserved and reason is None
+    assert storage.get_stored_job("old") is None
+    with storage._connect() as connection:
+        indexes = {row["name"] for row in connection.execute("PRAGMA index_list(jobs)")}
+    assert {"idx_jobs_active_target", "idx_jobs_active_lease", "idx_jobs_status_created"} <= indexes
+
+
 def test_latest_student_passports_are_selected_before_paging(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "latest.sqlite")
     for passport_id, username, created, updated in (

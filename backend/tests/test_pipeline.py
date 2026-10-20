@@ -83,7 +83,7 @@ def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatc
     )
     monkeypatch.setattr(
         pipeline,
-        "complete_job",
+        "complete_passport_job",
         lambda *_: (_ for _ in ()).throw(AssertionError("re-check is not a job")),
     )
 

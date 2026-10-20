@@ -141,6 +141,17 @@ def initialize_storage() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp ON rate_limits (timestamp)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_active_target ON jobs (target) "
+            "WHERE status IN ('queued', 'running')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_active_lease ON jobs (lease_until) "
+            "WHERE status IN ('queued', 'running')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs (status, created_at)"
+        )
         # Retain duplicate request rows as reviewed history while keeping one open row.
         duplicates = connection.execute(
             """
@@ -198,24 +209,62 @@ def check_storage_ready() -> None:
 def save_passport(passport: dict[str, Any]) -> None:
     initialize_storage()
     with _connect() as connection:
-        connection.execute(
+        _save_passport(connection, passport)
+
+
+def _save_passport(connection: sqlite3.Connection, passport: dict[str, Any]) -> None:
+    connection.execute(
+        """
+        INSERT INTO passports (id, created_at, github_username, target_role, payload)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            created_at = excluded.created_at,
+            github_username = excluded.github_username,
+            target_role = excluded.target_role,
+            payload = excluded.payload
+        """,
+        (
+            passport["id"],
+            passport["created_at"],
+            passport["github_username"],
+            passport["target_role"],
+            json.dumps(passport, ensure_ascii=False),
+        ),
+    )
+
+
+def save_passport_and_complete_job(
+    passport: dict[str, Any], job_id: str, completed_steps: list[str]
+) -> None:
+    """Persist the result, job status, and initial owner token in one transaction."""
+    initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _save_passport(connection, passport)
+        cursor = connection.execute(
             """
-            INSERT INTO passports (id, created_at, github_username, target_role, payload)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                created_at = excluded.created_at,
-                github_username = excluded.github_username,
-                target_role = excluded.target_role,
-                payload = excluded.payload
+            UPDATE jobs
+            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?,
+                updated_at = ?, lease_until = NULL
+            WHERE id = ? AND status IN ('queued', 'running')
             """,
-            (
-                passport["id"],
-                passport["created_at"],
-                passport["github_username"],
-                passport["target_role"],
-                json.dumps(passport, ensure_ascii=False),
-            ),
+            (json.dumps(completed_steps), passport["id"], now, job_id),
         )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Cannot complete a missing or inactive passport job.")
+        if job_id == passport["id"]:
+            row = connection.execute(
+                "SELECT access_token_hash FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row and row["access_token_hash"]:
+                connection.execute(
+                    """
+                    INSERT INTO passport_owners (passport_id, access_token_hash) VALUES (?, ?)
+                    ON CONFLICT(passport_id) DO UPDATE SET access_token_hash = excluded.access_token_hash
+                    """,
+                    (passport["id"], row["access_token_hash"]),
+                )
 
 
 def get_passport(passport_id: str) -> dict[str, Any] | None:
@@ -375,6 +424,10 @@ def reserve_stored_job(
     norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute("BEGIN IMMEDIATE;")
+        connection.execute(
+            "DELETE FROM jobs WHERE status IN ('done', 'failed') "
+            "AND datetime(created_at) < datetime('now', '-30 days')"
+        )
         _reconcile_expired_jobs(connection)
         if norm_target:
             existing = connection.execute(

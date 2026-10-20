@@ -18,7 +18,13 @@ from app.services.github_ingest import (
 )
 from app.services.growth_and_kit import generate_growth_and_kit
 from app.services.identity import identity_signals
-from app.services.jobs import complete_job, fail_job, get_job, keep_job_lease, update_job
+from app.services.jobs import (
+    complete_passport_job,
+    fail_job,
+    get_job,
+    keep_job_lease,
+    update_job,
+)
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
@@ -251,9 +257,10 @@ def build_passport(
             for skill_id in sorted(set(previous_levels) | set(new_levels))
             if previous_levels.get(skill_id, "Claimed") != new_levels.get(skill_id, "Claimed")
         ]
-    save_passport(passport)
     if update_job_id:
-        complete_job(update_job_id, passport["id"])
+        complete_passport_job(update_job_id, passport)
+    else:
+        save_passport(passport)
     return passport
 
 
