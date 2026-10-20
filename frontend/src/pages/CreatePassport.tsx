@@ -4,12 +4,14 @@ import { useNavigate } from "react-router-dom";
 import { api, isMissingJobError, type OwnershipChallenge, type PassportJob, type Role } from "../api";
 import { nextJobPollDelay } from "../jobPolling";
 import { sameGitHubUsername } from "../ownership";
+import { validatePassportForm } from "../passportForm";
 
 const PROOF_REQUIRED = "Prove this GitHub account is yours first: get a verification code and publish it as a public gist.";
 
 const steps = [
   "Reading GitHub",
   "Reading resume",
+  "Reading certificates",
   "Proposing skills",
   "Verifying evidence",
   "Matching role",
@@ -39,6 +41,7 @@ export default function CreatePassport() {
     const changed = !sameGitHubUsername(usernameRef.current, value);
     usernameRef.current = value;
     setUsername(value);
+    setError("");
     if (changed) {
       // A code only proves the account it was issued for; invalidate in-flight responses too.
       challengeRequestId.current += 1;
@@ -139,13 +142,18 @@ export default function CreatePassport() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    if (!username.trim() || !resume || !role) {
-      setError("Add a GitHub username, a resume PDF, and a target role.");
+    const validationError = validatePassportForm({ username, resume, role, certificates });
+    if (validationError) {
+      setError(validationError);
       return;
     }
     if (!demo && (!challenge || !sameGitHubUsername(challenge.github_username, username))) {
       if (challenge) setChallenge(null);
       setError(PROOF_REQUIRED);
+      return;
+    }
+    if (!resume) {
+      setError("Upload your resume PDF before generating a passport.");
       return;
     }
     setSubmitting(true);
@@ -194,12 +202,12 @@ export default function CreatePassport() {
           <div><div className="eyebrow">START YOUR PASSPORT</div><h2>Bring your proof</h2></div>
         </div>
         {roleError && <div className="notice notice-error">{roleError}</div>}
-        <form onSubmit={submit} className="create-form">
+        <form onSubmit={submit} className="create-form" noValidate>
           <label>GitHub username
             <span className="input-wrap"><Github size={17} /><input value={username} onChange={(event) => changeUsername(event.target.value)} placeholder="e.g. octocat" autoComplete="off" /></span>
           </label>
           <label>Target role
-            <select value={role} onChange={(event) => setRole(event.target.value)} disabled={!roles.length}>
+            <select value={role} onChange={(event) => { setRole(event.target.value); setError(""); }} disabled={!roles.length}>
               {roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
@@ -207,12 +215,12 @@ export default function CreatePassport() {
             <span className="upload-icon"><FileUp size={20} /></span>
             <strong>{resume ? resume.name : "Upload your resume"}</strong>
             <small>PDF · Max 10 MB</small>
-            <input type="file" accept="application/pdf,.pdf" onChange={(event) => setResume(event.target.files?.[0] ?? null)} />
+            <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
           <label className="cert-upload">Certificates <span className="muted">optional · PDF</span>
-            <input type="file" accept="application/pdf,.pdf" multiple onChange={(event) => setCertificates(Array.from(event.target.files ?? []))} />
+            <input type="file" accept="application/pdf,.pdf" multiple onChange={(event) => { setCertificates(Array.from(event.target.files ?? [])); setError(""); }} />
           </label>
-          <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => setDemo(event.target.checked)} /> Mark this passport as <strong>DEMO DATA</strong></label>
+          <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => { setDemo(event.target.checked); setError(""); }} /> Mark this passport as <strong>DEMO DATA</strong></label>
           {!demo && (
             <div className="notice notice-warning">
               <strong><KeyRound size={13} /> Prove this account is yours</strong>
@@ -241,7 +249,10 @@ export default function CreatePassport() {
         </form>
         {job && (
           <section className="progress-box" aria-live="polite">
-            <div className="progress-title"><LoaderCircle className={job.status === "running" ? "spin" : ""} size={17} /> {job.step === "Queued" ? "Preparing your evidence…" : job.step}</div>
+            {job.status === "failed" ? (
+              <div className="progress-title"><span aria-hidden="true">!</span> Passport generation stopped during {job.step}.</div>
+            ) : <div className="progress-title"><LoaderCircle className={job.status === "running" ? "spin" : ""} size={17} /> {job.step === "Queued" ? "Preparing your evidence…" : job.step}</div>}
+            {job.status !== "failed" && (
             <ol className="step-tracker">
               {steps.map((step, index) => (
                 <li className={index <= activeIndex ? "step-done" : ""} key={step}>
@@ -249,6 +260,7 @@ export default function CreatePassport() {
                 </li>
               ))}
             </ol>
+            )}
           </section>
         )}
         <p className="privacy-note">No numeric skill scores. Unverified resume claims stay separate and never count as a match.</p>

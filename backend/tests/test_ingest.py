@@ -346,3 +346,16 @@ def test_only_real_rate_limits_are_rate_limit_errors() -> None:
     with pytest.raises(GitHubIngestError) as error:
         call(Response(403, "Repository access blocked", "4000"))
     assert not isinstance(error.value, GitHubRateLimitError)
+
+
+def test_user_profile_not_found_has_specific_error() -> None:
+    class Response:
+        status_code = 404
+        reason_phrase = "Not Found"
+
+    class Client:
+        def get(self, _url, **_kwargs):
+            return Response()
+
+    with pytest.raises(github_ingest.GitHubUserNotFoundError):
+        github_ingest._get(Client(), "https://api.github.com/users/missing-user")

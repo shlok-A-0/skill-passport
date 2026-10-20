@@ -120,7 +120,11 @@ def _fetch_recent_gists(username: str) -> list[dict[str, Any]]:
     except httpx.HTTPError as exc:
         raise OwnershipError("Could not reach GitHub to check the gist. Please try again.") from exc
     if response.status_code == 404:
-        raise OwnershipError(f"GitHub account '{username}' was not found.")
+        raise OwnershipError("We couldn’t find that GitHub account. Check the username spelling and try again.")
+    if response.status_code in (403, 429):
+        raise OwnershipError("GitHub is temporarily rate-limited. Please wait a few minutes and try again.")
+    if response.status_code == 401:
+        raise OwnershipError("The server couldn’t authenticate with GitHub. Please contact the site administrator.")
     if not response.is_success:
         raise OwnershipError(
             f"GitHub returned an error ({response.status_code}) while checking gists. Please try again."

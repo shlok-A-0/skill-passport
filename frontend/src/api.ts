@@ -242,18 +242,41 @@ export function isMissingJobError(reason: unknown): boolean {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, options);
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === "AbortError") {
+      throw new ApiError("The request was interrupted. Please try again.", 0);
+    }
+    throw new ApiError("Can’t reach the Skill Passport server. Make sure the backend is running, then try again.", 0);
+  }
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
       const body = await response.json();
-      detail = body.detail ?? detail;
+      detail = formatApiDetail(body.detail) ?? detail;
     } catch {
       // Keep the HTTP status when an error body is not JSON.
     }
     throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;
+}
+
+function formatApiDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (!Array.isArray(detail)) return null;
+  const messages = detail.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const issue = item as { loc?: unknown[]; msg?: unknown };
+    if (typeof issue.msg !== "string") return null;
+    const field = issue.loc?.[issue.loc.length - 1];
+    const label = field === "resume" ? "Resume PDF" : field === "github_username" ? "GitHub username" : field === "target_role" ? "Target role" : null;
+    if (label && /required|missing/i.test(issue.msg)) return `${label} is required.`;
+    return issue.msg;
+  }).filter((message): message is string => Boolean(message));
+  return messages.length ? messages.join(" ") : null;
 }
 
 // Kept in memory only (never localStorage), so it is gone when the tab closes.

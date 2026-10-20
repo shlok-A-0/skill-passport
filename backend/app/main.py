@@ -38,7 +38,7 @@ from app.config import (
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
-from app.services.github_ingest import GitHubIngestError
+from app.services.github_ingest import GitHubIngestError, validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
 from app.services.jobs import (
     fail_job,
@@ -392,7 +392,10 @@ def ownership_challenge(body: OwnershipChallengeBody, request: Request) -> dict:
     """A one-time code the applicant publishes as a public gist to show they control the account."""
     check_rate_limit(request, "ownership_challenge", max_requests=20, window_seconds=600)
     try:
-        challenge = create_challenge(body.github_username)
+        username = validate_github_username(body.github_username)
+        challenge = create_challenge(username)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OwnershipError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -447,6 +450,10 @@ async def create_passport(
     ownership_challenge_id: str | None = Form(default=None),
 ) -> dict[str, str]:
     check_rate_limit(request, "create_passport", max_requests=20, window_seconds=600)
+    try:
+        github_username = validate_github_username(github_username)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if resume.content_type != "application/pdf":
         raise HTTPException(status_code=415, detail="Resume must be a PDF file.")
     if certificates and len(certificates) > MAX_CERTIFICATES:
@@ -543,7 +550,10 @@ def passport_job(
         "step": job.get("step") or "Queued",
         "completed_steps": job.get("completed_steps", []),
         "passport_id": job.get("passport_id"),
-        "error": "Passport generation failed. Please try again." if job.get("status") == "failed" else None,
+        "error": (
+            job.get("public_error") or "Passport generation failed. Please try again."
+            if job.get("status") == "failed" else None
+        ),
     }
 
 

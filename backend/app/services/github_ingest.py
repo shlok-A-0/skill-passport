@@ -67,6 +67,21 @@ class GitHubRateLimitError(GitHubIngestError):
     """Rate limits stop the job; other per-repo errors (404, 409 empty repo, 451) skip data."""
 
 
+class GitHubUserNotFoundError(GitHubIngestError):
+    """The requested account does not exist or is not visible to GitHub."""
+
+
+class GitHubAuthenticationError(GitHubIngestError):
+    """GitHub rejected the configured API credentials."""
+
+
+def validate_github_username(username: str) -> str:
+    normalized = username.strip()
+    if not normalized or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", normalized):
+        raise ValueError("Enter a GitHub username using 1–39 letters, numbers, or hyphens.")
+    return normalized
+
+
 def _cache_path(username: str) -> Path:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", username.lower())
     return CACHE_DIR / f"github-{safe_name}.json"
@@ -86,7 +101,11 @@ def _headers() -> dict[str, str]:
 def _get(client: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
     response = client.get(url, **kwargs)
     if response.status_code == 404:
+        if re.fullmatch(r"https://api\.github\.com/users/[^/]+", url):
+            raise GitHubUserNotFoundError("GitHub account was not found.")
         raise GitHubIngestError(f"GitHub resource not found: {url}")
+    if response.status_code == 401:
+        raise GitHubAuthenticationError("GitHub rejected the configured API credentials.")
     message = response.reason_phrase
     if response.is_error:
         try:
@@ -657,9 +676,7 @@ def _file_blame(
 
 
 def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
-    username = username.strip()
-    if not username or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", username):
-        raise ValueError("GitHub username must be 1–39 letters, numbers, or hyphens.")
+    username = validate_github_username(username)
 
     cache_path = _cache_path(username)
     if not force_refresh and cache_path.exists():

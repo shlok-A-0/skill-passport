@@ -3,20 +3,70 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from app.config import VERIFIER_VERSION
 from app.services.claim_proposer import propose_claims
 from app.services.copy_check import add_copy_signals
 from app.services.coverage import build_coverage
-from app.services.github_ingest import ingest_github
+from app.services.github_ingest import (
+    GitHubAuthenticationError,
+    GitHubIngestError,
+    GitHubRateLimitError,
+    GitHubUserNotFoundError,
+    ingest_github,
+)
 from app.services.growth_and_kit import generate_growth_and_kit
 from app.services.identity import identity_signals
-from app.services.jobs import complete_job, fail_job, keep_job_lease, update_job
+from app.services.jobs import complete_job, fail_job, get_job, keep_job_lease, update_job
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
 from app.services.verifier import exclude_uncounted_citations, verify_claims
 
 logger = logging.getLogger(__name__)
+
+
+def _public_job_error(job_id: str, exc: Exception) -> str:
+    """Return useful, non-sensitive guidance while retaining the exception in server logs."""
+    job = get_job(job_id) or {}
+    step = job.get("step") or "Passport generation"
+    if isinstance(exc, GitHubUserNotFoundError):
+        return "We couldn’t find that GitHub account. Check the username spelling and try again."
+    if isinstance(exc, GitHubRateLimitError):
+        return "GitHub is temporarily rate-limited. Please wait a few minutes and try again."
+    if isinstance(exc, GitHubAuthenticationError):
+        return "The server couldn’t authenticate with GitHub. Please contact the site administrator."
+    if isinstance(exc, GitHubIngestError):
+        return "GitHub couldn’t be read right now. Check that the account is public and try again."
+    if isinstance(exc, httpx.RequestError):
+        return "A connection was interrupted while reading GitHub. Check your connection and try again."
+    if step == "Reading resume" and isinstance(exc, ValueError):
+        message = str(exc).lower()
+        if "empty" in message:
+            return "The resume PDF is empty. Upload a readable PDF and try again."
+        if "no readable text" in message:
+            return "We couldn’t read text in that PDF. Upload a text-based PDF instead of a scan."
+        return "We couldn’t read that resume PDF. Check that it opens correctly and try again."
+    if step == "Proposing skills" and isinstance(exc, RuntimeError) and "GEMINI_API_KEY" in str(exc):
+        return "Skill suggestions are unavailable because the server’s Gemini setup is incomplete. Please contact the site administrator."
+    if step == "Proposing skills":
+        return "Skill suggestions couldn’t be generated right now. Please try again in a few minutes."
+    if step == "Reading resume":
+        return "The resume couldn’t be processed. Check the PDF and try again."
+    if step == "Reading certificates" and isinstance(exc, ValueError):
+        message = str(exc).lower()
+        if "empty" in message:
+            return "An uploaded certificate PDF is empty. Upload a readable PDF or remove it and try again."
+        if "no readable text" in message:
+            return "We couldn’t read text in an uploaded certificate. Use a text-based PDF or remove it and try again."
+        return "We couldn’t read an uploaded certificate PDF. Check the file and try again."
+    if step == "Reading certificates":
+        return "An uploaded certificate couldn’t be processed. Check the PDF and try again."
+    return (
+        f"Something went wrong during {step}. Please try again. "
+        "If it happens again, check the backend terminal for details."
+    )
 
 
 def _merge_skill_matches(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -94,6 +144,7 @@ def build_passport(
     else:
         raise ValueError("A resume PDF or previously parsed resume skills are required.")
     if certificate_bytes:
+        progress("Reading certificates")
         certificate_groups = [
             parse_certificate(file_bytes) for file_bytes in certificate_bytes
         ]
@@ -259,7 +310,7 @@ def run_passport_job(
             )
         except Exception as exc:
             logger.exception("Passport job %s failed", job_id)
-            fail_job(job_id, str(exc))
+            fail_job(job_id, str(exc), _public_job_error(job_id, exc))
             raise
 
 
@@ -269,4 +320,4 @@ def run_recheck_job(job_id: str, existing: dict[str, Any]) -> None:
             recheck_passport(existing, job_id=job_id)
         except Exception as exc:
             logger.exception("Passport re-check job %s failed", job_id)
-            fail_job(job_id, str(exc))
+            fail_job(job_id, str(exc), _public_job_error(job_id, exc))

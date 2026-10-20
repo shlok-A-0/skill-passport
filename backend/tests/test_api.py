@@ -105,6 +105,25 @@ def test_create_rejects_non_pdf_resume() -> None:
     assert response.status_code == 415
 
 
+def test_create_requires_resume_and_valid_github_username(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    client = TestClient(main_module.app)
+    missing_resume = client.post(
+        "/passport/create",
+        data={"github_username": "demo-user", "target_role": "backend-intern", "is_demo": "true"},
+    )
+    assert missing_resume.status_code == 422
+    assert any("resume" in str(item.get("loc", [])).lower() for item in missing_resume.json()["detail"])
+
+    invalid_username = client.post(
+        "/passport/create",
+        data={"github_username": "bad_name", "target_role": "backend-intern", "is_demo": "true"},
+        files={"resume": ("resume.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert invalid_username.status_code == 422
+    assert "GitHub username" in invalid_username.json()["detail"]
+
+
 def passport_with_fraud_signals(passport_id: str) -> dict:
     passport = fake_passport(passport_id)
     passport["skills"][0]["evidence"][0]["integrity"] = [
@@ -777,6 +796,24 @@ def test_job_status_requires_token_and_redacts_job_errors(tmp_path, monkeypatch)
     assert "private provider response" not in response.text
 
 
+def test_job_status_returns_safe_failure_guidance(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    access_token = "owner-session-secret"
+    token_hash = hashlib.sha256(access_token.encode()).hexdigest()
+    storage.create_stored_job("failed-job", access_token_hash=token_hash)
+    storage.fail_stored_job(
+        "failed-job",
+        "https://api.github.com/users/misspelled-user returned 404",
+        "We couldn’t find that GitHub account. Check the username spelling and try again.",
+    )
+    response = TestClient(main_module.app).get(
+        "/jobs/failed-job", headers={"X-Passport-Token": access_token}
+    )
+    assert response.status_code == 200
+    assert response.json()["error"] == "We couldn’t find that GitHub account. Check the username spelling and try again."
+    assert "misspelled-user" not in response.text
+
+
 def test_commit_signature_head_scope_labeling() -> None:
     from app.services.verifier import _commit_signature_signal
     # When scope is head, it explicitly identifies head commit scope
@@ -888,7 +925,7 @@ def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, mon
     for i in range(2, 6):
         res = client.post(
             "/passport/create",
-            data={"github_username": f"Candidate_{i}", "target_role": "backend-intern"},
+            data={"github_username": f"Candidate-{i}", "target_role": "backend-intern"},
             files={"resume": resume_pdf},
         )
         assert res.status_code == 202
@@ -896,7 +933,7 @@ def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, mon
     # 4. 6th simultaneous reservation exceeds max_active=5 capacity and returns 429
     res_cap = client.post(
         "/passport/create",
-        data={"github_username": "Candidate_Overflow", "target_role": "backend-intern"},
+        data={"github_username": "Candidate-Overflow", "target_role": "backend-intern"},
         files={"resume": resume_pdf},
     )
     assert res_cap.status_code == 429

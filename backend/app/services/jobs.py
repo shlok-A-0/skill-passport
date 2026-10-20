@@ -17,6 +17,7 @@ from app.services.storage import (
 JOB_STEPS = [
     "Reading GitHub",
     "Reading resume",
+    "Reading certificates",
     "Proposing skills",
     "Verifying evidence",
     "Matching role",
@@ -49,8 +50,8 @@ def complete_job(job_id: str, passport_id: str) -> None:
     complete_stored_job(job_id, passport_id, JOB_STEPS.copy())
 
 
-def fail_job(job_id: str, error: str) -> None:
-    fail_stored_job(job_id, error)
+def fail_job(job_id: str, error: str, public_error: str | None = None) -> None:
+    fail_stored_job(job_id, error, public_error)
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:

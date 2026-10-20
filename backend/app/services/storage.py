@@ -22,6 +22,7 @@ def _reconcile_expired_jobs(connection: sqlite3.Connection, stale_seconds: int =
         UPDATE jobs
         SET status = 'failed',
             error = 'Job interrupted or timed out. Ready to be retried.',
+            public_error = 'The verification took too long and was stopped. Please try again.',
             lease_until = NULL
         WHERE status IN ('queued', 'running')
           AND datetime(COALESCE(
@@ -60,6 +61,7 @@ def initialize_storage() -> None:
                 step TEXT NOT NULL,
                 completed_steps TEXT NOT NULL DEFAULT '[]',
                 error TEXT,
+                public_error TEXT,
                 passport_id TEXT,
                 access_token_hash TEXT,
                 target TEXT,
@@ -83,6 +85,10 @@ def initialize_storage() -> None:
             pass
         try:
             connection.execute("ALTER TABLE jobs ADD COLUMN lease_until TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            connection.execute("ALTER TABLE jobs ADD COLUMN public_error TEXT")
         except sqlite3.OperationalError:
             pass
         connection.execute(
@@ -312,13 +318,14 @@ def reserve_stored_job(
 
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, public_error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, NULL, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
                 completed_steps = '[]',
                 error = NULL,
+                public_error = NULL,
                 passport_id = NULL,
                 access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
@@ -358,13 +365,14 @@ def create_stored_job(
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, public_error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, NULL, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
                 completed_steps = '[]',
                 error = NULL,
+                public_error = NULL,
                 passport_id = NULL,
                 access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
@@ -475,17 +483,17 @@ def complete_stored_job(job_id: str, passport_id: str, completed_steps: list[str
             )
 
 
-def fail_stored_job(job_id: str, error: str) -> None:
+def fail_stored_job(job_id: str, error: str, public_error: str | None = None) -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as connection:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'failed', error = ?, updated_at = ?, lease_until = NULL
+            SET status = 'failed', error = ?, public_error = ?, updated_at = ?, lease_until = NULL
             WHERE id = ?
             """,
-            (error, now, job_id),
+            (error, public_error, now, job_id),
         )
 
 
