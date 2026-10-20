@@ -48,12 +48,29 @@ def test_redaction_removes_identifiers_and_institution_lines() -> None:
     assert "Python" in result
 
 
-@pytest.mark.parametrize("separator", ["|", "•", "·", "—", "–", " - "])
-def test_redacted_text_hides_name_before_separated_skills(separator: str) -> None:
+@pytest.mark.parametrize("separator", ["|", "•", "·", "—", "–", " - ", ",", "/", ";", ":"])
+def test_redacted_text_hides_name_before_separated_header_text(separator: str) -> None:
     result = redact_personal_data(f"Jordan Smith {separator} Python {separator} React\nExperience")
     assert "Jordan Smith" not in result
     assert "[REDACTED NAME]" in result
     assert "Python" in result and "React" in result
+
+
+def test_redacted_text_hides_name_with_label_or_parenthesized_title() -> None:
+    labelled = redact_personal_data("Name: Jordan Smith\nPython")
+    assert "Jordan Smith" not in labelled
+
+    titled = redact_personal_data("Jordan Smith (Software Engineer)\nPython")
+    assert "Jordan Smith" not in titled
+    assert "[REDACTED NAME]" in titled
+
+
+def test_redacted_text_checks_more_than_eight_header_lines_and_replaces_repeats() -> None:
+    text = "Resume\n" + "\n".join(f"Contact detail {index}" for index in range(9))
+    text += "\nJordan Smith | Python\nJordan Smith built APIs."
+    result = redact_personal_data(text)
+    assert "Jordan Smith" not in result
+    assert result.count("[REDACTED NAME]") == 2
 
 
 def test_resume_skill_mentions_do_not_retain_names_from_shared_header_lines() -> None:

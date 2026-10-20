@@ -33,9 +33,14 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
     name_pattern = re.compile(
         r"^[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*){1,3}$"
     )
-    for index, line in enumerate(lines[:8]):
+    for index, line in enumerate(lines[:12]):
         candidate = line.strip()
-        header_name = re.split(r"\s*(?:\||•|·|—|–|(?<=\s)-(?=\s))\s*", candidate, maxsplit=1)[0].strip()
+        header = re.sub(r"(?i)^name\s*[:\-]\s*", "", candidate)
+        header_name = re.split(
+            r"\s*(?:\||•|·|—|–|(?<=\s)-(?=\s)|,|/|;|:|\s+\()\s*",
+            header,
+            maxsplit=1,
+        )[0].strip()
         if (
             candidate.lower() not in section_headings
             and header_name.lower() != "demo data"
@@ -45,8 +50,12 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
             )
             and not any(char in header_name for char in "@:/")
         ):
-            lines[index] = candidate.replace(header_name, "[REDACTED NAME]", 1)
-            break
+            return re.sub(
+                rf"(?<!\w){re.escape(header_name)}(?!\w)",
+                "[REDACTED NAME]",
+                "\n".join(lines),
+                flags=re.IGNORECASE,
+            )
     return "\n".join(lines)
 
 
