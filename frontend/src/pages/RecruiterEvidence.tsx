@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
+import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims from "../components/RejectedClaims";
 import { earlierSourcesText, verifiability } from "../verifiability";
@@ -44,6 +45,7 @@ export default function RecruiterEvidence() {
             {verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}
           </p>
           <CoverageSummary coverage={passport.coverage} />
+          <IdentityChecks signals={passport.identity} />
         </div>
         <div className="passport-actions">
           <Link className="button button-light" to={`/recruiter/${passport.id}`}><ArrowLeft size={15} /> Recruiter summary</Link>

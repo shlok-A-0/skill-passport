@@ -40,7 +40,13 @@ TRUSTED_PROXY_IPS = frozenset(
     if (normalized := _normalize_ip(address)) is not None
 )
 # Bump whenever verification or level rules change; stored in every evidence record.
-VERIFIER_VERSION = "2026-10-20.1"
+VERIFIER_VERSION = "2026-10-20.2"
+# Non-demo passports need a public-gist proof that the applicant controls the GitHub account.
+# Only an explicit false value turns it off (development only, enforced at startup); an
+# unrecognised value keeps it on and makes startup fail, so a typo never disables the proof.
+_OWNERSHIP_PROOF_SETTING = (os.getenv("REQUIRE_OWNERSHIP_PROOF") or "true").strip().lower()
+OWNERSHIP_PROOF_SETTING_VALID = _OWNERSHIP_PROOF_SETTING in ("true", "1", "yes", "false", "0", "no")
+REQUIRE_OWNERSHIP_PROOF = _OWNERSHIP_PROOF_SETTING not in ("false", "0", "no")
 # Environment and access control
 APP_ENV = os.getenv("APP_ENV", "production").lower()
 # When set or in production, recruiter review endpoints enforce fail-closed authentication.

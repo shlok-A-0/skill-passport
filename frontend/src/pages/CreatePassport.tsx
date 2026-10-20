@@ -1,8 +1,11 @@
-import { ArrowRight, FileUp, Github, LoaderCircle, ShieldCheck } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, isMissingJobError, type PassportJob, type Role } from "../api";
+import { api, isMissingJobError, type OwnershipChallenge, type PassportJob, type Role } from "../api";
 import { nextJobPollDelay } from "../jobPolling";
+import { sameGitHubUsername } from "../ownership";
+
+const PROOF_REQUIRED = "Prove this GitHub account is yours first: get a verification code and publish it as a public gist.";
 
 const steps = [
   "Reading GitHub",
@@ -26,6 +29,52 @@ export default function CreatePassport() {
   const [job, setJob] = useState<PassportJob | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState<OwnershipChallenge | null>(null);
+  const [gettingCode, setGettingCode] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const usernameRef = useRef(username);
+  const challengeRequestId = useRef(0);
+
+  function changeUsername(value: string) {
+    const changed = !sameGitHubUsername(usernameRef.current, value);
+    usernameRef.current = value;
+    setUsername(value);
+    if (changed) {
+      // A code only proves the account it was issued for; invalidate in-flight responses too.
+      challengeRequestId.current += 1;
+      setChallenge(null);
+      setGettingCode(false);
+    }
+  }
+
+  async function getCode() {
+    const requestedUsername = username.trim();
+    const requestId = ++challengeRequestId.current;
+    setError("");
+    setGettingCode(true);
+    try {
+      const nextChallenge = await api.ownershipChallenge(requestedUsername);
+      if (requestId !== challengeRequestId.current || !sameGitHubUsername(requestedUsername, usernameRef.current)) return;
+      setChallenge(nextChallenge);
+      setCopied(false);
+    } catch (reason) {
+      if (requestId !== challengeRequestId.current || !sameGitHubUsername(requestedUsername, usernameRef.current)) return;
+      setError(reason instanceof Error ? reason.message : "Could not get a verification code.");
+    } finally {
+      if (requestId === challengeRequestId.current) setGettingCode(false);
+    }
+  }
+
+  async function copyCode() {
+    if (!challenge) return;
+    try {
+      await navigator.clipboard.writeText(challenge.code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("Could not copy the code. Select it and copy it manually.");
+    }
+  }
 
   useEffect(() => {
     api.roles().then((items) => {
@@ -94,15 +143,22 @@ export default function CreatePassport() {
       setError("Add a GitHub username, a resume PDF, and a target role.");
       return;
     }
+    if (!demo && (!challenge || !sameGitHubUsername(challenge.github_username, username))) {
+      if (challenge) setChallenge(null);
+      setError(PROOF_REQUIRED);
+      return;
+    }
     setSubmitting(true);
     const data = new FormData();
     data.append("github_username", username.trim());
     data.append("resume", resume);
     data.append("target_role", role);
     data.append("is_demo", String(demo));
+    if (!demo && challenge) data.append("ownership_challenge_id", challenge.challenge_id);
     certificates.forEach((file) => data.append("certificates", file));
     try {
       const created = await api.createPassport(data);
+      if (!demo) setChallenge(null); // each code works once
       setJob({
         job_id: created.job_id,
         status: "queued",
@@ -111,7 +167,10 @@ export default function CreatePassport() {
         error: null,
       });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not start passport generation.");
+      const message = reason instanceof Error ? reason.message : "Could not start passport generation.";
+      // An expired, used or unknown code can't be retried; show the "Get verification code" button again.
+      if (message.includes("Get a new code")) setChallenge(null);
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -137,7 +196,7 @@ export default function CreatePassport() {
         {roleError && <div className="notice notice-error">{roleError}</div>}
         <form onSubmit={submit} className="create-form">
           <label>GitHub username
-            <span className="input-wrap"><Github size={17} /><input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="e.g. octocat" autoComplete="off" /></span>
+            <span className="input-wrap"><Github size={17} /><input value={username} onChange={(event) => changeUsername(event.target.value)} placeholder="e.g. octocat" autoComplete="off" /></span>
           </label>
           <label>Target role
             <select value={role} onChange={(event) => setRole(event.target.value)} disabled={!roles.length}>
@@ -154,7 +213,27 @@ export default function CreatePassport() {
             <input type="file" accept="application/pdf,.pdf" multiple onChange={(event) => setCertificates(Array.from(event.target.files ?? []))} />
           </label>
           <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => setDemo(event.target.checked)} /> Mark this passport as <strong>DEMO DATA</strong></label>
-          {error && <div className="notice notice-error">{error}</div>}
+          {!demo && (
+            <div className="notice notice-warning">
+              <strong><KeyRound size={13} /> Prove this account is yours</strong>
+              {challenge ? (
+                <>
+                  <p>Signed in to GitHub as <strong>{challenge.github_username}</strong>, create a <strong>public</strong> gist with this description (any file name and content). The code works once and expires in 1 hour; you can delete the gist afterwards.</p>
+                  <p><code>{challenge.code}</code></p>
+                  <button className="button button-light" type="button" onClick={copyCode}><Clipboard size={14} /> {copied ? "Copied" : "Copy"}</button>{" "}
+                  <a className="button button-light" href="https://gist.github.com" target="_blank" rel="noreferrer">Open gist.github.com <ExternalLink size={14} /></a>
+                </>
+              ) : (
+                <>
+                  <p>Anyone can type a username, so we check that you control this GitHub account with a one-time code you post as a public gist.</p>
+                  <button className="button button-light" type="button" onClick={getCode} disabled={!username.trim() || gettingCode}>
+                    {gettingCode ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />} Get verification code
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {error &&<div className="notice notice-error">{error}</div>}
           <button className="button submit-button" type="submit" disabled={submitting || Boolean(job && job.status !== "failed")}>
             {submitting ? <LoaderCircle className="spin" size={17} /> : null}
             {submitting ? "Starting…" : "Generate Passport"} <ArrowRight size={17} />

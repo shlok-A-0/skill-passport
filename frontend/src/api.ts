@@ -21,6 +21,8 @@ export type Evidence = {
   demonstrated_by?: { path: string; match: "name" | "import" };
   /** A Dockerfile or CI workflow exists in the repo: context only, never a level change. */
   build_config_present?: boolean;
+  /** CI workflow evidence: whether GitHub recorded a run. Context only, not a check. */
+  ci_run?: { verified: boolean; status: "passed" | "failed" | "in_progress" | "none" };
   /** Review endpoints and badge only. */
   record?: EvidenceRecord;
 };
@@ -202,6 +204,17 @@ export type Passport = {
   review_requests?: ReviewRequest[];
   /** Review endpoints only: one reviewer-ready packet per role requirement. */
   requirement_packets?: RequirementPacket[];
+  /** Review endpoints only: account ownership and resume link checks. */
+  identity?: IntegritySignal[];
+};
+
+/** A one-time code the applicant publishes as a public gist to show they control the account. */
+export type OwnershipChallenge = {
+  challenge_id: string;
+  github_username: string;
+  code: string;
+  expires_at: string;
+  instructions: string;
 };
 
 export type RoleRequirement = { skill_id: string; name?: string; min_level: string; importance: string };
@@ -270,6 +283,12 @@ async function reviewRequest<T>(path: string, options: RequestInit = {}): Promis
 
 export const api = {
   roles: () => request<Role[]>("/roles"),
+  ownershipChallenge: (github_username: string) =>
+    request<OwnershipChallenge>("/ownership/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ github_username }),
+    }),
   createPassport: async (data: FormData) => {
     const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
     sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
+import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, verifiability } from "../verifiability";
@@ -82,6 +83,7 @@ export default function RecruiterView() {
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}{openRequests > 0 && <Link className="open-requests" to={`/recruiter/${passport.id}/evidence`}>{openRequests} open review request{openRequests === 1 ? "" : "s"}</Link>}</p>
           <CoverageSummary coverage={passport.coverage} />
+          <IdentityChecks signals={passport.identity} />
           {growthUnavailable(passport) && <p className="unavailable-note">{GROWTH_UNAVAILABLE}</p>}
         </div>
         <div className="recruiter-actions">

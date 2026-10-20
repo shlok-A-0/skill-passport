@@ -9,6 +9,7 @@ from app.services.copy_check import add_copy_signals
 from app.services.coverage import build_coverage
 from app.services.github_ingest import ingest_github
 from app.services.growth_and_kit import generate_growth_and_kit
+from app.services.identity import identity_signals
 from app.services.jobs import complete_job, fail_job, keep_job_lease, update_job
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
@@ -84,9 +85,12 @@ def build_passport(
     ingestion = ingest_github(github_username, force_refresh=force_refresh)
     progress("Reading resume")
     if resume_bytes:
-        resume_skills = parse_resume(resume_bytes)["skills"]
+        parsed_resume = parse_resume(resume_bytes)
+        resume_skills = parsed_resume["skills"]
+        resume_logins = parsed_resume.get("github_logins", [])
     elif resume_skill_mentions is not None:
         resume_skills = resume_skill_mentions
+        resume_logins = None  # re-check: the resume isn't stored, so the earlier signal is kept
     else:
         raise ValueError("A resume PDF or previously parsed resume skills are required.")
     if certificate_bytes:
@@ -144,8 +148,9 @@ def build_passport(
             f"({generation_error}). Verified evidence is unaffected; use Re-check to try again."
         )
     now = datetime.now(timezone.utc).isoformat()
+    new_passport_id = passport_id or str(uuid.uuid4())
     passport = {
-        "id": passport_id or str(uuid.uuid4()),
+        "id": new_passport_id,
         "created_at": (existing or {}).get("created_at") or now,
         "updated_at": now,
         "github_username": ingestion["username"],
@@ -166,6 +171,15 @@ def build_passport(
         "growth_tasks": generated["growth_tasks"],
         "interview_kit": generated["interview_kit"],
         "is_demo": is_demo or bool(existing and existing.get("is_demo")),
+        # Recruiter-only; student_view() removes it. Ownership counts only for a proof recorded
+        # against this passport's own creation.
+        "identity": identity_signals(
+            new_passport_id,
+            ingestion["username"],
+            is_demo or bool(existing and existing.get("is_demo")),
+            resume_logins,
+            (existing or {}).get("identity"),
+        ),
         "resume_skill_mentions": resume_skills,
         "certificate_skill_mentions": certificate_skills,
         "generation_warning": generation_warning,

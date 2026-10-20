@@ -836,7 +836,7 @@ def copy_ingestion(**repo_overrides: object) -> dict:
 def run_copy_check(
     monkeypatch, ingestion: dict, *, other_file_seen: str | None, second_found: bool = True,
     search_error: bool = False, resume_skills: list | None = None,
-    candidate_first_seen: str | None = CANDIDATE_FIRST_SEEN,
+    candidate_first_seen: str | None = CANDIDATE_FIRST_SEEN, claims: list | None = None,
 ) -> dict:
     from app.services import copy_check
     from app.services.verifier import exclude_uncounted_citations
@@ -861,7 +861,7 @@ def run_copy_check(
     monkeypatch.setattr(copy_check, "_code_search", fake_search)
     monkeypatch.setattr(copy_check, "_file_first_seen", lambda client, name, path: other_file_seen)
     monkeypatch.setattr(copy_check, "_file_contains", fake_contains)
-    verified = verify_claims([claim(end_line=5)], ingestion, resume_skills=resume_skills)
+    verified = verify_claims(claims or [claim(end_line=5)], ingestion, resume_skills=resume_skills)
     first_seen = {"demo-api/app.py": candidate_first_seen} if candidate_first_seen else {}
     copy_check.add_copy_signals(verified["skills"], "student", first_seen)
     exclude_uncounted_citations(verified, ingestion["repos"])
@@ -962,6 +962,70 @@ def test_skill_losing_all_evidence_is_removed_or_kept_as_claimed(monkeypatch) ->
     )
     flask = _skill(verified, "flask")
     assert flask["level"] == "Claimed" and flask["evidence"] == []
+
+
+# Lines 1-2 of COPIED_LINES are boilerplate only (an import and a short line): nothing to search.
+BOILERPLATE_CLAIM = {"start_line": 1, "end_line": 2}
+DISTINCTIVE_CLAIM = {"start_line": 3, "end_line": 5}
+
+
+def test_confirmed_earlier_source_excludes_every_citation_in_that_file(monkeypatch) -> None:
+    import app.main as main_module
+
+    verified = run_copy_check(
+        monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z",
+        claims=[claim(**BOILERPLATE_CLAIM), claim(**DISTINCTIVE_CLAIM)],
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Used"  # the boilerplate citation no longer keeps it at Applied
+    assert not _code_items(flask)
+    excluded = sorted(_excluded(verified), key=lambda item: item["claim"]["start_line"])
+    assert [(item["claim"]["start_line"], item["claim"]["end_line"]) for item in excluded] == [(1, 2), (3, 5)]
+    boilerplate, confirmed = excluded
+    assert boilerplate["failed_checks"] == ["earlier_source"]
+    assert boilerplate["source_url"] == confirmed["source_url"] == OLDER_REPO_URL
+    assert boilerplate["reason"] == (
+        f"Excluded because another citation in this file (lines 3-5) matched an earlier public source. {confirmed['reason']}"
+    )
+    assert len(verified["queries"]) == 1  # no extra searches for the boilerplate citation
+    # Students see the same neutral outcome for both.
+    student = main_module.student_view({"id": "p", **verified})["rejected_claims"]
+    assert [item["reason"] for item in student if item["kind"] == "earlier_source"] == [main_module.STUDENT_EXCLUDED_REASON] * 2
+
+
+def test_confirmed_earlier_source_does_not_affect_another_file_in_the_repo(monkeypatch) -> None:
+    ingestion = copy_ingestion()
+    repo = ingestion["repos"][0]
+    other_lines = COPIED_LINES[:2]
+    repo["source_files"]["web/setup.py"] = {
+        "content": "\n".join(other_lines), "lines": other_lines, "authored_shas": ["def456"], "line_count": 2,
+    }
+    repo["tree"].append("web/setup.py")
+    verified = run_copy_check(
+        monkeypatch, ingestion, other_file_seen="2023-01-01T00:00:00Z",
+        claims=[claim(**DISTINCTIVE_CLAIM), claim(file_path="web/setup.py", start_line=1, end_line=2)],
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Applied"  # web/setup.py still counts
+    assert [item["file_path"] for item in _code_items(flask)] == ["web/setup.py"]
+    assert not _copy_signal(flask).get("earlier_source")
+    assert [item["claim"]["file_path"] for item in _excluded(verified)] == ["app.py"]
+
+
+def test_one_line_advisory_match_does_not_spread_to_the_file(monkeypatch) -> None:
+    verified = run_copy_check(
+        monkeypatch, copy_ingestion(), other_file_seen="2023-01-01T00:00:00Z", second_found=False,
+        claims=[claim(**BOILERPLATE_CLAIM), claim(**DISTINCTIVE_CLAIM)],
+    )
+    flask = _skill(verified, "flask")
+    assert flask["level"] == "Applied"
+    assert len(_code_items(flask)) == 2
+    assert not _excluded(verified)
+    signals = {
+        item["start_line"]: next(s for s in item["integrity"] if s["id"] == "copy_match") for item in _code_items(flask)
+    }
+    assert signals[1]["detail"] == "No distinctive line in the citation to search for."
+    assert signals[3]["status"] == "warn" and not signals[3].get("earlier_source")
 
 
 ROUTES_LINES = [
@@ -1133,7 +1197,8 @@ def test_ci_evidence_verifies_successful_ci_runs() -> None:
     evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
     assert len(evidence) == 1
     item = evidence[0]
-    assert item["checks"]["ci_run_verified"] is True
+    assert "ci_run_verified" not in item["checks"]
+    assert item["ci_run"] == {"verified": True, "status": "passed"}
     assert "All 1 CI check(s) passed" in item["explanation"]
 
 
@@ -1162,5 +1227,7 @@ def test_ci_evidence_flags_failed_or_missing_runs() -> None:
     evidence = _deterministic_evidence(cicd_skill, [repo], username="user")
     assert len(evidence) == 1
     item = evidence[0]
-    assert item["checks"]["ci_run_verified"] is False
+    assert "ci_run_verified" not in item["checks"]
+    assert all(item["checks"].values())
+    assert item["ci_run"] == {"verified": False, "status": "failed"}
     assert "failed" in item["explanation"]

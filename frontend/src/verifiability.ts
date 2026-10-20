@@ -12,9 +12,9 @@ export type Verifiability = {
 };
 
 // Signals that point at the code itself not being the student's are weighted as serious.
-const SERIOUS = new Set(["ai_leftover", "copy_match", "line_share"]);
+const SERIOUS = new Set(["ai_leftover", "copy_match", "line_share", "account_ownership"]);
 // Repository-level signals: counted once per repository, not once per cited file.
-const REPO_SCOPED = new Set(["repo_history", "commit_spread", "history_import"]);
+const REPO_SCOPED = new Set(["repo_history", "commit_spread", "history_import", "backdated_commits"]);
 export const tierOrder: Record<Verifiability["tier"], number> = { High: 3, Medium: 2, Low: 1, "Not checked": 0 };
 
 /** Summarise authorship signals across a passport. Each file's signal is counted once. */
@@ -32,6 +32,10 @@ export function verifiability(passport: Passport): Verifiability {
         seen.set(`${signal.id}:${scope}`, { signal, where: scope });
       }
     }
+  }
+  // Passport-level identity checks (review endpoints only).
+  for (const signal of passport.identity ?? []) {
+    seen.set(`${signal.id}:identity`, { signal, where: "identity" });
   }
   const all = [...seen.values()].filter(({ signal }) => signal.status !== "unknown");
   const warnings = all.filter(({ signal }) => signal.status === "warn");
