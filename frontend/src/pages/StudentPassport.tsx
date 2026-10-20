@@ -10,7 +10,7 @@ import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
-import { nextJobPollDelay } from "../jobPolling";
+import { consecutivePollFailuresAfterRequest, nextJobPollDelay } from "../jobPolling";
 
 const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
   (level) => [level, LEVEL_HELP_STUDENT[level]] as const,
@@ -74,7 +74,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         if (job.status === "done") {
           await load();
           if (!active) return;
-          consecutiveFailures = 0;
+          consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, true);
           if (active) {
             setError("");
             setRecheckJobId(null);
@@ -88,7 +88,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           setBusy(false);
           return;
         }
-        consecutiveFailures = 0;
+        consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, true);
         delay = 1500;
       } catch (reason) {
         if (!active) return;
@@ -99,7 +99,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           setBusy(false);
           return;
         }
-        consecutiveFailures += 1;
+        consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, false);
         if (consecutiveFailures >= 8) {
           setPollingPaused(true);
           setError("Could not reach the server to check this re-check. It may still be running; retry the status check when your connection is back.");

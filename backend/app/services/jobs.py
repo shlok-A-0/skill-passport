@@ -11,6 +11,7 @@ from app.services.storage import (
     heartbeat_stored_job,
     has_active_job_for_target,
     reserve_stored_job,
+    save_passport_and_complete_job,
     update_stored_job,
 )
 
@@ -48,6 +49,10 @@ def update_job(job_id: str, step: str) -> None:
 
 def complete_job(job_id: str, passport_id: str) -> None:
     complete_stored_job(job_id, passport_id, JOB_STEPS.copy())
+
+
+def complete_passport_job(job_id: str, passport: dict[str, Any]) -> None:
+    save_passport_and_complete_job(passport, job_id, JOB_STEPS.copy())
 
 
 def fail_job(job_id: str, error: str, public_error: str | None = None) -> None:

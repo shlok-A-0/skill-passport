@@ -20,6 +20,10 @@ def build_coverage(ingestion: dict[str, Any]) -> dict[str, Any]:
     sent = {(repo, path) for repo, path, _ in _files_for_prompt(ingestion)}
     repos = []
     notes = []
+    if ingestion.get("repo_listing_truncated"):
+        notes.append(
+            "Repository listing reached its scan limit before five eligible public repositories were found."
+        )
     for repo in ingestion.get("repos", []):
         stats = repo.get("coverage") or {}
         read_paths = list(repo.get("source_files", {}))

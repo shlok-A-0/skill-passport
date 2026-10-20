@@ -57,8 +57,10 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 10
+CACHE_SCHEMA_VERSION = 11
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
+MAX_REPO_LIST_PAGES = 10
+GITHUB_REPOS_PER_PAGE = 100
 
 
 class GitHubIngestError(RuntimeError):
@@ -98,6 +100,47 @@ def _headers() -> dict[str, str]:
     if GITHUB_TOKEN:
         headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
     return headers
+
+
+def _list_candidate_repositories(
+    client: httpx.Client, username: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]], bool]:
+    """Read enough recent repository pages to find five eligible public repositories."""
+    repositories: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
+    listing_truncated = False
+    for page in range(1, MAX_REPO_LIST_PAGES + 1):
+        batch = _request(
+            client,
+            f"{API_ROOT}/users/{quote(username)}/repos",
+            params={
+                "type": "owner",
+                "sort": "pushed",
+                "direction": "desc",
+                "per_page": GITHUB_REPOS_PER_PAGE,
+                "page": page,
+            },
+        )
+        repositories.extend(batch)
+        eligible.extend(
+            repo for repo in batch
+            if not repo.get("fork") and repo.get("visibility", "public") == "public"
+        )
+        if len(eligible) >= MAX_REPOS or len(batch) < GITHUB_REPOS_PER_PAGE:
+            break
+        if page == MAX_REPO_LIST_PAGES:
+            listing_truncated = True
+    eligible.sort(key=lambda repo: repo.get("pushed_at") or "", reverse=True)
+    skipped = [
+        {"name": repo.get("name", "?"), "reason": "fork" if repo.get("fork") else "not public"}
+        for repo in repositories
+        if repo.get("fork") or repo.get("visibility", "public") != "public"
+    ]
+    skipped.extend(
+        {"name": repo.get("name", "?"), "reason": f"not among the {MAX_REPOS} most recently pushed"}
+        for repo in eligible[MAX_REPOS:]
+    )
+    return repositories, eligible[:MAX_REPOS], skipped, listing_truncated
 
 
 def _get(client: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
@@ -740,24 +783,9 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
     timeout = httpx.Timeout(20.0, connect=10.0)
     with httpx.Client(headers=_headers(), timeout=timeout, follow_redirects=True) as client:
         profile = _request(client, f"{API_ROOT}/users/{quote(username)}")
-        repositories = _request(
-            client,
-            f"{API_ROOT}/users/{quote(username)}/repos",
-            params={"type": "owner", "sort": "pushed", "direction": "desc", "per_page": 100},
+        repositories, eligible, skipped_repos, repo_listing_truncated = _list_candidate_repositories(
+            client, username
         )
-        eligible = [
-            repo for repo in repositories
-            if not repo.get("fork") and repo.get("visibility", "public") == "public"
-        ]
-        skipped_repos = [
-            {"name": repo.get("name", "?"), "reason": "fork" if repo.get("fork") else "not public"}
-            for repo in repositories if repo not in eligible
-        ]
-        eligible.sort(key=lambda repo: repo.get("pushed_at") or "", reverse=True)
-        skipped_repos += [
-            {"name": repo.get("name", "?"), "reason": f"not among the {MAX_REPOS} most recently pushed"}
-            for repo in eligible[MAX_REPOS:]
-        ]
         repo_results: list[dict[str, Any]] = []
 
         for repo in eligible[:MAX_REPOS]:
@@ -931,6 +959,7 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
         "repo_count": len(repo_results),
         "repos": repo_results,
         "repos_listed": len(repositories),
+        "repo_listing_truncated": repo_listing_truncated,
         "skipped_repos": skipped_repos,
     }
     write_json_cache(
