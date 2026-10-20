@@ -135,7 +135,20 @@ def _fetch_recent_gists(username: str) -> list[dict[str, Any]]:
     if response.status_code == 404:
         raise OwnershipError("We couldn’t find that GitHub account. Check the username spelling and try again.")
     if response.status_code in (403, 429):
-        raise OwnershipError("GitHub is temporarily rate-limited. Please wait a few minutes and try again.")
+        remaining = response.headers.get("X-RateLimit-Remaining", "unknown")
+        message = response.reason_phrase
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                message = body.get("message", message)
+        except (ValueError, AttributeError):
+            pass
+        if response.status_code == 429 or remaining == "0" or "rate limit" in str(message).lower():
+            raise OwnershipError("GitHub is temporarily rate-limited. Please wait a few minutes and try again.")
+        raise OwnershipError(
+            "GitHub denied access while checking public gists. Please try again later; "
+            "contact the site administrator if this continues."
+        )
     if response.status_code == 401:
         raise OwnershipError("The server couldn’t authenticate with GitHub. Please contact the site administrator.")
     if not response.is_success:

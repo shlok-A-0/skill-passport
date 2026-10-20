@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import pipeline
@@ -19,6 +21,16 @@ def test_public_job_errors_are_specific_without_exposing_details(monkeypatch) ->
     monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading resume"})
     unreadable = pipeline._public_job_error("job", ValueError("No readable text found in the resume PDF."))
     assert "text-based PDF" in unreadable
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Proposing skills"})
+    gemini_network = pipeline._public_job_error("job", httpx.ConnectError("private connection detail"))
+    assert "Skill suggestions" in gemini_network
+    assert "reading GitHub" not in gemini_network
+    assert "private connection detail" not in gemini_network
+
+    monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading GitHub"})
+    github_network = pipeline._public_job_error("job", httpx.ConnectError("private connection detail"))
+    assert "reading GitHub" in github_network
 
     monkeypatch.setattr(pipeline, "get_job", lambda _job_id: {"step": "Reading certificates"})
     bad_certificate = pipeline._public_job_error("job", ValueError("No readable text found in the certificate PDF."))

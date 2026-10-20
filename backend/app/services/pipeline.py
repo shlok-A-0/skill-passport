@@ -39,7 +39,7 @@ def _public_job_error(job_id: str, exc: Exception) -> str:
         return "The server couldn’t authenticate with GitHub. Please contact the site administrator."
     if isinstance(exc, GitHubIngestError):
         return "GitHub couldn’t be read right now. Check that the account is public and try again."
-    if isinstance(exc, httpx.RequestError):
+    if step == "Reading GitHub" and isinstance(exc, httpx.RequestError):
         return "A connection was interrupted while reading GitHub. Check your connection and try again."
     if step == "Reading resume" and isinstance(exc, ValueError):
         message = str(exc).lower()
