@@ -181,7 +181,18 @@ def initialize_storage() -> None:
 def check_storage_ready() -> None:
     initialize_storage()
     with _connect() as connection:
-        connection.execute("SELECT 1").fetchone()
+        connection.execute(
+            """
+            INSERT INTO passports (id, created_at, github_username, target_role, payload)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), datetime.now(timezone.utc).isoformat(), "readiness", "readiness", "{}"),
+        )
+        connection.execute(
+            "INSERT INTO jobs (id, status, step, created_at) VALUES (?, 'queued', 'Queued', ?)",
+            (str(uuid.uuid4()), datetime.now(timezone.utc).isoformat()),
+        )
+        connection.rollback()
 
 
 def save_passport(passport: dict[str, Any]) -> None:
@@ -234,6 +245,35 @@ def list_passports_page(limit: int, offset: int) -> tuple[list[dict[str, Any]], 
             (limit, offset),
         ).fetchall()
         total = connection.execute("SELECT COUNT(*) AS count FROM passports").fetchone()["count"]
+    return [json.loads(row["payload"]) for row in rows], total
+
+
+def list_latest_passports_page(limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
+    """Return the newest-created passport per student before applying pagination."""
+    initialize_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            WITH ranked AS (
+                SELECT id, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY lower(github_username)
+                           ORDER BY created_at DESC, id
+                       ) AS student_rank
+                FROM passports
+            )
+            SELECT passports.payload
+            FROM passports
+            JOIN ranked ON ranked.id = passports.id
+            WHERE ranked.student_rank = 1
+            ORDER BY ranked.created_at DESC, ranked.id
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total = connection.execute(
+            "SELECT COUNT(DISTINCT lower(github_username)) AS count FROM passports"
+        ).fetchone()["count"]
     return [json.loads(row["payload"]) for row in rows], total
 
 
@@ -290,7 +330,11 @@ def mark_review_request_reviewed(request_id: str, reviewer_id: str) -> dict[str,
     initialize_storage()
     with _connect() as connection:
         connection.execute(
-            "UPDATE review_requests SET status = 'reviewed', reviewed_at = ?, reviewer_id = ? WHERE id = ?",
+            """
+            UPDATE review_requests
+            SET status = 'reviewed', reviewed_at = ?, reviewer_id = ?
+            WHERE id = ? AND status = 'open'
+            """,
             (datetime.now(timezone.utc).isoformat(), reviewer_id, request_id),
         )
         row = connection.execute("SELECT * FROM review_requests WHERE id = ?", (request_id,)).fetchone()

@@ -71,9 +71,10 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       try {
         const job = await api.job(recheckJobId);
         if (!active) return;
-        consecutiveFailures = 0;
         if (job.status === "done") {
           await load();
+          if (!active) return;
+          consecutiveFailures = 0;
           if (active) {
             setError("");
             setRecheckJobId(null);
@@ -87,6 +88,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           setBusy(false);
           return;
         }
+        consecutiveFailures = 0;
         delay = 1500;
       } catch (reason) {
         if (!active) return;

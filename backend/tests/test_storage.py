@@ -79,6 +79,49 @@ def test_concurrent_review_creation_enforces_lifetime_limit(tmp_path, monkeypatc
     assert len(storage.list_review_requests("p1")) == 10
 
 
+def test_review_completion_is_first_writer_wins(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "reviewed.sqlite")
+    request, error = storage.create_review_request("p1", "citation", "", 10)
+    assert request and error is None
+
+    first = storage.mark_review_request_reviewed(request["id"], "reviewer-a")
+    second = storage.mark_review_request_reviewed(request["id"], "reviewer-b")
+
+    assert first and second
+    assert second["reviewer_id"] == "reviewer-a"
+    assert second["reviewed_at"] == first["reviewed_at"]
+
+
+def test_readiness_checks_writes_and_rolls_back_probe_rows(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "ready.sqlite")
+    storage.check_storage_ready()
+
+    with storage._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM passports").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_latest_student_passports_are_selected_before_paging(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "latest.sqlite")
+    for passport_id, username, created, updated in (
+        ("new", "same-user", "2026-10-20T00:00:00+00:00", "2026-10-20T00:00:00+00:00"),
+        ("old-but-rechecked", "same-user", "2026-10-01T00:00:00+00:00", "2026-10-21T00:00:00+00:00"),
+        ("other", "other-user", "2026-10-19T00:00:00+00:00", "2026-10-19T00:00:00+00:00"),
+    ):
+        storage.save_passport({
+            "id": passport_id,
+            "created_at": created,
+            "updated_at": updated,
+            "github_username": username,
+            "target_role": "role",
+        })
+
+    first_page, total = storage.list_latest_passports_page(1, 0)
+    second_page, _ = storage.list_latest_passports_page(1, 1)
+    assert total == 2
+    assert [item["id"] for item in first_page + second_page] == ["new", "other"]
+
+
 def test_cleanup_prunes_old_jobs_without_losing_passport_ownership(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "cleanup.sqlite")
     storage.initialize_storage()

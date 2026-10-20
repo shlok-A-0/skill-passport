@@ -1,5 +1,7 @@
 import { EARLIER_SOURCE_KINDS, type IntegritySignal, type Passport } from "./api";
 import { countRequirementsMet, type RequirementLike } from "./requirements";
+import { latestPerStudent } from "./latestPerStudent";
+export { latestPerStudent } from "./latestPerStudent";
 
 export type Verifiability = {
   tier: "High" | "Medium" | "Low" | "Not checked";
@@ -64,18 +66,6 @@ export function requirementsMet(passport: Passport, requirements: RequirementLik
  * Deterministic ranking: must-have requirements met, then all requirements met,
  * then verifiability tier, then fewer authorship warnings, then more code-backed skills.
  */
-/** One passport per student: the most recently updated one for each GitHub username. */
-export function latestPerStudent(passports: Passport[]): Passport[] {
-  const latest = new Map<string, Passport>();
-  const stamp = (passport: Passport) => passport.updated_at ?? passport.created_at;
-  for (const passport of passports) {
-    const key = passport.github_username.toLowerCase();
-    const current = latest.get(key);
-    if (!current || stamp(passport) > stamp(current)) latest.set(key, passport);
-  }
-  return [...latest.values()];
-}
-
 export function rankCandidates(passports: Passport[], requirements: RequirementLike[]) {
   return latestPerStudent(passports)
     .map((passport) => ({ passport, ...requirementsMet(passport, requirements), verify: verifiability(passport) }))

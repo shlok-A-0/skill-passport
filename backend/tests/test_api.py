@@ -430,15 +430,26 @@ def test_passports_list_enforces_recruiter_key_when_set(tmp_path, monkeypatch) -
 
 def test_recruiter_passport_lists_are_paginated(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch, recruiter_key="s3cret")
-    storage.save_passport(fake_passport("p-second"))
-    storage.save_passport(fake_passport("p-third"))
+    second_passport = fake_passport("p-second")
+    second_passport["github_username"] = "student-two"
+    third_passport = fake_passport("p-third")
+    third_passport["github_username"] = "student-three"
+    old_rechecked = fake_passport("p-old-rechecked")
+    old_rechecked["created_at"] = "2020-01-01T00:00:00+00:00"
+    old_rechecked["updated_at"] = "2099-01-01T00:00:00+00:00"
+    storage.save_passport(second_passport)
+    storage.save_passport(third_passport)
+    storage.save_passport(old_rechecked)
     auth = {"X-Recruiter-Key": "s3cret"}
     first = client.get("/passports/review?limit=1&offset=0", headers=auth).json()
     second = client.get("/passports/review?limit=1&offset=1", headers=auth).json()
+    third = client.get("/passports/review?limit=1&offset=2", headers=auth).json()
     assert first["total"] == second["total"] == 3
     assert first["limit"] == 1 and first["offset"] == 0
-    assert len(first["items"]) == len(second["items"]) == 1
-    assert first["items"][0]["id"] != second["items"][0]["id"]
+    assert len(first["items"]) == len(second["items"]) == len(third["items"]) == 1
+    assert {page["items"][0]["id"] for page in (first, second, third)} == {
+        "p-review", "p-second", "p-third"
+    }
     assert client.get("/passports?limit=0", headers=auth).status_code == 422
 
 

@@ -60,6 +60,7 @@ from app.services.storage import (
     get_passport_owner_token_hash,
     get_review_requests_by_passports,
     list_passports_page,
+    list_latest_passports_page,
     list_review_requests,
     mark_review_request_reviewed,
     prune_old_jobs,
@@ -636,7 +637,7 @@ def passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)
 
 @app.get("/passports/review", dependencies=[Depends(require_recruiter)])
 def review_passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict:
-    items, total = list_passports_page(limit, offset)
+    items, total = list_latest_passports_page(limit, offset)
     all_requests = get_review_requests_by_passports([item["id"] for item in items])
     return {
         "items": [
