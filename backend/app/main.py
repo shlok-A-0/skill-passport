@@ -193,6 +193,10 @@ if ALLOW_DEBUG_ENDPOINTS:
 
 def _rate_limit_client_ip(request: Request) -> str:
     peer = request.client.host if request.client else "unknown"
+    try:
+        peer = str(ipaddress.ip_address(peer))
+    except ValueError:
+        return peer
     if peer not in TRUSTED_PROXY_IPS:
         return peer
 

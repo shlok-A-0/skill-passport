@@ -55,10 +55,8 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
 
   useEffect(() => {
     const pending = api.pendingRecheckId(id);
-    if (pending) {
-      setRecheckJobId(pending);
-      setBusy(true);
-    }
+    setRecheckJobId(pending ?? null);
+    setBusy(Boolean(pending));
   }, [id]);
 
   useEffect(() => {

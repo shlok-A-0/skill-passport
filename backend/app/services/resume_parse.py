@@ -13,7 +13,7 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
     whole resume; it is off for single mention lines, where "Python Django" would look like a name.
     Job-title headers are excluded from the name heuristic to avoid redacting role descriptions."""
     redacted = re.sub(
-        r"(?im)^(\s*(?:(?:full|candidate)\s+)?name\s*[:\-]\s*)([^|•·—–,;/\n]+)",
+        r"(?im)^([ \t]*(?:(?:full|candidate)[ \t]+)?name[ \t]*[:\-][ \t]*)([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*(?:[ \t]*,[ \t]*[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*)?(?:[ \t]+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*){0,2})",
         lambda match: f"{match.group(1)}[REDACTED NAME]",
         text,
     )

@@ -73,6 +73,12 @@ def test_redacted_text_handles_labeled_names_without_removing_skills(label: str)
     assert "Python" in result and "React" in result
 
 
+def test_redacted_text_handles_comma_separated_labeled_name() -> None:
+    result = redact_personal_data("Name: Smith, Jordan\nPython")
+    assert "Smith" not in result and "Jordan" not in result
+    assert "[REDACTED NAME]" in result and "Python" in result
+
+
 def test_job_title_header_is_not_redacted_as_a_name() -> None:
     result = redact_personal_data("Software Engineer | Python | React\nExperience")
     assert "Software Engineer" in result

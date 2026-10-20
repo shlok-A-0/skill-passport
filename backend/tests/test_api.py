@@ -955,6 +955,10 @@ def test_rate_limit_uses_forwarded_ip_only_from_configured_proxies(monkeypatch) 
     assert main_module._rate_limit_client_ip(untrusted) == "198.51.100.7"
     assert main_module._rate_limit_client_ip(spoofed_chain) == "198.51.100.8"
 
+    monkeypatch.setattr(main_module, "TRUSTED_PROXY_IPS", frozenset({"2001:db8::1"}))
+    equivalent_ipv6 = make_request("2001:0db8:0:0:0:0:0:1", "203.0.113.10")
+    assert main_module._rate_limit_client_ip(equivalent_ipv6) == "203.0.113.10"
+
 
 def test_multi_worker_startup_reconciliation_preserves_active_jobs(tmp_path, monkeypatch) -> None:
     db_file = tmp_path / "test_reconcile.db"

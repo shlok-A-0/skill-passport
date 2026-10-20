@@ -634,9 +634,13 @@ def _deterministic_evidence(
             evidence.extend(code)
             # A few test files per repo is enough proof; listing all of them bloated passports.
             cited = {item["file_path"] for item in code}
+            remaining_test_files = [path for path in repo["test_files"] if path not in cited]
+            remaining_test_files.sort(
+                key=lambda path: not committed_to_test(repo, path)
+            )
             evidence.extend(
                 _test_file_evidence(repo, path)
-                for path in [path for path in repo["test_files"] if path not in cited][:MAX_TEST_FILE_EVIDENCE]
+                for path in remaining_test_files[:MAX_TEST_FILE_EVIDENCE]
             )
         if skill["id"] == "git":
             commit = _commit_evidence(repo, username)

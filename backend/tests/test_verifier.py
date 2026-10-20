@@ -648,6 +648,22 @@ def test_test_file_evidence_is_capped() -> None:
     assert skills["unit-testing"]["level"] == "Claimed"
 
 
+def test_authored_test_file_is_prioritized_before_evidence_cap() -> None:
+    data = sample_ingestion()
+    repo = data["repos"][0]
+    repo["test_files"] = [f"tests/test_{index}.py" for index in range(4)]
+    repo["tree"].extend(repo["test_files"])
+    repo["test_authored"] = {path: path == "tests/test_3.py" for path in repo["test_files"]}
+    repo["test_contents"] = {"tests/test_3.py": "def test_authored():\n    assert True\n"}
+
+    skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
+    evidence = skills["unit-testing"]["evidence"]
+    authored = next(item for item in evidence if item["file_path"] == "tests/test_3.py")
+    assert authored["checks"]["authored"] is True
+    assert skills["unit-testing"]["level"] == "Used"
+    assert len(evidence) == 3
+
+
 def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> None:
     ingestion = sample_ingestion()
     repo = ingestion["repos"][0]
