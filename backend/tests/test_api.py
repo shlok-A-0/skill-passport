@@ -852,6 +852,9 @@ def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, mon
     db_file = tmp_path / "test_reserve.db"
     monkeypatch.setattr(storage, "DATABASE_PATH", db_file)
     storage.initialize_storage()
+    # Tests job reservation only; the ownership proof is covered in test_identity.py.
+    from app import config
+    monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", False)
 
     client = TestClient(main_module.app)
     resume_pdf = ("resume.pdf", b"%PDF-1.4 valid", "application/pdf")

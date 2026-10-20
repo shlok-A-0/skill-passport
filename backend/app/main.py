@@ -24,8 +24,10 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app import config
 from app.config import (
     ALLOW_DEBUG_ENDPOINTS,
     FRONTEND_ORIGINS,
@@ -37,6 +39,7 @@ from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
+from app.services.identity import OwnershipError, create_challenge, verify_challenge
 from app.services.jobs import (
     fail_job,
     get_active_jobs_count,
@@ -264,6 +267,7 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
     view = copy.deepcopy(passport)
     view.pop("resume_skill_mentions", None)
     view.pop("certificate_skill_mentions", None)
+    view.pop("identity", None)  # identity checks are recruiter-only
     for skill in view.get("skills", []):
         skill.pop("resume_mention", None)
         for item in skill.get("evidence", []):
@@ -372,6 +376,28 @@ def skills() -> list[dict[str, str]]:
     ]
 
 
+class OwnershipChallengeBody(BaseModel):
+    github_username: str = Field(min_length=1, max_length=39)
+
+
+@app.post("/ownership/challenge")
+def ownership_challenge(body: OwnershipChallengeBody, request: Request) -> dict:
+    """A one-time code the applicant publishes as a public gist to show they control the account."""
+    check_rate_limit(request, "ownership_challenge", max_requests=20, window_seconds=600)
+    try:
+        challenge = create_challenge(body.github_username)
+    except OwnershipError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        **challenge,
+        "instructions": (
+            f"Signed in to GitHub as {challenge['github_username']}, create a public gist at "
+            f"https://gist.github.com with the description {challenge['code']} (any file name and "
+            "content). The code expires in 1 hour and works once; you can delete the gist afterwards."
+        ),
+    }
+
+
 async def stream_and_validate_file(
     file: UploadFile,
     max_bytes: int,
@@ -411,6 +437,7 @@ async def create_passport(
     target_role: str = Form(...),
     certificates: list[UploadFile] | None = File(default=None),
     is_demo: bool = Form(default=False),
+    ownership_challenge_id: str | None = Form(default=None),
 ) -> dict[str, str]:
     check_rate_limit(request, "create_passport", max_requests=20, window_seconds=600)
     if resume.content_type != "application/pdf":
@@ -473,6 +500,15 @@ async def create_passport(
     except Exception as exc:
         fail_job(job_id, f"Upload rejected: {exc}")
         raise
+
+    # Demo passports are labelled DEMO DATA and skip the proof.
+    if config.REQUIRE_OWNERSHIP_PROOF and not is_demo:
+        try:
+            # Calls GitHub, so it runs off the event loop.
+            await run_in_threadpool(verify_challenge, ownership_challenge_id, github_username)
+        except OwnershipError as exc:
+            fail_job(job_id, str(exc))
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     background_tasks.add_task(
         run_passport_job,

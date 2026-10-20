@@ -6,6 +6,7 @@ import pdfplumber
 from pdfminer.pdfparser import PDFSyntaxError
 
 from app.services.framework import get_skills
+from app.services.identity import resume_github_logins
 
 
 def redact_personal_data(text: str, detect_name: bool = True) -> str:
@@ -130,6 +131,8 @@ def parse_resume(pdf_bytes: bytes) -> dict[str, Any]:
         "skills": match_resume_skills(text),
         "redacted_text": redact_personal_data(text),
         "page_count": page_count,
+        # From the raw text: redaction removes "GitHub: ..." lines. Only usernames are kept.
+        "github_logins": resume_github_logins(text),
     }
 
 

@@ -35,6 +35,7 @@ MIN_REPO_COMMITS = 4
 COMMIT_SPREAD_MIN_FILES = 15  # one-day history only matters for a sizeable repository
 HISTORY_IMPORT_DAYS = 7
 HISTORY_IMPORT_MIN_COMMITS = 3
+BACKDATE_DAYS = 7
 # Text an AI chat assistant writes around code, which ends up in a file when the answer is
 # pasted wholesale. Finding one is concrete; not finding one does not mean a human wrote it.
 AI_CHAT_LEFTOVERS = re.compile(
@@ -228,6 +229,34 @@ def _history_import_signal(repo: dict[str, Any]) -> dict[str, str]:
     )
 
 
+def _backdated_commit_signal(repo: dict[str, Any]) -> dict[str, str]:
+    """Advisory only. The author date can be set freely when committing; the committer date is
+    rewritten when the commit is recorded, so a large gap means the commit was made much later
+    than it claims (rebases and cherry-picks also do this)."""
+    label = "Commit dates match when commits were recorded"
+    pairs = [
+        (author, committer)
+        for author, committer in (
+            (_parse_utc(commit.get("author_date")), _parse_utc(commit.get("committer_date")))
+            for commit in repo.get("user_commits") or []
+        )
+        if author is not None and committer is not None
+    ]
+    if not pairs:
+        return _signal(
+            "backdated_commits", label, "unknown",
+            "Author and committer dates of your commits were not available.",
+        )
+    late = sum(1 for author, committer in pairs if committer - author > timedelta(days=BACKDATE_DAYS))
+    detail = f"{late} of {len(pairs)} commits were recorded more than {BACKDATE_DAYS} days after their author date."
+    if len(pairs) >= HISTORY_IMPORT_MIN_COMMITS and late * 2 >= len(pairs):
+        return _signal(
+            "backdated_commits", label, "warn",
+            f"{detail} The dates may have been set back; this also happens with rebases or cherry-picks of older work.",
+        )
+    return _signal("backdated_commits", label, "ok", detail)
+
+
 def _ai_leftover_signal(source: dict[str, Any]) -> dict[str, str]:
     label = "No AI chat text left in the file"
     for number, line in enumerate(source.get("lines", []), start=1):
@@ -275,6 +304,7 @@ def integrity_signals(
         _repo_history_signal(repo),
         _commit_spread_signal(repo),
         _history_import_signal(repo),
+        _backdated_commit_signal(repo),
         _ai_leftover_signal(source),
         _commit_signature_signal(source),
     ]
@@ -700,18 +730,21 @@ def _config_evidence(
         "signature_found": True,
     }
     explanation = f"{skill_name} is referenced by {path}."
+    # CI run status is context, not a check: a beginner's workflow that never ran or failed
+    # still shows they wrote it.
+    ci_run = None
     if is_ci and ci_status is not None:
         if ci_status.get("has_successful_run"):
-            checks["ci_run_verified"] = True
+            ci_run = {"verified": True, "status": "passed"}
             explanation = f"{skill_name} workflow in {path}; {ci_status.get('summary', 'all checks passed')} on {sha[:7]}."
         elif ci_status.get("status") == "failed":
-            checks["ci_run_verified"] = False
+            ci_run = {"verified": False, "status": "failed"}
             explanation = f"{skill_name} workflow in {path}; CI check run failed ({ci_status.get('summary', 'checks failed')})."
         elif ci_status.get("status") == "in_progress":
-            checks["ci_run_verified"] = False
+            ci_run = {"verified": False, "status": "in_progress"}
             explanation = f"{skill_name} workflow in {path}; CI checks currently in progress ({ci_status.get('summary')})."
         else:
-            checks["ci_run_verified"] = False
+            ci_run = {"verified": False, "status": "none"}
             explanation = f"{skill_name} workflow in {path} (no recorded CI runs on GitHub Actions)."
 
     return {
@@ -725,6 +758,7 @@ def _config_evidence(
         "snippet": "\n".join(lines[:end]),
         "explanation": explanation,
         "checks": checks,
+        **({"ci_run": ci_run} if ci_run else {}),
     }
 
 
@@ -857,7 +891,7 @@ CHECK_LABELS = {
     "not_fork": "Repository is not a fork",
     "signature_found": "Skill signature found in code",
     "lines_written": "Cited lines written by you",
-    "ci_run_verified": "Verified passing CI run",
+    "ci_run_verified": "Verified passing CI run",  # older stored passports only
 }
 
 
@@ -877,6 +911,39 @@ def _earlier_source(item: dict[str, Any]) -> dict[str, Any] | None:
         ),
         None,
     )
+
+
+def propagate_earlier_sources_per_file(skills: list[dict[str, Any]]) -> None:
+    """Give every code citation in a file the confirmed earlier-source signal found for that file.
+
+    The copy check searches each citation's distinctive lines, so a citation made only of
+    boilerplate (imports, `app = Flask(__name__)`, short lines) has nothing to search and passed
+    even when another citation from the same file was excluded as an earlier public source.
+    Only a confirmed exclusion (two lines in an earlier file) spreads; a one-line advisory match
+    does not. Reuses the signals already attached, so no extra GitHub calls.
+    """
+    sources: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+    for skill in skills:
+        for item in skill.get("evidence", []):
+            signal = _earlier_source(item) if item.get("type") == "code" else None
+            if signal is not None:
+                sources.setdefault((item["repo"], item["file_path"]), (signal, item))
+    for skill in skills:
+        for item in skill.get("evidence", []):
+            found = sources.get((item.get("repo"), item.get("file_path")))
+            if item.get("type") != "code" or found is None or _earlier_source(item) is not None:
+                continue
+            signal, origin = found
+            item["integrity"] = [
+                *(other for other in item.get("integrity", []) if other.get("id") != "copy_match"),
+                {
+                    **signal,
+                    "detail": (
+                        f"Excluded because another citation in this file (lines {origin['start_line']}-"
+                        f"{origin['end_line']}) matched an earlier public source. {signal.get('detail', '')}"
+                    ),
+                },
+            ]
 
 
 def _excluded_claim(skill_id: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -928,8 +995,9 @@ def exclude_uncounted_citations(
     Two outcomes exclude a citation: an earlier public source (two different cited lines in a
     file that appeared more than a day earlier elsewhere; "can't attribute", not "copied"), and
     blame showing none of the cited lines were last changed by the candidate. Unknown blame and
-    every other integrity signal stay advisory.
+    every other integrity signal stay advisory. An earlier source applies to the whole file.
     """
+    propagate_earlier_sources_per_file(verified["skills"])
     kept_skills = []
     for skill in verified["skills"]:
         kept = []
