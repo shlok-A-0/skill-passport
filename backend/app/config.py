@@ -40,7 +40,7 @@ TRUSTED_PROXY_IPS = frozenset(
     if (normalized := _normalize_ip(address)) is not None
 )
 # Bump whenever verification or level rules change; stored in every evidence record.
-VERIFIER_VERSION = "2026-10-20"
+VERIFIER_VERSION = "2026-10-20.1"
 # Environment and access control
 APP_ENV = os.getenv("APP_ENV", "production").lower()
 # When set or in production, recruiter review endpoints enforce fail-closed authentication.

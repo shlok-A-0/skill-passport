@@ -151,6 +151,35 @@ def test_recheck_reports_new_skills_when_the_old_passport_had_none(monkeypatch) 
     assert _recheck()["level_changes"] == [{"skill_id": "docker", "from": "Claimed", "to": "Used"}]
 
 
+def test_recheck_preserves_previous_skill_without_fresh_support_as_claimed(monkeypatch) -> None:
+    previous = {
+        **EXISTING,
+        "skills": [{
+            "skill_id": "python", "name": "Python", "level": "Applied",
+            "certified": False, "evidence": [{"type": "code"}],
+        }],
+    }
+    saved = _stub_pipeline(monkeypatch, previous, [])
+    from app.services.role_match import match_role
+
+    monkeypatch.setattr(pipeline, "match_role", match_role)
+
+    result = _recheck()
+
+    assert result["skills"] == [{
+        "skill_id": "python", "name": "Python", "level": "Claimed",
+        "certified": False, "evidence": [],
+    }]
+    assert result["level_changes"] == [
+        {"skill_id": "python", "from": "Applied", "to": "Claimed"}
+    ]
+    python_requirement = next(
+        item for item in result["role_match"]["requirements"] if item["skill_id"] == "python"
+    )
+    assert python_requirement["status"] == "missing"
+    assert python_requirement["student_level"] == "Claimed"
+
+
 def test_level_changes_are_computed_after_copy_exclusion(monkeypatch) -> None:
     copied = {
         "type": "code", "repo": "demo", "file_path": "a.py", "start_line": 1, "end_line": 2,
@@ -256,18 +285,21 @@ def test_recheck_all_only_incomplete_rebuilds_just_what_needs_it(monkeypatch, ca
         {**complete, "id": "d", "github_username": "unversioned", "verifier_version": None, "skills": []},
         # No gaps and no error: an empty growth plan is fine.
         {**complete, "id": "e", "github_username": "nogaps", "growth_tasks": []},
+        {**complete, "id": "f", "github_username": "old-recheck-rules",
+         "verifier_version": "2026-10-20"},
     ]
     assert [script.incomplete_reasons(item) for item in stored] == [
-        [], ["no coverage"], ["no growth plan"], ["verifier 2026-10-15"], ["verifier unversioned"], [],
+        [], ["no coverage"], ["no growth plan"], ["verifier 2026-10-15"],
+        ["verifier unversioned"], [], ["verifier 2026-10-20"],
     ]
     rebuilt = []
     monkeypatch.setattr(script, "list_passports", lambda: stored)
     monkeypatch.setattr(script, "recheck_passport", lambda old: rebuilt.append(old["id"]) or {
         **old, "rejected_claims": [{"kind": "not_written_by_candidate"}, {"kind": "earlier_source"}]})
     assert script.main(["--only-incomplete"]) == 0
-    assert rebuilt == ["a", "b", "c", "d"]
+    assert rebuilt == ["a", "b", "c", "d", "f"]
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "Re-checking 4 of 6 passport(s) (incomplete or older rules)..."
+    assert out[0] == "Re-checking 5 of 7 passport(s) (incomplete or older rules)..."
     assert "rejected 0  excluded 2" in out[1] and out[1].endswith("[no coverage]")
 
 
