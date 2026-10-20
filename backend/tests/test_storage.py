@@ -82,8 +82,8 @@ def test_concurrent_review_creation_enforces_lifetime_limit(tmp_path, monkeypatc
 def test_cleanup_prunes_old_jobs_without_losing_passport_ownership(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "cleanup.sqlite")
     storage.initialize_storage()
-    storage.create_stored_job("completed", access_token_hash="owner-hash")
-    storage.complete_stored_job("completed", "passport-1", [])
+    storage.create_stored_job("passport-1", access_token_hash="owner-hash")
+    storage.complete_stored_job("passport-1", "passport-1", [])
     storage.create_stored_job("failed")
     storage.fail_stored_job("failed", "failure")
     with storage._connect() as connection:
@@ -97,7 +97,7 @@ def test_cleanup_prunes_old_jobs_without_losing_passport_ownership(tmp_path, mon
 
     assert storage.prune_old_jobs() == 2
     assert storage.prune_old_rate_limits() == 1
-    assert storage.get_stored_job("completed") is None
+    assert storage.get_stored_job("passport-1") is None
     assert storage.get_passport_owner_token_hash("passport-1") == "owner-hash"
     with storage._connect() as connection:
         assert connection.execute("SELECT key FROM rate_limits").fetchone()["key"] == "recent"
@@ -118,7 +118,19 @@ def test_job_lease_protects_long_running_work_from_startup_reconciliation(tmp_pa
     with storage._connect() as connection:
         connection.execute("UPDATE jobs SET lease_until = datetime('now', '-1 second') WHERE id = 'active'")
     assert storage.reconcile_interrupted_jobs(stale_seconds=600) == 1
-    assert storage.get_stored_job("active")["status"] == "failed"
+
+
+def test_job_polling_reconciles_an_expired_lease(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "expired-lease.sqlite")
+    storage.create_stored_job("expired")
+    storage.update_stored_job("expired", "Reading GitHub", [])
+    with storage._connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET lease_until = datetime('now', '-1 second') WHERE id = 'expired'"
+        )
+
+    job = storage.get_stored_job("expired")
+    assert job and job["status"] == "failed"
 
 
 def test_expired_job_is_reconciled_during_poll_and_releases_reservation(tmp_path, monkeypatch) -> None:

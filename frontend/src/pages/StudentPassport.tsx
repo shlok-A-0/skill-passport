@@ -1,7 +1,7 @@
 import { Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { api, skillLabel, type Passport, type PassportSkill } from "../api";
+import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
@@ -10,6 +10,7 @@ import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
+import { nextJobPollDelay } from "../jobPolling";
 
 const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
   (level) => [level, LEVEL_HELP_STUDENT[level]] as const,
@@ -29,9 +30,10 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
   const [selected, setSelected] = useState<PassportSkill | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [recheckJobId, setRecheckJobId] = useState<string | null>(null);
   const [changes, setChanges] = useState<NonNullable<Passport["level_changes"]>>([]);
 
-  async function load() {
+  const load = useCallback(async () => {
     const data = audience === "recruiter" ? await api.reviewPassport(id) : await api.passport(id);
     setPassport(data);
     const requestedSkill = searchParams.get("skill");
@@ -45,11 +47,63 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         ?? null,
     );
     setChanges(data.level_changes ?? []);
-  }
+  }, [audience, id, searchParams]);
 
   useEffect(() => {
     load().catch((reason: Error) => setError(reason.message));
-  }, [id, searchParams]);
+  }, [load]);
+
+  useEffect(() => {
+    const pending = api.pendingRecheckId(id);
+    setRecheckJobId(pending ?? null);
+    setBusy(Boolean(pending));
+  }, [id]);
+
+  useEffect(() => {
+    if (!recheckJobId) return;
+    let active = true;
+    let timer = 0;
+    let delay = 1500;
+    const poll = async () => {
+      try {
+        const job = await api.job(recheckJobId);
+        if (!active) return;
+        if (job.status === "done") {
+          await load();
+          if (active) {
+            setError("");
+            setRecheckJobId(null);
+            setBusy(false);
+          }
+          return;
+        }
+        if (job.status === "failed") {
+          setError(job.error || "Re-check failed. Please try again.");
+          setRecheckJobId(null);
+          setBusy(false);
+          return;
+        }
+        delay = 1500;
+      } catch (reason) {
+        if (!active) return;
+        if (isMissingJobError(reason)) {
+          api.clearPendingRecheck(recheckJobId);
+          setError("This re-check is no longer available. Please try again.");
+          setRecheckJobId(null);
+          setBusy(false);
+          return;
+        }
+        setError("Connection interrupted. Retrying re-check status automatically…");
+        delay = nextJobPollDelay(delay);
+      }
+      timer = window.setTimeout(poll, delay);
+    };
+    timer = window.setTimeout(poll, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [load, recheckJobId]);
 
   const verified = useMemo(
     () => passport?.skills.filter((skill) => skill.level !== "Claimed" && skill.evidence.length) ?? [],
@@ -64,18 +118,10 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     setBusy(true);
     setError("");
     try {
-      const result = await api.recheck(id);
-      setChanges(result.level_changes ?? []);
-      setPassport(result.passport);
-      setSelected((current) => (
-        result.passport.skills.find((skill) => skill.skill_id === current?.skill_id)
-        ?? result.passport.skills.find((skill) => skill.level !== "Claimed" && skill.evidence.length > 0)
-        ?? result.passport.skills[0]
-        ?? null
-      ));
+      const job = await api.recheck(id);
+      setRecheckJobId(job.job_id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Re-check failed.");
-    } finally {
       setBusy(false);
     }
   }
@@ -85,10 +131,11 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       const credential = await api.badge(id);
       const blob = new Blob([JSON.stringify(credential, null, 2)], { type: "application/ld+json" });
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
+      link.href = url;
       link.download = `skill-passport-${id}.json`;
       link.click();
-      URL.revokeObjectURL(link.href);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not download the credential.");
     }

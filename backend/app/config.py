@@ -1,3 +1,4 @@
+import ipaddress
 import os
 from pathlib import Path
 
@@ -24,8 +25,22 @@ FRONTEND_ORIGINS = [
     for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
+
+
+def _normalize_ip(address: str) -> str | None:
+    try:
+        return str(ipaddress.ip_address(address.strip()))
+    except ValueError:
+        return None
+
+
+TRUSTED_PROXY_IPS = frozenset(
+    normalized
+    for address in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
+    if (normalized := _normalize_ip(address)) is not None
+)
 # Bump whenever verification or level rules change; stored in every evidence record.
-VERIFIER_VERSION = "2026-10-16"
+VERIFIER_VERSION = "2026-10-20"
 # Environment and access control
 APP_ENV = os.getenv("APP_ENV", "production").lower()
 # When set or in production, recruiter review endpoints enforce fail-closed authentication.

@@ -387,8 +387,7 @@ def _get_file_content(client: httpx.Client, owner: str, repo: str, path: str, br
         return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
     download_url = data.get("download_url")
     if download_url:
-        response = client.get(download_url)
-        response.raise_for_status()
+        response = _get(client, download_url)
         return response.text
     return ""
 
@@ -663,10 +662,24 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
 
     cache_path = _cache_path(username)
     if not force_refresh and cache_path.exists():
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        fresh = time.time() - cached.get("cached_at", 0) < CACHE_TTL_SECONDS
-        if fresh and cached.get("schema_version") == CACHE_SCHEMA_VERSION:
-            return cached["data"]
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            cache_path.unlink(missing_ok=True)
+        else:
+            if isinstance(cached, dict):
+                cached_at = cached.get("cached_at")
+                fresh = (
+                    isinstance(cached_at, (int, float))
+                    and time.time() - cached_at < CACHE_TTL_SECONDS
+                )
+                if (
+                    fresh
+                    and cached.get("schema_version") == CACHE_SCHEMA_VERSION
+                    and isinstance(cached.get("data"), dict)
+                ):
+                    return cached["data"]
+            cache_path.unlink(missing_ok=True)
 
     # When this ingestion fetched the files; recorded on every evidence record.
     retrieved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")

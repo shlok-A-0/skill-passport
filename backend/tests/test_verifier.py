@@ -641,10 +641,27 @@ def test_test_file_evidence_is_capped() -> None:
     skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
     assert len(skills["unit-testing"]["evidence"]) == 3
     item = skills["unit-testing"]["evidence"][0]
-    assert set(item["checks"]) == {"file_exists", "not_fork"}
+    assert set(item["checks"]) == {"file_exists", "authored", "not_fork"}
+    assert item["checks"]["authored"] is False
     assert item["url"] == "https://github.com/student/demo-api/blob/abc123/tests/test_0.py"
     assert item["explanation"] == "Test file present in the repository."
+    assert skills["unit-testing"]["level"] == "Claimed"
+
+
+def test_authored_test_file_is_prioritized_before_evidence_cap() -> None:
+    data = sample_ingestion()
+    repo = data["repos"][0]
+    repo["test_files"] = [f"tests/test_{index}.py" for index in range(4)]
+    repo["tree"].extend(repo["test_files"])
+    repo["test_authored"] = {path: path == "tests/test_3.py" for path in repo["test_files"]}
+    repo["test_contents"] = {"tests/test_3.py": "def test_authored():\n    assert True\n"}
+
+    skills = {item["skill_id"]: item for item in verify_claims([], data)["skills"]}
+    evidence = skills["unit-testing"]["evidence"]
+    authored = next(item for item in evidence if item["file_path"] == "tests/test_3.py")
+    assert authored["checks"]["authored"] is True
     assert skills["unit-testing"]["level"] == "Used"
+    assert len(evidence) == 3
 
 
 def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> None:
@@ -669,7 +686,7 @@ def test_authored_test_file_is_cited_as_code_and_test_files_are_grouped() -> Non
     assert skill["level"] == "Applied"  # test code itself, not targeted by another test
 
 
-def test_unauthored_test_file_is_not_cited() -> None:
+def test_unauthored_test_file_does_not_count_towards_used() -> None:
     ingestion = sample_ingestion()
     repo = ingestion["repos"][0]
     lines = ["def test_health():", "    assert True"]
@@ -679,7 +696,9 @@ def test_unauthored_test_file_is_not_cited() -> None:
     skill = next(
         item for item in verify_claims([], ingestion)["skills"] if item["skill_id"] == "unit-testing"
     )
-    assert skill["level"] == "Used"
+    test_evidence = next(item for item in skill["evidence"] if item.get("test_file_group"))
+    assert test_evidence["checks"]["authored"] is False
+    assert skill["level"] == "Claimed"
 
 
 def test_common_english_words_are_not_resume_skills() -> None:

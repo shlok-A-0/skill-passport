@@ -165,7 +165,7 @@ export default function PlacementCell() {
                 <tbody>{ranked.map((row, index) => (
                   <tr key={row.passport.id} className={index === 0 ? "rank-top" : ""}>
                     <td className="rank-number">{index + 1}</td>
-                    <td><Link to={`/passport/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div>
+                    <td><Link to={`/recruiter/${row.passport.id}`}>{row.passport.github_username}</Link>{row.passport.is_demo && <small className="demo-tag">DEMO</small>}<div className="muted">{row.verify.codeSkills} code-backed skills</div>
                       {growthUnavailable(row.passport) && <div className="unavailable-note">{GROWTH_UNAVAILABLE}</div>}
                       {!row.passport.coverage && <div className="unavailable-note">{COVERAGE_MISSING}</div>}</td>
                     <td>{row.mustMet} of {row.mustTotal}</td>
@@ -197,7 +197,7 @@ export default function PlacementCell() {
                 <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillLabel(req)}</th>)}</tr></thead>
                 <tbody>{rows.map(({ passport }) => (
                   <tr key={passport.id}>
-                    <td><Link to={`/passport/${passport.id}`}>{passport.github_username}{passport.is_demo && <small>DEMO</small>}</Link></td>
+                    <td><Link to={`/recruiter/${passport.id}`}>{passport.github_username}{passport.is_demo && <small>DEMO</small>}</Link></td>
                     {requirements.map((req) => {
                       const skill = passport.skills.find((item) => item.skill_id === req.skill_id);
                       const level = skill?.evidence.length ? skill.level : undefined;

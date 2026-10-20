@@ -538,9 +538,9 @@ def _test_file_evidence(repo: dict[str, Any], path: str) -> dict[str, Any]:
         "explanation": "Test file present in the repository.",
         "checks": {
             "file_exists": path in repo.get("tree", []),
+            "authored": bool((repo.get("test_authored") or {}).get(path)),
             "not_fork": not repo.get("is_fork", False),
         },
-        # Test files are not authorship-checked; these items keep counting towards Used.
         "test_file_group": True,
     }
 
@@ -634,9 +634,13 @@ def _deterministic_evidence(
             evidence.extend(code)
             # A few test files per repo is enough proof; listing all of them bloated passports.
             cited = {item["file_path"] for item in code}
+            remaining_test_files = [path for path in repo["test_files"] if path not in cited]
+            remaining_test_files.sort(
+                key=lambda path: not committed_to_test(repo, path)
+            )
             evidence.extend(
                 _test_file_evidence(repo, path)
-                for path in [path for path in repo["test_files"] if path not in cited][:MAX_TEST_FILE_EVIDENCE]
+                for path in remaining_test_files[:MAX_TEST_FILE_EVIDENCE]
             )
         if skill["id"] == "git":
             commit = _commit_evidence(repo, username)
@@ -727,8 +731,6 @@ def _config_evidence(
 def counts_for_level(skill_id: str, item: dict[str, Any]) -> bool:
     if item.get("type") not in {"dependency", "config"}:
         return True  # code and commit evidence are authored by construction
-    if skill_id == "unit-testing" and item.get("test_file_group"):
-        return True
     return bool((item.get("checks") or {}).get("authored"))
 
 

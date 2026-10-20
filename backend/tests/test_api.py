@@ -294,11 +294,20 @@ def test_review_requests_survive_recheck_and_never_change_levels(tmp_path, monke
         storage.save_passport(result)
         return result
 
-    monkeypatch.setattr(main_module, "recheck_passport", rebuild)
-    student = client.post(
+    def rebuild_job(job_id, existing):
+        rebuild(existing)
+        storage.complete_stored_job(job_id, existing["id"], [])
+
+    monkeypatch.setattr(main_module, "run_recheck_job", rebuild_job)
+    started = client.post(
         "/passport/p-review/recheck",
         headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
-    ).json()["passport"]
+    )
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    job = client.get(f"/jobs/{job_id}", headers={"X-Passport-Token": started.json()["access_token"]})
+    assert job.json()["status"] == "done"
+    student = client.get("/passport/p-review").json()
     excluded = next(item for item in student["rejected_claims"] if item.get("citation_key") == EXCLUDED_KEY)
     assert excluded["review_request"]["status"] == "open"
     requests = client.get("/passport/p-review/review").json()["review_requests"]
@@ -424,33 +433,54 @@ def test_api_concurrency_and_active_job_limits(tmp_path, monkeypatch) -> None:
 
 def test_recheck_returns_student_view(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        main_module, "recheck_passport",
-        lambda existing: {**passport_with_fraud_signals(existing["id"]), "level_changes": []},
-    )
-    keys, values = _keys_and_values(client.post(
+    def rebuild_job(job_id, existing):
+        storage.save_passport({**passport_with_fraud_signals(existing["id"]), "level_changes": []})
+        storage.complete_stored_job(job_id, existing["id"], [])
+
+    monkeypatch.setattr(main_module, "run_recheck_job", rebuild_job)
+    started = client.post(
         "/passport/p-review/recheck",
         headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
-    ).json())
+    )
+    assert started.status_code == 202
+    job = client.get(
+        f"/jobs/{started.json()['job_id']}",
+        headers={"X-Passport-Token": started.json()["access_token"]},
+    )
+    assert job.json()["status"] == "done"
+    keys, values = _keys_and_values(client.get("/passport/p-review").json())
     assert not {"integrity", "good_answer_mentions"} & keys
     assert "copied" not in values
 
 
-def test_recheck_endpoint_calls_the_pipeline_not_itself(tmp_path, monkeypatch) -> None:
+def test_recheck_endpoint_uses_the_background_pipeline_worker(tmp_path, monkeypatch) -> None:
     from app.services import pipeline
 
-    # The endpoint used to share the pipeline function's name and called itself (502 on every Re-check).
-    assert main_module.recheck_passport is pipeline.recheck_passport
+    assert main_module.run_recheck_job is pipeline.run_recheck_job
     client = _review_client(tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(pipeline, "build_passport", lambda **kwargs: calls.append(kwargs) or {
-        **passport_with_fraud_signals("p-review"), "level_changes": []})
+    def fake_build(**kwargs):
+        calls.append(kwargs)
+        result = {**passport_with_fraud_signals("p-review"), "level_changes": []}
+        storage.save_passport(result)
+        complete_job(kwargs["job_id"], "p-review")
+        return result
+
+    monkeypatch.setattr(pipeline, "build_passport", fake_build)
     response = client.post(
         "/passport/p-review/recheck",
         headers={"X-Passport-Token": REVIEW_OWNER_TOKEN},
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert calls[0]["passport_id"] == "p-review" and calls[0]["force_refresh"] is True
+    assert calls[0]["job_id"] == response.json()["job_id"]
+    assert client.get(
+        f"/jobs/{response.json()['job_id']}",
+        headers={"X-Passport-Token": response.json()["access_token"]},
+    ).json()["status"] == "done"
+    assert storage.get_passport_owner_token_hash("p-review") == hashlib.sha256(
+        REVIEW_OWNER_TOKEN.encode()
+    ).hexdigest()
 
 
 def test_api_returns_skill_names(tmp_path, monkeypatch) -> None:
@@ -706,27 +736,27 @@ def test_recheck_requires_owner_token_and_hides_upstream_error(tmp_path, monkeyp
         access_token_hash=hashlib.sha256(access_token.encode()).hexdigest(),
     )
     storage.complete_stored_job("p-review", "p-review", [])
-    called = False
-
-    def fail_recheck(_passport):
-        nonlocal called
-        called = True
-        raise RuntimeError("private upstream response")
-
-    monkeypatch.setattr(main_module, "recheck_passport", fail_recheck)
+    monkeypatch.setattr(
+        main_module,
+        "run_recheck_job",
+        lambda job_id, _passport: storage.fail_stored_job(job_id, "private upstream response"),
+    )
     assert client.post(
         "/passport/p-review/recheck",
         headers={"X-Passport-Token": ""},
     ).status_code == 404
-    assert not called
 
     response = client.post(
         "/passport/p-review/recheck",
         headers={"X-Passport-Token": access_token},
     )
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Re-check failed. Please try again."
-    assert "private upstream response" not in response.text
+    assert response.status_code == 202
+    job = client.get(
+        f"/jobs/{response.json()['job_id']}",
+        headers={"X-Passport-Token": response.json()["access_token"]},
+    )
+    assert job.json()["status"] == "failed"
+    assert "private upstream response" not in job.text
 
 
 def test_job_status_requires_token_and_redacts_job_errors(tmp_path, monkeypatch) -> None:
@@ -899,6 +929,35 @@ def test_rate_limiter_storage_failure_fails_closed_with_503(monkeypatch) -> None
     # Fail closed with 503 Service Unavailable, not silent downgrade
     assert res.status_code == 503
     assert "Rate limiting service temporarily unavailable" in res.json()["detail"]
+
+
+def test_rate_limit_uses_forwarded_ip_only_from_configured_proxies(monkeypatch) -> None:
+    from starlette.requests import Request
+
+    monkeypatch.setattr(main_module, "TRUSTED_PROXY_IPS", frozenset({"10.0.0.1", "10.0.0.2"}))
+
+    def make_request(peer: str, forwarded: str) -> Request:
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(b"x-forwarded-for", forwarded.encode())],
+            "client": (peer, 1234),
+            "server": ("test", 80),
+            "scheme": "http",
+            "query_string": b"",
+        })
+
+    trusted = make_request("10.0.0.1", "203.0.113.10, 10.0.0.2")
+    untrusted = make_request("198.51.100.7", "203.0.113.99")
+    spoofed_chain = make_request("10.0.0.1", "203.0.113.99, 198.51.100.8")
+    assert main_module._rate_limit_client_ip(trusted) == "203.0.113.10"
+    assert main_module._rate_limit_client_ip(untrusted) == "198.51.100.7"
+    assert main_module._rate_limit_client_ip(spoofed_chain) == "198.51.100.8"
+
+    monkeypatch.setattr(main_module, "TRUSTED_PROXY_IPS", frozenset({"2001:db8::1"}))
+    equivalent_ipv6 = make_request("2001:0db8:0:0:0:0:0:1", "203.0.113.10")
+    assert main_module._rate_limit_client_ip(equivalent_ipv6) == "203.0.113.10"
 
 
 def test_multi_worker_startup_reconciliation_preserves_active_jobs(tmp_path, monkeypatch) -> None:

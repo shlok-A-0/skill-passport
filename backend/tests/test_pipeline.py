@@ -9,6 +9,7 @@ from app.services import pipeline
 def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatch) -> None:
     existing = {
         "id": "saved-passport",
+        "github_username": "student",
         "skills": [{"skill_id": "python", "level": "Applied"}],
         "sources": {"resume": True, "certificates": 0},
         "role_match": {"role_id": "backend-intern"},
@@ -71,6 +72,26 @@ def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatc
         {"skill_id": "python", "from": "Applied", "to": "Demonstrated"}
     ]
     assert saved == [result]
+
+
+def test_recheck_preserves_legacy_resume_and_certificate_claims(monkeypatch) -> None:
+    existing = {
+        "id": "saved-passport",
+        "github_username": "student",
+        "skills": [
+            {"skill_id": "python", "name": "Python", "level": "Claimed"},
+            {"skill_id": "aws", "name": "AWS", "level": "Claimed", "certified": True},
+        ],
+        "sources": {"resume": True, "certificates": 1},
+        "role_match": {"role_id": "backend-intern"},
+    }
+    captured = {}
+    monkeypatch.setattr(pipeline, "build_passport", lambda **kwargs: captured.update(kwargs))
+
+    pipeline.recheck_passport(existing)
+
+    assert captured["resume_skill_mentions"] == [{"skill_id": "python", "mention": "Python"}]
+    assert captured["certificate_skill_mentions"] == [{"skill_id": "aws", "mention": "AWS"}]
 
 
 def _stub_pipeline(monkeypatch, existing, new_skills, growth=None):

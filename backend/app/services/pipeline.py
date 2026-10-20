@@ -40,12 +40,13 @@ def build_passport(
     certificate_bytes: list[bytes] | None = None,
     is_demo: bool = False,
     passport_id: str | None = None,
+    job_id: str | None = None,
     force_refresh: bool = False,
     resume_skill_mentions: list[dict[str, str]] | None = None,
     certificate_skill_mentions: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     existing = get_passport(passport_id) if passport_id else None
-    update_job_id = passport_id if passport_id and not existing else None
+    update_job_id = job_id or (passport_id if passport_id and not existing else None)
     if existing:
         previous_levels = {
             item["skill_id"]: item["level"] for item in existing.get("skills", [])
@@ -165,16 +166,35 @@ def build_passport(
     return passport
 
 
-def recheck_passport(existing: dict[str, Any]) -> dict[str, Any]:
+def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
     """Rebuild a stored passport from a fresh GitHub read and its stored resume/certificate mentions."""
+    if "resume_skill_mentions" in existing:
+        resume_mentions = existing["resume_skill_mentions"]
+    else:
+        resume_mentions = [
+            {"skill_id": skill["skill_id"], "mention": skill.get("name", skill["skill_id"])}
+            for skill in existing.get("skills", [])
+            if skill.get("resume_mention") or (
+                skill.get("level") == "Claimed" and not skill.get("certified")
+            )
+        ]
+    if "certificate_skill_mentions" in existing:
+        certificate_mentions = existing["certificate_skill_mentions"]
+    else:
+        certificate_mentions = [
+            {"skill_id": skill["skill_id"], "mention": skill.get("name", skill["skill_id"])}
+            for skill in existing.get("skills", [])
+            if skill.get("certified")
+        ]
     return build_passport(
         github_username=existing["github_username"],
         target_role=existing["role_match"]["role_id"],
         resume_bytes=b"",
         passport_id=existing["id"],
+        job_id=job_id,
         force_refresh=True,
-        resume_skill_mentions=existing.get("resume_skill_mentions", []),
-        certificate_skill_mentions=existing.get("certificate_skill_mentions", []),
+        resume_skill_mentions=resume_mentions,
+        certificate_skill_mentions=certificate_mentions,
     )
 
 
@@ -201,3 +221,12 @@ def run_passport_job(
             logger.exception("Passport job %s failed", job_id)
             fail_job(job_id, str(exc))
             raise
+
+
+def run_recheck_job(job_id: str, existing: dict[str, Any]) -> None:
+    with keep_job_lease(job_id):
+        try:
+            recheck_passport(existing, job_id=job_id)
+        except Exception as exc:
+            logger.exception("Passport re-check job %s failed", job_id)
+            fail_job(job_id, str(exc))

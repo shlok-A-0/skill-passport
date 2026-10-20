@@ -282,6 +282,28 @@ export const api = {
       sessionStorage.removeItem("passport-pending-job-id");
     }
   },
+  pendingRecheckId: (passportId: string) => {
+    const pending = sessionStorage.getItem("passport-pending-recheck");
+    if (!pending) return null;
+    try {
+      const parsed = JSON.parse(pending) as { job_id?: string; passport_id?: string };
+      return parsed.passport_id === passportId ? parsed.job_id ?? null : null;
+    } catch {
+      sessionStorage.removeItem("passport-pending-recheck");
+      return null;
+    }
+  },
+  clearPendingRecheck: (id: string) => {
+    const pending = sessionStorage.getItem("passport-pending-recheck");
+    if (!pending) return;
+    try {
+      if ((JSON.parse(pending) as { job_id?: string }).job_id === id) {
+        sessionStorage.removeItem("passport-pending-recheck");
+      }
+    } catch {
+      sessionStorage.removeItem("passport-pending-recheck");
+    }
+  },
   hasPassportToken: (id: string) => Boolean(sessionStorage.getItem(`passport-token:${id}`)),
   latestPassportId: () => sessionStorage.getItem("passport-latest-id"),
   job: async (id: string) => {
@@ -290,6 +312,7 @@ export const api = {
     });
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
     if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
+    if (job.status === "done" || job.status === "failed") api.clearPendingRecheck(id);
     return job;
   },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
@@ -306,13 +329,16 @@ export const api = {
   },
   markReviewed: (requestId: string) =>
     reviewRequest<ReviewRequest>(`/review-requests/${requestId}/mark-reviewed`, { method: "POST" }),
-  recheck: (id: string) => {
+  recheck: async (id: string) => {
     const token = sessionStorage.getItem(`passport-token:${id}`);
     if (!token) throw new Error("Re-check is only available in the browser session that created this passport.");
-    return request<{ passport: Passport; level_changes: Passport["level_changes"] }>(
+    const job = await request<{ job_id: string; access_token: string }>(
       `/passport/${id}/recheck`,
       { method: "POST", headers: { "X-Passport-Token": token } },
     );
+    sessionStorage.setItem(`passport-token:${job.job_id}`, job.access_token);
+    sessionStorage.setItem("passport-pending-recheck", JSON.stringify({ job_id: job.job_id, passport_id: id }));
+    return job;
   },
   badge: (id: string) => request<Record<string, unknown>>(`/passport/${id}/badge`),
 };

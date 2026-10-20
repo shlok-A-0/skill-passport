@@ -65,6 +65,36 @@ def test_redacted_text_hides_name_with_label_or_parenthesized_title() -> None:
     assert "[REDACTED NAME]" in titled
 
 
+@pytest.mark.parametrize("label", ["Full Name", "Candidate Name"])
+def test_redacted_text_handles_labeled_names_without_removing_skills(label: str) -> None:
+    result = redact_personal_data(f"{label}: Jordan Smith | Python | React\nExperience")
+    assert "Jordan Smith" not in result
+    assert "[REDACTED NAME]" in result
+    assert "Python" in result and "React" in result
+
+
+def test_redacted_text_handles_comma_separated_labeled_name() -> None:
+    result = redact_personal_data("Name: Smith, Jordan\nPython")
+    assert "Smith" not in result and "Jordan" not in result
+    assert "[REDACTED NAME]" in result and "Python" in result
+
+
+@pytest.mark.parametrize(
+    "name", ["李明", "María de la Cruz Fernández López", "Smith, Jordan"]
+)
+def test_redacted_text_handles_arbitrary_labeled_names(name: str) -> None:
+    result = redact_personal_data(f"Name: {name} | Python\nExperience")
+    assert name not in result
+    assert "[REDACTED NAME]" in result
+    assert "Python" in result
+
+
+def test_job_title_header_is_not_redacted_as_a_name() -> None:
+    result = redact_personal_data("Software Engineer | Python | React\nExperience")
+    assert "Software Engineer" in result
+    assert "Python" in result and "React" in result
+
+
 def test_redacted_text_checks_more_than_eight_header_lines_and_replaces_repeats() -> None:
     text = "Resume\n" + "\n".join(f"Contact detail {index}" for index in range(9))
     text += "\nJordan Smith | Python\nJordan Smith built APIs."

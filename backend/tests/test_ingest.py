@@ -1,4 +1,5 @@
 import base64
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,17 @@ def test_empty_repo_is_skipped_and_the_normal_repo_is_used(fake_github: FakeGitH
     result = github_ingest.ingest_github("student")
     assert [repo["name"] for repo in result["repos"]] == ["normal"]
     assert "app.py" in result["repos"][0]["source_files"]
+
+
+def test_corrupt_github_cache_is_discarded_and_refetched(fake_github: FakeGitHub, tmp_path) -> None:
+    fake_github.add_repo("normal", {"app.py": "import os\n" * 20}, authored={"app.py"})
+    cache = tmp_path / "github-student.json"
+    cache.write_text("{not valid json", encoding="utf-8")
+
+    result = github_ingest.ingest_github("student")
+
+    assert [repo["name"] for repo in result["repos"]] == ["normal"]
+    assert json.loads(cache.read_text(encoding="utf-8"))["schema_version"] == github_ingest.CACHE_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize("status", [404, 451, 500])
