@@ -538,9 +538,9 @@ def _test_file_evidence(repo: dict[str, Any], path: str) -> dict[str, Any]:
         "explanation": "Test file present in the repository.",
         "checks": {
             "file_exists": path in repo.get("tree", []),
+            "authored": bool((repo.get("test_authored") or {}).get(path)),
             "not_fork": not repo.get("is_fork", False),
         },
-        # Test files are not authorship-checked; these items keep counting towards Used.
         "test_file_group": True,
     }
 
@@ -727,8 +727,6 @@ def _config_evidence(
 def counts_for_level(skill_id: str, item: dict[str, Any]) -> bool:
     if item.get("type") not in {"dependency", "config"}:
         return True  # code and commit evidence are authored by construction
-    if skill_id == "unit-testing" and item.get("test_file_group"):
-        return True
     return bool((item.get("checks") or {}).get("authored"))
 
 

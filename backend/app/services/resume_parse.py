@@ -10,13 +10,18 @@ from app.services.framework import get_skills
 
 def redact_personal_data(text: str, detect_name: bool = True) -> str:
     """Remove personal details (I11). `detect_name` guesses the name from the first lines of a
-    whole resume; it is off for single mention lines, where "Python Django" would look like a name."""
-    redacted = text
+    whole resume; it is off for single mention lines, where "Python Django" would look like a name.
+    Job-title headers are excluded from the name heuristic to avoid redacting role descriptions."""
+    redacted = re.sub(
+        r"(?im)^(\s*(?:(?:full|candidate)\s+)?name\s*[:\-]\s*)([^|•·—–,;/\n]+)",
+        lambda match: f"{match.group(1)}[REDACTED NAME]",
+        text,
+    )
     patterns = [
         (r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED EMAIL]"),
         (r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)", "[REDACTED PHONE]"),
         (r"\b(?:\d{1,5}\s+[\w.'#-]+\s+(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|boulevard|blvd)\b[^\n]*)", "[REDACTED ADDRESS]"),
-        (r"(?im)^\s*(?:name|gender|sex|age|date of birth|dob|address|phone|mobile|email)\s*[:\-].*$", "[REDACTED PERSONAL DETAIL]"),
+        (r"(?im)^\s*(?:gender|sex|age|date of birth|dob|address|phone|mobile|email)\s*[:\-].*$", "[REDACTED PERSONAL DETAIL]"),
         (r"(?im)^\s*.*\b(?:university|college|institute|school of technology)\b.*$", "[REDACTED EDUCATION INSTITUTION]"),
         (r"(?im)^\s*(?:linkedin|portfolio|website|github)\s*[:\-]\s*\S+.*$", "[REDACTED PERSONAL LINK]"),
     ]
@@ -33,6 +38,10 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
     name_pattern = re.compile(
         r"^[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ.'-]*){1,3}$"
     )
+    job_title_terms = {
+        "analyst", "architect", "consultant", "designer", "developer", "engineer",
+        "intern", "manager", "researcher", "scientist", "specialist", "student",
+    }
     for index, line in enumerate(lines[:12]):
         candidate = line.strip()
         header = re.sub(r"(?i)^name\s*[:\-]\s*", "", candidate)
@@ -48,6 +57,7 @@ def redact_personal_data(text: str, detect_name: bool = True) -> str:
                 name_pattern.fullmatch(candidate)
                 or (header_name != candidate and name_pattern.fullmatch(header_name))
             )
+            and not (set(header_name.lower().split()) & job_title_terms)
             and not any(char in header_name for char in "@:/")
         ):
             return re.sub(

@@ -465,7 +465,7 @@ def complete_stored_job(job_id: str, passport_id: str, completed_steps: list[str
         row = connection.execute(
             "SELECT access_token_hash FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()
-        if row and row["access_token_hash"]:
+        if job_id == passport_id and row and row["access_token_hash"]:
             connection.execute(
                 """
                 INSERT INTO passport_owners (passport_id, access_token_hash) VALUES (?, ?)
@@ -492,11 +492,26 @@ def fail_stored_job(job_id: str, error: str) -> None:
 def get_stored_job(job_id: str) -> dict[str, Any] | None:
     initialize_storage()
     with _connect() as connection:
-        connection.execute("BEGIN IMMEDIATE;")
-        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT * FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()
+        if row and row["status"] in {"queued", "running"}:
+            lease_expired = connection.execute(
+                """
+                SELECT datetime(COALESCE(
+                    lease_until,
+                    datetime(COALESCE(updated_at, created_at), '+120 seconds')
+                )) < datetime('now')
+                FROM jobs WHERE id = ?
+                """,
+                (job_id,),
+            ).fetchone()[0]
+            if lease_expired:
+                connection.execute("BEGIN IMMEDIATE;")
+                _reconcile_expired_jobs(connection)
+                row = connection.execute(
+                    "SELECT * FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone()
     if not row:
         return None
     data = dict(row)

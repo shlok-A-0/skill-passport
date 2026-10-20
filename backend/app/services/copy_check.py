@@ -58,7 +58,14 @@ def _cache_path(query: str) -> Path:
 def _code_search(client: httpx.Client, query: str) -> dict[str, Any] | None:
     cache_path = _cache_path(query)
     if cache_path.exists():
-        return json.loads(cache_path.read_text(encoding="utf-8"))
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            cache_path.unlink(missing_ok=True)
+        else:
+            if isinstance(cached, dict):
+                return cached
+            cache_path.unlink(missing_ok=True)
     try:
         response = client.get(
             f"{API_ROOT}/search/code", params={"q": query, "per_page": 30}

@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
@@ -30,23 +31,21 @@ from app.config import (
     FRONTEND_ORIGINS,
     RECRUITER_KEY,
     REQUIRE_RECRUITER_AUTH,
+    TRUSTED_PROXY_IPS,
 )
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError
 from app.services.jobs import (
-    complete_job,
     fail_job,
     get_active_jobs_count,
     get_job,
     is_active_job_running_for,
-    keep_job_lease,
     reserve_job,
-    update_job,
 )
 from app.services.packets import requirement_packets
-from app.services.pipeline import recheck_passport, run_passport_job
+from app.services.pipeline import run_passport_job, run_recheck_job
 from app.services.storage import (
     check_storage_rate_limit,
     create_review_request,
@@ -192,8 +191,26 @@ app.add_middleware(
 if ALLOW_DEBUG_ENDPOINTS:
     app.include_router(debug_router)
 
+def _rate_limit_client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    if peer not in TRUSTED_PROXY_IPS:
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    chain = [address.strip() for address in forwarded.split(",") if address.strip()]
+    current = peer
+    for address in reversed(chain):
+        try:
+            current = str(ipaddress.ip_address(address))
+        except ValueError:
+            return peer
+        if current not in TRUSTED_PROXY_IPS:
+            return current
+    return current
+
+
 def check_rate_limit(request: Request, action: str, max_requests: int, window_seconds: float) -> None:
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _rate_limit_client_ip(request)
     key = f"{client_ip}:{action}"
     try:
         allowed = check_storage_rate_limit(key, max_requests, window_seconds)
@@ -556,9 +573,10 @@ def mark_reviewed(request_id: str) -> dict:
     return result
 
 
-@app.post("/passport/{passport_id}/recheck")
+@app.post("/passport/{passport_id}/recheck", status_code=202)
 def recheck_passport_endpoint(
     passport_id: str,
+    background_tasks: BackgroundTasks,
     request: Request,
     x_passport_token: str | None = Header(default=None),
     x_recruiter_key: str | None = Header(default=None),
@@ -571,7 +589,13 @@ def recheck_passport_endpoint(
 
     target_user = existing.get("github_username") or passport_id
     recheck_job_id = str(uuid.uuid4())
-    reserved, reason = reserve_job(recheck_job_id, target=target_user, max_active=5)
+    access_token = secrets.token_urlsafe(32)
+    reserved, reason = reserve_job(
+        recheck_job_id,
+        target=target_user,
+        max_active=5,
+        access_token_hash=hashlib.sha256(access_token.encode()).hexdigest(),
+    )
     if not reserved:
         if reason == "duplicate":
             raise HTTPException(
@@ -584,20 +608,8 @@ def recheck_passport_endpoint(
                 detail="Server is currently processing maximum concurrent verification jobs. Please wait a moment.",
             )
 
-    try:
-        update_job(recheck_job_id, "Reading GitHub")
-        with keep_job_lease(recheck_job_id):
-            result = recheck_passport(existing)
-            complete_job(recheck_job_id, passport_id)
-    except Exception as exc:
-        fail_job(recheck_job_id, str(exc))
-        logging.getLogger(__name__).exception("Passport re-check failed (job %s)", recheck_job_id)
-        raise HTTPException(status_code=502, detail="Re-check failed. Please try again.") from exc
-
-    return {
-        "passport": student_view(result, list_review_requests(passport_id)),
-        "level_changes": result.get("level_changes", []),
-    }
+    background_tasks.add_task(run_recheck_job, recheck_job_id, existing)
+    return {"job_id": recheck_job_id, "access_token": access_token}
 
 
 @app.get("/passport/{passport_id}/badge")

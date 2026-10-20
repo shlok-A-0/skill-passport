@@ -132,9 +132,12 @@ def propose_claims(
     ).hexdigest()
     cache_path = CACHE_DIR / f"claims-{cache_key}.json"
     if cache_path.exists():
-        return ClaimProposal.model_validate_json(
-            cache_path.read_text(encoding="utf-8")
-        ).model_dump(mode="json")["claims"]
+        try:
+            return ClaimProposal.model_validate_json(
+                cache_path.read_text(encoding="utf-8")
+            ).model_dump(mode="json")["claims"]
+        except (UnicodeDecodeError, ValueError, ValidationError):
+            cache_path.unlink(missing_ok=True)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = prompt

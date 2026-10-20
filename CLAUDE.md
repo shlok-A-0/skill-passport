@@ -93,7 +93,7 @@ No existing tool or paper combines all of: **file-level proof + ownership check 
 | Level | Rule | Colour |
 |---|---|---|
 | **Claimed** (shown as "Unverified") | Mentioned on the resume or a certificate; no evidence in the analysed files. | Grey `#8A8F9C` |
-| **Used** | Listed in a dependency or config file **the student committed to** (e.g. `flask` in their requirements.txt, their Dockerfile), or in their commit history (Git). Files they never touched stay attached but don't count. | Amber `#D99A00` |
+| **Used** | Listed in a dependency or config file **the student committed to** (e.g. `flask` in their requirements.txt, their Dockerfile), in a test file they committed to (Unit Testing only), or in their commit history (Git). Files they never touched stay attached but don't count. | Amber `#D99A00` |
 | **Applied** | Used in source code the student committed to: at least one verified citation (exact lines). | Green `#2FB36B` |
 | **Demonstrated** | Applied AND at least one of the skill's counted citations (line share ≥50% or unknown) is targeted by a test **the student committed to** (`test_authored`; unknown = no upgrade) in the same repo: by **name** (`engine.py` → `test_engine.py`, `engine_test.py`, `engine.test.js`, `engine.spec.ts`) or by **import** (`from x.engine import`, `require('./engine')`, `from '../engine'`). Stems under 3 characters and generic stems (`__init__`, `index`, `main`, `utils`, `app`) never match. CI and Dockerfiles don't upgrade other skills (shown as "Build or deploy config present"). The triggering test is stored as `demonstrated_by`. | Dark green `#1E7A46` |
 
@@ -107,7 +107,7 @@ Only two things change what counts; everything else is an advisory signal for a 
 |---|---|---|
 | Signature check (`signature_found`) | Hard check (claim rejected) | Language skills are evidenced by file extension. Frameworks, tools and practices need a real code signature within ±5 lines of the citation (whole-word start, case-insensitive). |
 | Earlier public source | Citation **excluded** (`kind: "earlier_source"`; older passports: `"copied"`) | A distinctive cited line is found in another owner's non-fork repo, a second, different line from the same citation is in **that same file**, and that file's first commit is **more than 1 day before** the candidate's file's first commit (file-level dates, never repo creation dates). Unknown dates stay a warning. Level recomputed. Means "can't attribute to the candidate", not "copied". |
-| Authorship of dependency/config files | Counts towards Used only if authored | `authored_paths` from ingestion; missing = not authored. |
+| Authorship of dependency/config/test files | Counts towards Used only if authored | `authored_paths` or `test_authored` from ingestion; missing = not authored. |
 | `line_share` (git blame) | 0 cited lines by the candidate: citation **excluded** (`kind: "not_written_by_candidate"`); under 50%: counts for Applied, never Demonstrated | Unknown blame (no blame, or any cited line from an author not linked to a GitHub account) has no effect. Shown as "Cited lines written by you: N of M". |
 | `commit_share`, `bulk_upload`, `repo_history`, `ai_leftover` | Advisory | Per file (see Decision log, 2026-10-11). |
 | `copy_match` (one line only, or dates unknown) | Advisory | One shared line is often boilerplate or a tutorial; label "Earlier public source". |
@@ -141,7 +141,7 @@ Only two things change what counts; everything else is an advisory signal for a 
 - **LLM:** Gemini Flash (current model, name set via `GEMINI_MODEL` in `.env`). Optional later: Groq as a fallback provider.
 - **External APIs:** GitHub REST API with a personal access token (classic, read-only public repos). Unauthenticated limit is only 60 requests/hour.
 - **Ports:** backend 8000, frontend 5173 (CORS enabled for 5173).
-- **Environment (`backend/.env`):** `GITHUB_TOKEN`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `APP_ENV`, `RECRUITER_KEY`. Default to production; set `APP_ENV=development` explicitly for local work. All non-development environments require `RECRUITER_KEY` at startup.
+- **Environment (`backend/.env`):** `GITHUB_TOKEN`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `APP_ENV`, `RECRUITER_KEY`, `TRUSTED_PROXY_IPS`. Default to production; set `APP_ENV=development` explicitly for local work. All non-development environments require `RECRUITER_KEY` at startup. Configure only actual reverse-proxy IPs in `TRUSTED_PROXY_IPS`.
 - **Later deployment (Stage 2):** Vercel for the frontend; Render or Railway for the FastAPI backend (background jobs + SQLite don't fit Vercel functions). Firebase is **not** needed.
 
 ---
@@ -294,7 +294,7 @@ Each verified code citation gets advisory integrity signals (section 3.2), inclu
 - Save the passport to SQLite.
 - `badge.py`: Open Badges 3.0-style JSON-LD; one achievement per verified skill; evidence entries with GitHub line URLs and check results; note `"unsigned prototype"`. Do not fake a cryptographic signature or invent DID methods.
 
-**Re-check (Growth Loop):** re-run P1 bypassing the cache, then P4–P6; return a list of level changes (e.g. `"docker": "Claimed → Used"`).
+**Re-check (Growth Loop):** re-run P1 bypassing the cache, then P4–P6 as a background job; return its `job_id` and polling token, then expose the student-safe passport and level changes when the job finishes.
 
 ---
 
@@ -312,7 +312,7 @@ Each verified code citation gets advisory integrity signals (section 3.2), inclu
 | GET | `/passports/review` | All full passports (Placement Cell); same key rule |
 | POST | `/passport/{id}/review-requests` | Student asks for a review of an excluded citation: `{citation_key, note}` (≤1,000 chars) with `X-Passport-Token`; ownership is checked against the stored token hash, and the ≤10 total / one-open-per-citation rules are atomic |
 | POST | `/review-requests/{id}/mark-reviewed` | Recruiter marks a request reviewed; same key rule as the review endpoints |
-| POST | `/passport/{id}/recheck` | Growth Loop re-verification; returns the student-safe passport and level changes |
+| POST | `/passport/{id}/recheck` | Starts background Growth Loop re-verification; returns `job_id` and `access_token` for status polling |
 | GET | `/passport/{id}/badge` | Open Badges JSON-LD, including each code citation's `evidenceRecord` |
 | GET | `/debug/github/{username}` | Dev only: ingest summary |
 | POST | `/debug/resume` | Dev only: resume extraction |
@@ -483,4 +483,5 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
   5. **Cryptographic Commit Verification Signal:** Added `_commit_signature_signal` to `integrity_signals()` in `verifier.py` to evaluate GPG/SSH commit signature validity in recruiter review.
   6. **Fail-Closed Access Control:** Added `APP_ENV` and `REQUIRE_RECRUITER_AUTH` configuration in `config.py` and `main.py`. In production or when enabled, recruiter review endpoints strictly fail-closed (500 if `RECRUITER_KEY` is unconfigured, 401 if missing or invalid), preventing accidental exposure of sensitive fraud signals.
   7. **GitHub Check Runs CI Status Verification:** Added `_fetch_ci_status()` in `github_ingest.py` (cache schema version 9) and `ci_run_verified` check in `verifier.py`. Rather than merely asserting YAML configuration existence, CI/CD evidence now actively validates whether GitHub Actions had a verified successful run on that commit.
+- 2026-10-20: **Audit follow-up:** Re-check now runs as a leased background job and preserves ownership credentials; legacy passports without stored resume/certificate mentions reconstruct safe skill-name mentions. Test-file Unit Testing evidence counts toward Used only when `test_authored` confirms the student committed to the file; this supersedes the 2026-10-15 exception. Corrupt JSON caches are discarded and refetched, polling performs lease-expiry recovery without taking a write lock on every read, resume name-label redaction handles `Full Name`/`Candidate Name` while avoiding common job-title headers, forwarded client IPs are trusted only through configured proxy addresses, and placement links open reviewer pages. The mobile navigation keeps Placement Cell visible, and badge downloads delay blob-URL cleanup. **Why:** prevent lost claims, false authorship, avoidable database contention, spoofed rate limits, accidental name exposure, and broken mobile/download flows.
 - 2026-10-20: **Authorization, persistence and recovery hardening:** Review requests require the passport owner token; SQLite serializes limit/duplicate validation and enforces one open request per citation, migrating old duplicates to reviewed history before creating the partial unique index. Passport owner hashes are stored independently from short-lived job rows; 30-day job cleanup and hourly rate-limit cleanup run at startup, with expired rate-limit entries also removed during rate-limit checks. Active jobs use renewable 120-second leases with a 30-second heartbeat so another worker does not fail a slow pipeline. Student responses omit stored resume/certificate mentions, and parser mentions contain only the matched skill name. The frontend restores and retries pending jobs from `sessionStorage`; review actions are shown only in the owner browser session. The app defaults to production auth and requires an explicit local-development setting. An ASGI request-body cap runs before multipart parsing, and CI runs backend tests plus frontend tests/build on pushes and pull requests.

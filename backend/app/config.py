@@ -24,6 +24,11 @@ FRONTEND_ORIGINS = [
     for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
+TRUSTED_PROXY_IPS = frozenset(
+    address.strip()
+    for address in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
+    if address.strip()
+)
 # Bump whenever verification or level rules change; stored in every evidence record.
 VERIFIER_VERSION = "2026-10-16"
 # Environment and access control
