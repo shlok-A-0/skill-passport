@@ -16,6 +16,24 @@ def _connect() -> sqlite3.Connection:
 _initialized_dbs: set[str] = set()
 
 
+def _reconcile_expired_jobs(connection: sqlite3.Connection, stale_seconds: int = 120) -> int:
+    cursor = connection.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error = 'Job interrupted or timed out. Ready to be retried.',
+            lease_until = NULL
+        WHERE status IN ('queued', 'running')
+          AND datetime(COALESCE(
+              lease_until,
+              datetime(COALESCE(updated_at, created_at), '+' || ? || ' seconds')
+          )) < datetime('now')
+        """,
+        (stale_seconds,),
+    )
+    return cursor.rowcount
+
+
 def initialize_storage() -> None:
     db_key = str(DATABASE_PATH)
     if db_key in _initialized_dbs:
@@ -277,6 +295,7 @@ def reserve_stored_job(
     norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         if norm_target:
             existing = connection.execute(
                 "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
@@ -360,6 +379,8 @@ def create_stored_job(
 def count_active_jobs() -> int:
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT COUNT(*) as count FROM jobs WHERE status IN ('queued', 'running')"
         ).fetchone()
@@ -371,6 +392,8 @@ def has_active_job_for_target(target: str) -> bool:
         return False
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
             (target.strip().lower(),),
@@ -382,21 +405,8 @@ def reconcile_interrupted_jobs(stale_seconds: int = 120) -> int:
     """Fail active jobs only after their worker heartbeat lease has expired."""
     initialize_storage()
     with _connect() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE jobs
-            SET status = 'failed',
-                error = 'Job interrupted or timed out. Ready to be retried.',
-                lease_until = NULL
-            WHERE status IN ('queued', 'running')
-              AND datetime(COALESCE(
-                  lease_until,
-                  datetime(COALESCE(updated_at, created_at), '+' || ? || ' seconds')
-              )) < datetime('now')
-            """,
-            (stale_seconds,),
-        )
-        return cursor.rowcount
+        connection.execute("BEGIN IMMEDIATE;")
+        return _reconcile_expired_jobs(connection, stale_seconds)
 
 
 def prune_old_rate_limits(max_age_seconds: int = 3600) -> int:
@@ -482,6 +492,8 @@ def fail_stored_job(job_id: str, error: str) -> None:
 def get_stored_job(job_id: str) -> dict[str, Any] | None:
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT * FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()

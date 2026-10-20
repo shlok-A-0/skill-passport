@@ -103,22 +103,41 @@ class RequestBodyLimitMiddleware:
                 return
 
         received = 0
+        too_large = False
+        error_body_sent = False
 
         async def limited_receive():
-            nonlocal received
+            nonlocal received, too_large
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body_size:
+                    too_large = True
                     raise RequestBodyTooLarge
             return message
 
         response_started = False
 
         async def track_response(message):
-            nonlocal response_started
+            nonlocal response_started, error_body_sent
             if message["type"] == "http.response.start":
                 response_started = True
+                if too_large:
+                    message = {
+                        **message,
+                        "status": 413,
+                        "headers": [(b"content-type", b"application/json")],
+                    }
+            elif too_large and message["type"] == "http.response.body":
+                message = {
+                    **message,
+                    "body": (
+                        b'{"detail":"Request body exceeds the 26 MB limit."}'
+                        if not error_body_sent
+                        else b""
+                    ),
+                }
+                error_body_sent = True
             await send(message)
 
         try:

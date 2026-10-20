@@ -119,3 +119,17 @@ def test_job_lease_protects_long_running_work_from_startup_reconciliation(tmp_pa
         connection.execute("UPDATE jobs SET lease_until = datetime('now', '-1 second') WHERE id = 'active'")
     assert storage.reconcile_interrupted_jobs(stale_seconds=600) == 1
     assert storage.get_stored_job("active")["status"] == "failed"
+
+
+def test_expired_job_is_reconciled_during_poll_and_releases_reservation(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "expired-lease.sqlite")
+    storage.create_stored_job("expired", target="candidate")
+    with storage._connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET status = 'running', lease_until = datetime('now', '-1 second') WHERE id = 'expired'"
+        )
+
+    assert storage.get_stored_job("expired")["status"] == "failed"
+    assert storage.has_active_job_for_target("candidate") is False
+    reserved, reason = storage.reserve_stored_job("replacement", target="candidate")
+    assert reserved and reason is None

@@ -965,23 +965,34 @@ def test_request_body_limit_rejects_before_multipart_parsing() -> None:
     assert response.status_code == 413
 
 
-def test_request_body_limit_also_rejects_streamed_bodies_without_length() -> None:
+def test_request_body_limit_rejects_streamed_multipart_without_content_length() -> None:
     import asyncio
 
-    from app.main import RequestBodyLimitMiddleware
+    import httpx
 
-    async def downstream(scope, receive, send):
-        await receive()
-        await send({"type": "http.response.start", "status": 200, "headers": []})
+    async def body():
+        prefix = (
+            b'--test-boundary\r\nContent-Disposition: form-data; name="github_username"\r\n\r\nstudent\r\n'
+            b'--test-boundary\r\nContent-Disposition: form-data; name="target_role"\r\n\r\nbackend-intern\r\n'
+            b'--test-boundary\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\n'
+            b'Content-Type: application/pdf\r\n\r\n%PDF-1.4 '
+        )
+        yield prefix
+        remaining = main_module.MAX_REQUEST_BODY_BYTES + 1 - len(prefix)
+        chunk = b"x" * (64 * 1024)
+        while remaining:
+            part = chunk[:remaining]
+            yield part
+            remaining -= len(part)
 
-    middleware = RequestBodyLimitMiddleware(downstream, max_body_size=4)
-    messages = []
+    async def request():
+        transport = httpx.ASGITransport(app=main_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/passport/create",
+                content=body(),
+                headers={"Content-Type": "multipart/form-data; boundary=test-boundary"},
+            )
 
-    async def receive():
-        return {"type": "http.request", "body": b"oversized", "more_body": False}
-
-    async def send(message):
-        messages.append(message)
-
-    asyncio.run(middleware({"type": "http", "headers": []}, receive, send))
-    assert messages[0]["status"] == 413
+    response = asyncio.run(request())
+    assert response.status_code == 413
