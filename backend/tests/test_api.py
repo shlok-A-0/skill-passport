@@ -99,7 +99,7 @@ def test_create_job_persist_and_get_passport(tmp_path, monkeypatch) -> None:
     passport = client.get(f"/passport/{job_id}")
     assert passport.status_code == 200
     assert passport.json()["is_demo"] is True
-    assert client.get("/passports").json()[0]["id"] == job_id
+    assert client.get("/passports").json()["items"][0]["id"] == job_id
 
 
 def test_create_rejects_non_pdf_resume() -> None:
@@ -216,6 +216,7 @@ REVIEW_OWNER_TOKEN = "review-owner-session-secret"
 def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
     monkeypatch.setattr(main_module, "RECRUITER_KEY", recruiter_key)
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {})
     storage.save_passport(passport_with_fraud_signals("p-review"))
     storage.create_stored_job(
         "p-review",
@@ -226,7 +227,7 @@ def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient
     return TestClient(main_module.app, headers={"X-Passport-Token": REVIEW_OWNER_TOKEN})
 def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
-    for body in (client.get("/passport/p-review").json(), client.get("/passports").json()):
+    for body in (client.get("/passport/p-review").json(), *client.get("/passports").json()["items"]):
         keys, values = _keys_and_values(body)
         # Detector internals stay hidden...
         assert not {"integrity", "good_answer_mentions", "source_first_seen", "candidate_first_seen",
@@ -378,14 +379,30 @@ def test_mark_reviewed_requires_the_key_when_set(tmp_path, monkeypatch) -> None:
     assert client.post(path, headers={"X-Recruiter-Key": "wrong"}).status_code == 401
     reviewed = client.post(path, headers={"X-Recruiter-Key": "s3cret"})
     assert reviewed.status_code == 200 and reviewed.json()["status"] == "reviewed" and reviewed.json()["reviewed_at"]
+    assert reviewed.json()["reviewer_id"] == "local-recruiter"
     assert client.post("/review-requests/nope/mark-reviewed", headers={"X-Recruiter-Key": "s3cret"}).status_code == 404
     # After review, the student may ask again.
     assert client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY}).status_code == 201
 
 
+def test_individual_recruiter_key_is_recorded_on_review_action(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    secret = "a" * 40
+    monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {"recruiter-alice": secret})
+    request = client.post("/passport/p-review/review-requests", json={"citation_key": EXCLUDED_KEY})
+    assert request.status_code == 201
+    reviewed = client.post(
+        f"/review-requests/{request.json()['id']}/mark-reviewed",
+        headers={"X-Recruiter-Key": secret},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["reviewer_id"] == "recruiter-alice"
+
+
 def test_review_endpoints_return_full_passport(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
-    for body in (client.get("/passport/p-review/review").json(), client.get("/passports/review").json()):
+    for body in (client.get("/passport/p-review/review").json(), *client.get("/passports/review").json()["items"]):
         keys, values = _keys_and_values(body)
         assert {"integrity", "good_answer_mentions", "source_url"} <= keys
         assert "copied" in values
@@ -408,27 +425,45 @@ def test_passports_list_enforces_recruiter_key_when_set(tmp_path, monkeypatch) -
     assert client.get("/passports", headers={"X-Recruiter-Key": "wrong"}).status_code == 401
     listing = client.get("/passports", headers={"X-Recruiter-Key": "s3cret"})
     assert listing.status_code == 200
-    assert listing.json()[0]["id"] == "p-review"
+    assert listing.json()["items"][0]["id"] == "p-review"
+
+
+def test_recruiter_passport_lists_are_paginated(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch, recruiter_key="s3cret")
+    storage.save_passport(fake_passport("p-second"))
+    storage.save_passport(fake_passport("p-third"))
+    auth = {"X-Recruiter-Key": "s3cret"}
+    first = client.get("/passports/review?limit=1&offset=0", headers=auth).json()
+    second = client.get("/passports/review?limit=1&offset=1", headers=auth).json()
+    assert first["total"] == second["total"] == 3
+    assert first["limit"] == 1 and first["offset"] == 0
+    assert len(first["items"]) == len(second["items"]) == 1
+    assert first["items"][0]["id"] != second["items"][0]["id"]
+    assert client.get("/passports?limit=0", headers=auth).status_code == 422
 
 
 def test_review_endpoints_fail_closed_in_production_mode(tmp_path, monkeypatch) -> None:
-    # In production without RECRUITER_KEY configured, fail-closed with 500
+    # In production without named recruiter keys configured, fail-closed with 500
     monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {})
     client_unconfigured = _review_client(tmp_path, monkeypatch, recruiter_key="")
     assert client_unconfigured.get("/passport/p-review/review").status_code == 500
 
-    # In production with RECRUITER_KEY configured, unauthenticated requests get 401
-    client_configured = _review_client(tmp_path, monkeypatch, recruiter_key="prod-secret")
+    # Production uses named, individually revocable keys, not the development-only key.
+    client_configured = _review_client(tmp_path, monkeypatch, recruiter_key="")
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {"recruiter-a": "p" * 40})
     assert client_configured.get("/passport/p-review/review").status_code == 401
-    assert client_configured.get("/passport/p-review/review", headers={"X-Recruiter-Key": "prod-secret"}).status_code == 200
+    assert client_configured.get("/passport/p-review/review", headers={"X-Recruiter-Key": "p" * 40}).status_code == 200
 
 
-def test_application_startup_requires_recruiter_key_when_auth_is_required(monkeypatch) -> None:
+def test_application_startup_requires_named_recruiter_keys_when_auth_is_required(monkeypatch) -> None:
     import pytest
 
     monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
     monkeypatch.setattr(main_module, "RECRUITER_KEY", "")
-    with pytest.raises(RuntimeError, match="RECRUITER_KEY must be configured"):
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {})
+    monkeypatch.setattr(main_module.config, "RECRUITER_ACCOUNTS_SETTING_VALID", True)
+    with pytest.raises(RuntimeError, match="RECRUITER_ACCOUNTS must be"):
         with TestClient(main_module.app):
             pass
 

@@ -20,19 +20,40 @@ function levelClass(level?: string) {
 export default function PlacementCell() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [passports, setPassports] = useState<Passport[]>([]);
+  const [totalPassports, setTotalPassports] = useState(0);
+  const [loadedPassportCount, setLoadedPassportCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [roleId, setRoleId] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     Promise.all([api.roles(), api.reviewPassports()])
-      .then(([availableRoles, allPassports]) => {
+      .then(([availableRoles, page]) => {
         setRoles(availableRoles);
         // One row per student (latest passport per username) for stats, heatmap, gaps and ranking.
-        setPassports(latestPerStudent(allPassports));
+        setPassports(latestPerStudent(page.items));
+        setTotalPassports(page.total);
+        setLoadedPassportCount(page.items.length);
         if (availableRoles.length) setRoleId(availableRoles[0].id);
       })
       .catch((reason: Error) => setError(reason.message));
   }, []);
+
+  async function loadMore() {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const page = await api.reviewPassports(50, loadedPassportCount);
+      setPassports((current) => latestPerStudent([...current, ...page.items]));
+      setTotalPassports(page.total);
+      setLoadedPassportCount((count) => count + page.items.length);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load more passports.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const role = roles.find((item) => item.id === roleId);
   const requirements = role?.requirements ?? [];
@@ -117,7 +138,7 @@ export default function PlacementCell() {
       {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
       {error && <div className="notice notice-error">{error}</div>}
       <div className="placement-stats">
-        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>STUDENTS IN VIEW</small><strong>{passports.length}</strong></div></section>
+        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>UNIQUE STUDENTS LOADED</small><strong>{passports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
         <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>AVERAGE REQUIREMENTS MET</small><strong>{avgMet} <i>of {requirements.length} requirements</i></strong></div></section>
         <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>SUGGESTED WORKSHOP</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `For ${topGap.percent}% of this group, no evidence was found in the analysed files.` : "The highest shared evidence gap appears here."}</p></div></section>
       </div>
@@ -133,7 +154,7 @@ export default function PlacementCell() {
                 onClick={downloadCohortCsv}
                 title="Download candidate ranking as CSV"
               >
-                <Download size={13} /> Export CSV
+                <Download size={13} /> Export shown CSV
               </button>
             )}
             <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
@@ -185,6 +206,7 @@ export default function PlacementCell() {
               </table>
             </div>
             <p className="ranking-note">Verifiability counts advisory authorship checks (line authorship, commit history, bulk uploads, matching code in earlier public sources, AI chat text left in files). A warning is a prompt to look, not a finding. Unverified resume claims never count towards requirements.</p>
+            {loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
           </>
         )}
       </section>

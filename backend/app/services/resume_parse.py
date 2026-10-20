@@ -8,6 +8,12 @@ from pdfminer.pdfparser import PDFSyntaxError
 from app.services.framework import get_skills
 from app.services.identity import resume_github_logins
 
+MAX_PDF_PAGES = 50
+
+
+class PdfPageLimitError(Exception):
+    pass
+
 
 def redact_personal_data(text: str, detect_name: bool = True) -> str:
     """Remove personal details (I11). `detect_name` guesses the name from the first lines of a
@@ -75,7 +81,11 @@ def extract_resume_text(pdf_bytes: bytes) -> str:
         raise ValueError("Resume PDF is empty.")
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            if len(pdf.pages) > MAX_PDF_PAGES:
+                raise PdfPageLimitError(f"PDF must have {MAX_PDF_PAGES} pages or fewer.")
             text = "\n".join(page.extract_text(layout=True) or "" for page in pdf.pages)
+    except PdfPageLimitError as exc:
+        raise ValueError(str(exc)) from exc
     except (pdfplumber.pdf.PdfminerException, PDFSyntaxError, OSError, ValueError) as exc:
         raise ValueError(f"Could not parse resume PDF: {exc}") from exc
     if not text.strip():

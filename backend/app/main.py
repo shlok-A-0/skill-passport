@@ -19,6 +19,7 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
+    Query,
     UploadFile,
     FastAPI,
 )
@@ -31,6 +32,7 @@ from app import config
 from app.config import (
     ALLOW_DEBUG_ENDPOINTS,
     FRONTEND_ORIGINS,
+    RECRUITER_ACCOUNTS,
     RECRUITER_KEY,
     REQUIRE_RECRUITER_AUTH,
     TRUSTED_PROXY_IPS,
@@ -47,15 +49,17 @@ from app.services.jobs import (
     is_active_job_running_for,
     reserve_job,
 )
+from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
 from app.services.pipeline import run_passport_job, run_recheck_job
 from app.services.storage import (
     check_storage_rate_limit,
+    check_storage_ready,
     create_review_request,
     get_passport,
     get_passport_owner_token_hash,
     get_review_requests_by_passports,
-    list_passports,
+    list_passports_page,
     list_review_requests,
     mark_review_request_reviewed,
     prune_old_jobs,
@@ -169,8 +173,12 @@ class RequestBodyTooLarge(Exception):
 
 
 def startup() -> None:
-    if REQUIRE_RECRUITER_AUTH and not RECRUITER_KEY:
-        raise RuntimeError("RECRUITER_KEY must be configured when recruiter authentication is required.")
+    if REQUIRE_RECRUITER_AUTH and (
+        not config.RECRUITER_ACCOUNTS_SETTING_VALID or not RECRUITER_ACCOUNTS
+    ):
+        raise RuntimeError(
+            "RECRUITER_ACCOUNTS must be a JSON object of named keys (each secret at least 32 characters)."
+        )
     if not config.OWNERSHIP_PROOF_SETTING_VALID:
         raise RuntimeError("REQUIRE_OWNERSHIP_PROOF must be true or false.")
     if not config.REQUIRE_OWNERSHIP_PROOF and config.APP_ENV != "development":
@@ -178,9 +186,19 @@ def startup() -> None:
             "REQUIRE_OWNERSHIP_PROOF=false is only allowed with APP_ENV=development; "
             "real passports must prove the applicant controls the GitHub account."
         )
+    if config.APP_ENV != "development":
+        missing = [
+            name for name, value in (
+                ("GITHUB_TOKEN", config.GITHUB_TOKEN),
+                ("GEMINI_API_KEY", config.GEMINI_API_KEY),
+            ) if not value
+        ]
+        if missing:
+            raise RuntimeError(f"Missing required production setting(s): {', '.join(missing)}.")
     reconcile_interrupted_jobs()
     prune_old_jobs()
     prune_old_rate_limits()
+    prune_json_cache(config.CACHE_DIR)
 
 
 @asynccontextmanager
@@ -310,24 +328,42 @@ def review_view(passport: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> None:
+def _recruiter_id_for_key(key: str | None) -> str | None:
+    if not key:
+        return None
+    matched_ids = [
+        recruiter_id
+        for recruiter_id, expected in RECRUITER_ACCOUNTS.items()
+        if hmac.compare_digest(key.encode(), expected.encode())
+    ]
+    if matched_ids:
+        return matched_ids[0]
+    if not REQUIRE_RECRUITER_AUTH and RECRUITER_KEY and hmac.compare_digest(
+        key.encode(), RECRUITER_KEY.encode()
+    ):
+        return "local-recruiter"
+    return None
+
+
+def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> str:
     """Review endpoints require valid authentication with fail-closed security.
 
     In production (or when REQUIRE_RECRUITER_AUTH is enabled):
-    - If RECRUITER_KEY is not configured on the server, fails closed with 500 (misconfigured security).
+    - If no named recruiter keys are configured, fails closed with 500 (misconfigured security).
     - If X-Recruiter-Key header does not match, fails closed with 401.
-    In local development without RECRUITER_KEY, endpoints are open for local dev convenience.
+    Local development may use RECRUITER_KEY or leave recruiter routes open.
     """
-    if REQUIRE_RECRUITER_AUTH and not RECRUITER_KEY:
+    if REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS:
         raise HTTPException(
             status_code=500,
-            detail="Recruiter authentication is required in production, but RECRUITER_KEY is not configured.",
+            detail="Recruiter authentication is not configured.",
         )
-    if RECRUITER_KEY or REQUIRE_RECRUITER_AUTH:
-        if not x_recruiter_key or not hmac.compare_digest(
-            (x_recruiter_key or "").encode(), RECRUITER_KEY.encode()
-        ):
-            raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
+    if not REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS and not RECRUITER_KEY:
+        return "local-recruiter"
+    recruiter_id = _recruiter_id_for_key(x_recruiter_key)
+    if not recruiter_id:
+        raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
+    return recruiter_id
 
 
 def _valid_passport_token(job: dict[str, Any] | None, token: str | None) -> bool:
@@ -348,9 +384,7 @@ def _require_passport_access(
 ) -> None:
     if _valid_token_hash(get_passport_owner_token_hash(passport_id), token):
         return
-    if RECRUITER_KEY and recruiter_key and hmac.compare_digest(
-        recruiter_key.encode(), RECRUITER_KEY.encode()
-    ):
+    if _recruiter_id_for_key(recruiter_key):
         return
     raise HTTPException(status_code=404, detail="Passport not found.")
 
@@ -358,6 +392,18 @@ def _require_passport_access(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "skill-passport"}
+
+
+@app.get("/ready")
+def readiness() -> dict[str, str]:
+    try:
+        if config.APP_ENV != "development" and not (config.GITHUB_TOKEN and config.GEMINI_API_KEY):
+            raise RuntimeError("Required integration configuration is missing.")
+        check_storage_ready()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Readiness check failed: %s", exc.__class__.__name__)
+        raise HTTPException(status_code=503, detail="Service is not ready.") from exc
+    return {"status": "ready", "service": "skill-passport"}
 
 
 @app.get("/roles")
@@ -577,23 +623,35 @@ def review_passport(passport_id: str) -> dict:
 
 
 @app.get("/passports", dependencies=[Depends(require_recruiter)])
-def passports() -> list[dict]:
-    all_requests = get_review_requests_by_passports()
-    return [student_view(item, all_requests.get(item["id"], [])) for item in list_passports()]
+def passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict:
+    items, total = list_passports_page(limit, offset)
+    all_requests = get_review_requests_by_passports([item["id"] for item in items])
+    return {
+        "items": [student_view(item, all_requests.get(item["id"], [])) for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.get("/passports/review", dependencies=[Depends(require_recruiter)])
-def review_passports() -> list[dict]:
-    all_requests = get_review_requests_by_passports()
-    return [
-        {
-            **item,
-            "check_labels": CHECK_LABELS,
-            "review_requests": all_requests.get(item["id"], []),
-            "requirement_packets": requirement_packets(item),
-        }
-        for item in list_passports()
-    ]
+def review_passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict:
+    items, total = list_passports_page(limit, offset)
+    all_requests = get_review_requests_by_passports([item["id"] for item in items])
+    return {
+        "items": [
+            {
+                **item,
+                "check_labels": CHECK_LABELS,
+                "review_requests": all_requests.get(item["id"], []),
+                "requirement_packets": requirement_packets(item),
+            }
+            for item in items
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 class ReviewRequestBody(BaseModel):
@@ -624,9 +682,9 @@ def create_passport_review_request(
     return result
 
 
-@app.post("/review-requests/{request_id}/mark-reviewed", dependencies=[Depends(require_recruiter)])
-def mark_reviewed(request_id: str) -> dict:
-    result = mark_review_request_reviewed(request_id)
+@app.post("/review-requests/{request_id}/mark-reviewed")
+def mark_reviewed(request_id: str, reviewer_id: str = Depends(require_recruiter)) -> dict:
+    result = mark_review_request_reviewed(request_id, reviewer_id)
     if not result:
         raise HTTPException(status_code=404, detail="Review request not found.")
     return result

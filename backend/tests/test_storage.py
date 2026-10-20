@@ -67,7 +67,7 @@ def test_concurrent_review_creation_enforces_lifetime_limit(tmp_path, monkeypatc
     for index in range(9):
         row, error = storage.create_review_request("p1", f"old:{index}", "", 10)
         assert row and error is None
-        storage.mark_review_request_reviewed(row["id"])
+        storage.mark_review_request_reviewed(row["id"], "test-reviewer")
 
     def create(index: int):
         return storage.create_review_request("p1", f"new:{index}", "", 10)

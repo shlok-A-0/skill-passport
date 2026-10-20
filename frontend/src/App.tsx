@@ -21,7 +21,7 @@ function LatestPassportRedirect({ view }: { view: "passport" | "recruiter" }) {
       return;
     }
     api.reviewPassports()
-      .then((passports) => setPassportId(passports[0]?.id ?? ""))
+      .then((page) => setPassportId(page.items[0]?.id ?? ""))
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setLoading(false));
   }, [view]);

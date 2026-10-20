@@ -114,7 +114,10 @@ export type ReviewRequest = {
   created_at: string;
   status: "open" | "reviewed";
   reviewed_at: string | null;
+  reviewer_id?: string | null;
 };
+
+export type PassportPage = { items: Passport[]; total: number; limit: number; offset: number };
 
 /** Same format as the backend: "{skill_id}:{repo}:{file_path}:{start}-{end}". */
 export function citationKey(claim: Record<string, unknown>): string {
@@ -359,7 +362,8 @@ export const api = {
   },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
   reviewPassport: (id: string) => reviewRequest<Passport>(`/passport/${id}/review`),
-  reviewPassports: () => reviewRequest<Passport[]>("/passports/review"),
+  reviewPassports: (limit = 50, offset = 0) =>
+    reviewRequest<PassportPage>(`/passports/review?limit=${limit}&offset=${offset}`),
   requestReview: (passportId: string, citation_key: string, note: string) => {
     const token = sessionStorage.getItem(`passport-token:${passportId}`);
     if (!token) throw new Error("Review requests must be submitted from the browser session that created this passport.");

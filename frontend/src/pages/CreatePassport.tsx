@@ -33,6 +33,7 @@ export default function CreatePassport() {
   const [submitting, setSubmitting] = useState(false);
   const [challenge, setChallenge] = useState<OwnershipChallenge | null>(null);
   const [gettingCode, setGettingCode] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
   const [copied, setCopied] = useState(false);
   const usernameRef = useRef(username);
   const challengeRequestId = useRef(0);
@@ -100,14 +101,16 @@ export default function CreatePassport() {
   }, []);
 
   useEffect(() => {
-    if (!job || job.status === "done" || job.status === "failed") return;
+    if (!job || job.status === "done" || job.status === "failed" || pollingPaused) return;
     let active = true;
     let timer = 0;
     let delay = 1500;
+    let consecutiveFailures = 0;
     const poll = async () => {
       try {
         const next = await api.job(job.job_id);
         if (!active) return;
+        consecutiveFailures = 0;
         setError("");
         setJob(next);
         if (next.status === "done" && next.passport_id) {
@@ -127,6 +130,12 @@ export default function CreatePassport() {
           setError("This job is no longer available. Please generate the passport again.");
           return;
         }
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 8) {
+          setPollingPaused(true);
+          setError("Could not reach the server to check this job. Your job may still be running; retry the status check when your connection is back.");
+          return;
+        }
         setError("Connection interrupted. Retrying passport status automatically…");
         delay = nextJobPollDelay(delay);
       }
@@ -137,7 +146,7 @@ export default function CreatePassport() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [job?.job_id, job?.status, navigate]);
+  }, [job?.job_id, job?.status, navigate, pollingPaused]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -174,6 +183,7 @@ export default function CreatePassport() {
         completed_steps: [],
         error: null,
       });
+      setPollingPaused(false);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Could not start passport generation.";
       // An expired, used or unknown code can't be retried; show the "Get verification code" button again.
@@ -221,15 +231,11 @@ export default function CreatePassport() {
             <input type="file" accept="application/pdf,.pdf" multiple disabled={certificates.length >= 5} onChange={(event) => {
               const selected = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = "";
-              setCertificates((current) => {
-                const remaining = 5 - current.length;
-                if (selected.length > remaining) {
-                  setError("Upload no more than 5 certificates. Extra selected files were not added.");
-                  return [...current, ...selected.slice(0, remaining)];
-                }
-                setError("");
-                return [...current, ...selected];
-              });
+              const remaining = 5 - certificates.length;
+              setCertificates([...certificates, ...selected.slice(0, remaining)]);
+              setError(selected.length > remaining
+                ? "Upload no more than 5 certificates. Extra selected files were not added."
+                : "");
             }} />
           </label>
           {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
@@ -269,7 +275,8 @@ export default function CreatePassport() {
           <section className="progress-box" aria-live="polite">
             {job.status === "failed" ? (
               <div className="progress-title"><span aria-hidden="true">!</span> Passport generation stopped during {job.step}.</div>
-            ) : <div className="progress-title"><LoaderCircle className={job.status === "running" ? "spin" : ""} size={17} /> {job.step === "Queued" ? "Preparing your evidence…" : job.step}</div>}
+            ) : <div className="progress-title"><LoaderCircle className={job.status === "running" && !pollingPaused ? "spin" : ""} size={17} /> {pollingPaused ? "Passport job status unavailable" : job.step === "Queued" ? "Preparing your evidence…" : job.step}</div>}
+            {pollingPaused && <button type="button" className="button button-light" onClick={() => { setError(""); setPollingPaused(false); }}>Retry status check</button>}
             {job.status !== "failed" && (
             <ol className="step-tracker">
               {steps.map((step, index) => (

@@ -305,6 +305,25 @@ def test_supporting_file_reads_are_bounded_and_reported(fake_github: FakeGitHub)
     assert any("supporting-file budget" in note for note in build_coverage(ingestion)["notes"])
 
 
+def test_selected_supporting_files_that_fail_fetch_are_reported(fake_github: FakeGitHub, monkeypatch) -> None:
+    from app.services.coverage import build_coverage
+
+    fake_github.add_repo("project", {"package.json": "{}"})
+    original = github_ingest._optional_content
+
+    def fail_package_fetch(client, owner, repo, path, branch):
+        if path == "package.json":
+            return None
+        return original(client, owner, repo, path, branch)
+
+    monkeypatch.setattr(github_ingest, "_optional_content", fail_package_fetch)
+    ingestion = github_ingest.ingest_github("student")
+    repo = ingestion["repos"][0]
+    coverage = build_coverage(ingestion)
+    assert repo["supporting_files_failed_to_fetch"] == 1
+    assert any("could not be fetched from GitHub" in note for note in coverage["notes"])
+
+
 def test_coverage_counts_files_dropped_by_the_prompt_line_cap(monkeypatch) -> None:
     from app.services import claim_proposer
     from app.services.coverage import build_coverage
