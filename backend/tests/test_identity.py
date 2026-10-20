@@ -98,6 +98,37 @@ def test_code_is_bound_to_its_username_and_expires(monkeypatch) -> None:
     assert ownership_for_passport("p-1") is None
 
 
+def test_new_challenge_prunes_expired_unused_but_keeps_active_and_verified_rows(monkeypatch) -> None:
+    expired = create_challenge("expired-user")
+    active = create_challenge("active-user")
+    verified = create_challenge("verified-user")
+    serve_gists(monkeypatch, [gist(verified["code"], "verified-user")])
+    verify_challenge(verified["challenge_id"], "verified-user", "p-verified")
+
+    past = (identity._now() - timedelta(hours=1)).isoformat()
+    with identity._connect() as connection:
+        connection.execute(
+            "UPDATE ownership_challenges SET expires_at = ? WHERE id = ?",
+            (past, expired["challenge_id"]),
+        )
+        connection.execute(
+            "UPDATE ownership_challenges SET expires_at = ? WHERE id = ?",
+            (past, verified["challenge_id"]),
+        )
+
+    create_challenge("next-user")
+
+    with identity._connect() as connection:
+        remaining = {
+            row["id"]
+            for row in connection.execute("SELECT id FROM ownership_challenges")
+        }
+    assert expired["challenge_id"] not in remaining
+    assert active["challenge_id"] in remaining
+    assert verified["challenge_id"] in remaining
+    assert ownership_for_passport("p-verified") is not None
+
+
 def test_gist_owned_by_another_account_or_secret_does_not_count(monkeypatch) -> None:
     challenge = create_challenge("janedoe")
     serve_gists(monkeypatch, [

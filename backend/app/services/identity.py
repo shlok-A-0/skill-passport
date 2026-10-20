@@ -73,6 +73,13 @@ def _connect() -> sqlite3.Connection:
         connection.execute("ALTER TABLE ownership_challenges ADD COLUMN passport_id TEXT")
     except sqlite3.OperationalError:
         pass
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ownership_challenges_unused_expiry
+        ON ownership_challenges (expires_at)
+        WHERE verified_at IS NULL
+        """
+    )
     return connection
 
 
@@ -92,6 +99,12 @@ def create_challenge(github_username: str) -> dict[str, Any]:
         "expires_at": (now + CHALLENGE_TTL).isoformat(),
     }
     with _connect() as connection:
+        # Keep verified rows: ownership_for_passport() uses them to build recruiter signals.
+        # Unused codes have no lasting value once expired and can be safely discarded.
+        connection.execute(
+            "DELETE FROM ownership_challenges WHERE verified_at IS NULL AND expires_at <= ?",
+            (now.isoformat(),),
+        )
         connection.execute(
             """
             INSERT INTO ownership_challenges (id, github_username, code, created_at, expires_at)

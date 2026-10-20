@@ -77,8 +77,8 @@ class GitHubAuthenticationError(GitHubIngestError):
 
 def validate_github_username(username: str) -> str:
     normalized = username.strip()
-    if not normalized or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", normalized):
-        raise ValueError("Enter a GitHub username using 1–39 letters, numbers, or hyphens.")
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}", normalized):
+        raise ValueError("Enter a GitHub username using 1–39 letters and numbers, with single hyphens between characters.")
     return normalized
 
 

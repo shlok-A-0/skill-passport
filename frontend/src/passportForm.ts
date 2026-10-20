@@ -6,8 +6,8 @@ export function validatePassportForm(input: {
 }): string | null {
   const username = input.username.trim();
   if (!username) return "Enter your GitHub username.";
-  if (!/^[A-Za-z0-9-]{1,39}$/.test(username)) {
-    return "Enter a GitHub username using 1–39 letters, numbers, or hyphens.";
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
+    return "Enter a GitHub username using 1–39 letters and numbers, with single hyphens between characters.";
   }
   if (!input.resume) return "Upload your resume PDF before generating a passport.";
   if (!isPdf(input.resume)) return "Your resume must be a PDF file.";

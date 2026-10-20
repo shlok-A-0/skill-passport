@@ -18,6 +18,12 @@ test("passport form rejects malformed usernames before submitting", () => {
     validatePassportForm({ username: "bad_name", resume: file("resume.pdf"), role: "backend-intern", certificates: [] }) ?? "",
     /GitHub username/,
   );
+  for (const username of ["-octocat", "octocat-", "octo--cat"]) {
+    assert.match(
+      validatePassportForm({ username, resume: file("resume.pdf"), role: "backend-intern", certificates: [] }) ?? "",
+      /GitHub username/,
+    );
+  }
 });
 
 test("passport form rejects invalid and oversized certificate uploads", () => {

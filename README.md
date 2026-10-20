@@ -20,6 +20,8 @@ Always activate this `backend\.venv` before installing or running; packages inst
 
 `backend/.env` must contain `GITHUB_TOKEN`, `GEMINI_API_KEY`, and `GEMINI_MODEL`. Set `APP_ENV=development` explicitly for local use; all other environments require `RECRUITER_KEY` and the backend refuses to start without it. `FRONTEND_ORIGINS` (comma-separated) lists the frontend URLs allowed to call the API; it defaults to `http://localhost:5173`, so add your Vercel URL when deploying. Debug endpoints are disabled unless `ALLOW_DEBUG_ENDPOINTS=true` is explicitly set. Passport creation returns an owner access token that the creating browser tab keeps in session storage; it is required for job polling, review requests and passport re-checks. The API rejects request bodies larger than 26 MB before multipart parsing; configure the deployment's reverse proxy or hosting platform with a matching or smaller request-body limit. The existing `.env` is ignored by Git; do not replace it with `.env.example`. The current Gemini model setting is `gemini-flash-latest`.
 
+The ownership check confirms that the applicant can post a one-time code from the GitHub account used for the passport. It does not establish the applicant’s real-world identity.
+
 Start the frontend in a second PowerShell terminal:
 
 ```powershell
