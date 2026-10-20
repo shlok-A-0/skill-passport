@@ -355,14 +355,6 @@ def test_startup_refuses_an_unrecognised_ownership_proof_setting(startup_setting
             pass
 
 
-@pytest.fixture
-def no_dotenv(monkeypatch):
-    """Reload config from the process environment only, not a developer's local backend/.env."""
-    import dotenv
-
-    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
-
-
 @pytest.mark.parametrize(
     ("raw", "required", "valid"),
     [
@@ -378,7 +370,7 @@ def no_dotenv(monkeypatch):
         ("off", True, False),
     ],
 )
-def test_ownership_proof_setting_is_parsed_fail_closed(monkeypatch, no_dotenv, raw, required, valid) -> None:
+def test_ownership_proof_setting_is_parsed_fail_closed(monkeypatch, raw, required, valid) -> None:
     if raw is None:
         monkeypatch.delenv("REQUIRE_OWNERSHIP_PROOF", raising=False)
     else:
@@ -392,7 +384,7 @@ def test_ownership_proof_setting_is_parsed_fail_closed(monkeypatch, no_dotenv, r
         importlib.reload(config)
 
 
-def test_missing_app_env_counts_as_production_for_the_proof_check(monkeypatch, no_dotenv, startup_settings) -> None:
+def test_missing_app_env_counts_as_production_for_the_proof_check(monkeypatch, startup_settings) -> None:
     monkeypatch.delenv("APP_ENV", raising=False)
     importlib.reload(config)
     try:
