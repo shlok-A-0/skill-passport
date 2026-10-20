@@ -167,7 +167,7 @@ def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient
         access_token_hash=hashlib.sha256(REVIEW_OWNER_TOKEN.encode()).hexdigest(),
     )
     storage.complete_stored_job("p-review", "p-review", [])
-    return TestClient(main_module.app)
+    return TestClient(main_module.app, headers={"X-Passport-Token": REVIEW_OWNER_TOKEN})
 def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review").json(), client.get("/passports").json()):
@@ -193,6 +193,26 @@ def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path
     assert rejected[1]["citation_key"] == "python:demo:legacy.py:1-9"
 
 
+def test_student_view_hides_stored_resume_and_certificate_mentions(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    passport = passport_with_fraud_signals("p-private-mentions")
+    marker = "PRIVATE-RESUME-MARKER"
+    passport["resume_skill_mentions"] = [{"skill_id": "python", "mention": marker}]
+    passport["certificate_skill_mentions"] = [{"skill_id": "aws", "mention": marker}]
+    passport["skills"][0]["resume_mention"] = marker
+    storage.save_passport(passport)
+
+    response = client.get("/passport/p-private-mentions")
+    assert response.status_code == 200
+    assert marker not in response.text
+    assert "resume_skill_mentions" not in response.json()
+    assert "certificate_skill_mentions" not in response.json()
+    assert "resume_mention" not in response.json()["skills"][0]
+    stored = storage.get_passport("p-private-mentions")
+    assert stored["resume_skill_mentions"][0]["mention"] == marker
+    assert stored["certificate_skill_mentions"][0]["mention"] == marker
+
+
 def test_new_and_legacy_earlier_source_kinds_are_both_handled(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     review = client.get("/passport/p-review/review").json()["rejected_claims"]
@@ -200,6 +220,16 @@ def test_new_and_legacy_earlier_source_kinds_are_both_handled(tmp_path, monkeypa
     # Both kinds can be the subject of a review request.
     for key in ("python:demo:legacy.py:1-9", EXCLUDED_KEY):
         assert client.post("/passport/p-review/review-requests", json={"citation_key": key}).status_code == 201
+
+
+def test_review_request_requires_owner_token(tmp_path, monkeypatch) -> None:
+    client = _review_client(tmp_path, monkeypatch)
+    path = "/passport/p-review/review-requests"
+    body = {"citation_key": EXCLUDED_KEY}
+    assert client.post(path, json=body, headers={"X-Passport-Token": ""}).status_code == 404
+    assert client.post(path, json=body, headers={"X-Passport-Token": "not-the-owner"}).status_code == 404
+    response = client.post(path, json=body, headers={"X-Passport-Token": REVIEW_OWNER_TOKEN})
+    assert response.status_code == 201
 
 
 def test_review_request_on_a_counted_or_unsupported_citation_is_rejected(tmp_path, monkeypatch) -> None:
@@ -227,12 +257,28 @@ def test_review_request_limits(tmp_path, monkeypatch) -> None:
         for index in range(1, 13)
     ]
     storage.save_passport(passport)
+    storage.create_stored_job(
+        "p-many",
+        access_token_hash=hashlib.sha256(REVIEW_OWNER_TOKEN.encode()).hexdigest(),
+    )
+    storage.complete_stored_job("p-many", "p-many", [])
     codes = [
         client.post("/passport/p-many/review-requests",
                     json={"citation_key": f"python:demo:helpers.py:{index}-{index + 1}"}).status_code
         for index in range(1, 12)
     ]
     assert codes == [201] * 10 + [429]
+
+
+def test_concurrent_duplicate_review_requests_return_conflict(tmp_path, monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = _review_client(tmp_path, monkeypatch)
+    path = "/passport/p-review/review-requests"
+    body = {"citation_key": EXCLUDED_KEY}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: client.post(path, json=body), range(2)))
+    assert sorted(response.status_code for response in responses) == [201, 409]
 
 
 def test_review_requests_survive_recheck_and_never_change_levels(tmp_path, monkeypatch) -> None:
@@ -310,6 +356,16 @@ def test_review_endpoints_fail_closed_in_production_mode(tmp_path, monkeypatch) 
     client_configured = _review_client(tmp_path, monkeypatch, recruiter_key="prod-secret")
     assert client_configured.get("/passport/p-review/review").status_code == 401
     assert client_configured.get("/passport/p-review/review", headers={"X-Recruiter-Key": "prod-secret"}).status_code == 200
+
+
+def test_application_startup_requires_recruiter_key_when_auth_is_required(monkeypatch) -> None:
+    import pytest
+
+    monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
+    monkeypatch.setattr(main_module, "RECRUITER_KEY", "")
+    with pytest.raises(RuntimeError, match="RECRUITER_KEY must be configured"):
+        with TestClient(main_module.app):
+            pass
 
 
 def test_commit_signature_integration_in_recruiter_view(tmp_path, monkeypatch) -> None:
@@ -478,6 +534,11 @@ def test_not_written_citation_is_listed_for_the_student_with_a_neutral_reason(tm
         "reason": "None of the cited lines were last changed in your commits.",
         "review_request": None,
     }
+    storage.create_stored_job(
+        "p-unwritten",
+        access_token_hash=hashlib.sha256(REVIEW_OWNER_TOKEN.encode()).hexdigest(),
+    )
+    storage.complete_stored_job("p-unwritten", "p-unwritten", [])
     response = client.post("/passport/p-unwritten/review-requests", json={"citation_key": "python:demo:engine.py:2-12"})
     assert response.status_code == 201
 
@@ -574,9 +635,9 @@ def test_certificate_upload_count_and_aggregate_size_limits(tmp_path, monkeypatc
     assert "At most 5 certificates" in res.json()["detail"]
 
     # 2. Total upload exceeding 25 MB aggregate limit is rejected
-    big_resume = ("resume.pdf", b"%PDF-1.4 " + b"a" * (9 * 1024 * 1024), "application/pdf")
-    big_cert1 = ("c1.pdf", b"%PDF-1.4 " + b"b" * (9 * 1024 * 1024), "application/pdf")
-    big_cert2 = ("c2.pdf", b"%PDF-1.4 " + b"c" * (9 * 1024 * 1024), "application/pdf")
+    big_resume = ("resume.pdf", b"%PDF-1.4 " + b"a" * (8 * 1024 * 1024 + 512 * 1024), "application/pdf")
+    big_cert1 = ("c1.pdf", b"%PDF-1.4 " + b"b" * (8 * 1024 * 1024 + 512 * 1024), "application/pdf")
+    big_cert2 = ("c2.pdf", b"%PDF-1.4 " + b"c" * (8 * 1024 * 1024 + 512 * 1024), "application/pdf")
     res_big = client.post(
         "/passport/create",
         data={"github_username": "student-heavy", "target_role": "backend-intern"},
@@ -653,7 +714,10 @@ def test_recheck_requires_owner_token_and_hides_upstream_error(tmp_path, monkeyp
         raise RuntimeError("private upstream response")
 
     monkeypatch.setattr(main_module, "recheck_passport", fail_recheck)
-    assert client.post("/passport/p-review/recheck").status_code == 404
+    assert client.post(
+        "/passport/p-review/recheck",
+        headers={"X-Passport-Token": ""},
+    ).status_code == 404
     assert not called
 
     response = client.post(
@@ -718,14 +782,14 @@ def test_debug_routes_absent_when_app_env_production(monkeypatch) -> None:
         assert client.get("/debug/github/octocat").status_code == 404
         assert client.post("/debug/resume").status_code == 404
     finally:
-        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.setenv("APP_ENV", "development")
         importlib.reload(config)
         importlib.reload(main)
 
 
 def test_debug_routes_disabled_by_default(monkeypatch) -> None:
     import importlib
-    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.delenv("ALLOW_DEBUG_ENDPOINTS", raising=False)
     from app import config
     importlib.reload(config)
@@ -735,8 +799,23 @@ def test_debug_routes_disabled_by_default(monkeypatch) -> None:
         assert config.ALLOW_DEBUG_ENDPOINTS is False
         assert not any(r.path.startswith("/debug") for r in main.app.routes)
     finally:
+        monkeypatch.setenv("APP_ENV", "development")
         importlib.reload(config)
         importlib.reload(main)
+
+
+def test_app_environment_defaults_to_production(monkeypatch) -> None:
+    import importlib
+    from app import config
+
+    monkeypatch.delenv("APP_ENV", raising=False)
+    importlib.reload(config)
+    try:
+        assert config.APP_ENV == "production"
+        assert config.REQUIRE_RECRUITER_AUTH is True
+    finally:
+        monkeypatch.setenv("APP_ENV", "development")
+        importlib.reload(config)
 
 
 def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, monkeypatch) -> None:
@@ -874,3 +953,46 @@ def test_upload_validation_failure_cleans_up_reserved_job(tmp_path, monkeypatch)
     # Verify the job is marked failed, so the candidate is NOT locked out by 409
     active = storage.has_active_job_for_target("failing-candidate")
     assert active is False
+
+
+def test_request_body_limit_rejects_before_multipart_parsing() -> None:
+    client = TestClient(main_module.app)
+    response = client.post(
+        "/passport/create",
+        content=b"x" * (main_module.MAX_REQUEST_BODY_BYTES + 1),
+        headers={"Content-Type": "multipart/form-data; boundary=not-parsed"},
+    )
+    assert response.status_code == 413
+
+
+def test_request_body_limit_rejects_streamed_multipart_without_content_length() -> None:
+    import asyncio
+
+    import httpx
+
+    async def body():
+        prefix = (
+            b'--test-boundary\r\nContent-Disposition: form-data; name="github_username"\r\n\r\nstudent\r\n'
+            b'--test-boundary\r\nContent-Disposition: form-data; name="target_role"\r\n\r\nbackend-intern\r\n'
+            b'--test-boundary\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\n'
+            b'Content-Type: application/pdf\r\n\r\n%PDF-1.4 '
+        )
+        yield prefix
+        remaining = main_module.MAX_REQUEST_BODY_BYTES + 1 - len(prefix)
+        chunk = b"x" * (64 * 1024)
+        while remaining:
+            part = chunk[:remaining]
+            yield part
+            remaining -= len(part)
+
+    async def request():
+        transport = httpx.ASGITransport(app=main_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/passport/create",
+                content=body(),
+                headers={"Content-Type": "multipart/form-data; boundary=test-boundary"},
+            )
+
+    response = asyncio.run(request())
+    assert response.status_code == 413

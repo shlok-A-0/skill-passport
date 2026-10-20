@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config import DATABASE_PATH
@@ -14,6 +14,24 @@ def _connect() -> sqlite3.Connection:
 
 
 _initialized_dbs: set[str] = set()
+
+
+def _reconcile_expired_jobs(connection: sqlite3.Connection, stale_seconds: int = 120) -> int:
+    cursor = connection.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error = 'Job interrupted or timed out. Ready to be retried.',
+            lease_until = NULL
+        WHERE status IN ('queued', 'running')
+          AND datetime(COALESCE(
+              lease_until,
+              datetime(COALESCE(updated_at, created_at), '+' || ? || ' seconds')
+          )) < datetime('now')
+        """,
+        (stale_seconds,),
+    )
+    return cursor.rowcount
 
 
 def initialize_storage() -> None:
@@ -45,7 +63,9 @@ def initialize_storage() -> None:
                 passport_id TEXT,
                 access_token_hash TEXT,
                 target TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                lease_until TEXT
             )
             """
         )
@@ -61,6 +81,26 @@ def initialize_storage() -> None:
             connection.execute("ALTER TABLE jobs ADD COLUMN access_token_hash TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            connection.execute("ALTER TABLE jobs ADD COLUMN lease_until TEXT")
+        except sqlite3.OperationalError:
+            pass
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS passport_owners (
+                passport_id TEXT PRIMARY KEY,
+                access_token_hash TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO passport_owners (passport_id, access_token_hash)
+            SELECT COALESCE(passport_id, id), access_token_hash
+            FROM jobs
+            WHERE status = 'done' AND access_token_hash IS NOT NULL
+            """
+        )
         # Students asking for a human look at an excluded citation. Keyed by passport id and
         # citation key, so requests survive re-checks; they never change levels or exclusions.
         connection.execute(
@@ -86,6 +126,43 @@ def initialize_storage() -> None:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_rate_limits_key_ts ON rate_limits (key, timestamp)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp ON rate_limits (timestamp)"
+        )
+        # Retain duplicate request rows as reviewed history while keeping one open row.
+        duplicates = connection.execute(
+            """
+            SELECT passport_id, citation_key
+            FROM review_requests
+            WHERE status = 'open'
+            GROUP BY passport_id, citation_key
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        for duplicate in duplicates:
+            rows = connection.execute(
+                """
+                SELECT id, created_at FROM review_requests
+                WHERE passport_id = ? AND citation_key = ? AND status = 'open'
+                ORDER BY created_at, id
+                """,
+                (duplicate["passport_id"], duplicate["citation_key"]),
+            ).fetchall()
+            for row in rows[1:]:
+                connection.execute(
+                    """
+                    UPDATE review_requests
+                    SET status = 'reviewed', reviewed_at = COALESCE(reviewed_at, created_at)
+                    WHERE id = ?
+                    """,
+                    (row["id"],),
+                )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_review_requests_one_open
+            ON review_requests (passport_id, citation_key) WHERE status = 'open'
+            """
         )
     _initialized_dbs.add(db_key)
 
@@ -131,7 +208,9 @@ def list_passports() -> list[dict[str, Any]]:
     return [json.loads(row["payload"]) for row in rows]
 
 
-def add_review_request(passport_id: str, citation_key: str, note: str) -> dict[str, Any]:
+def create_review_request(
+    passport_id: str, citation_key: str, note: str, max_requests: int
+) -> tuple[dict[str, Any] | None, str | None]:
     initialize_storage()
     request = {
         "id": str(uuid.uuid4()),
@@ -143,6 +222,22 @@ def add_review_request(passport_id: str, citation_key: str, note: str) -> dict[s
         "reviewed_at": None,
     }
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        duplicate = connection.execute(
+            """
+            SELECT 1 FROM review_requests
+            WHERE passport_id = ? AND citation_key = ? AND status = 'open'
+            """,
+            (passport_id, citation_key),
+        ).fetchone()
+        if duplicate:
+            return None, "duplicate"
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM review_requests WHERE passport_id = ?",
+            (passport_id,),
+        ).fetchone()["count"]
+        if count >= max_requests:
+            return None, "limit"
         connection.execute(
             """
             INSERT INTO review_requests (id, passport_id, citation_key, note, created_at, status, reviewed_at)
@@ -150,7 +245,7 @@ def add_review_request(passport_id: str, citation_key: str, note: str) -> dict[s
             """,
             request,
         )
-    return request
+    return request, None
 
 
 def list_review_requests(passport_id: str) -> list[dict[str, Any]]:
@@ -196,9 +291,11 @@ def reserve_stored_job(
     """Atomically verify active job limits and duplicate targets, then reserve the job slot."""
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
     norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         if norm_target:
             existing = connection.execute(
                 "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
@@ -215,8 +312,8 @@ def reserve_stored_job(
 
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
@@ -226,14 +323,15 @@ def reserve_stored_job(
                 access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
                 created_at = excluded.created_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                lease_until = excluded.lease_until
             """,
-            (job_id, access_token_hash, norm_target, now, now),
+            (job_id, access_token_hash, norm_target, now, now, lease_until),
         )
         return True, None
 
 
-def prune_old_jobs(max_age_days: int = 7) -> int:
+def prune_old_jobs(max_age_days: int = 30) -> int:
     """Prune completed or failed jobs older than max_age_days to keep database minimal."""
     initialize_storage()
     with _connect() as connection:
@@ -255,12 +353,13 @@ def create_stored_job(
 ) -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
     norm_target = target.strip().lower() if target else None
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at)
-            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?)
+            INSERT INTO jobs (id, status, step, completed_steps, error, passport_id, access_token_hash, target, created_at, updated_at, lease_until)
+            VALUES (?, 'queued', 'Queued', '[]', NULL, NULL, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = 'queued',
                 step = 'Queued',
@@ -270,15 +369,18 @@ def create_stored_job(
                 access_token_hash = excluded.access_token_hash,
                 target = excluded.target,
                 created_at = excluded.created_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                lease_until = excluded.lease_until
             """,
-            (job_id, access_token_hash, norm_target, now, now),
+            (job_id, access_token_hash, norm_target, now, now, lease_until),
         )
 
 
 def count_active_jobs() -> int:
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT COUNT(*) as count FROM jobs WHERE status IN ('queued', 'running')"
         ).fetchone()
@@ -290,6 +392,8 @@ def has_active_job_for_target(target: str) -> bool:
         return False
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT id FROM jobs WHERE target = ? AND status IN ('queued', 'running')",
             (target.strip().lower(),),
@@ -297,24 +401,12 @@ def has_active_job_for_target(target: str) -> bool:
     return bool(row)
 
 
-def reconcile_interrupted_jobs(stale_seconds: int = 600) -> int:
-    """Startup reconciliation: mark uncompleted jobs as interrupted only if they have been
-    stale without updates for longer than stale_seconds (default 10 minutes).
-    Active jobs owned by other concurrent workers are preserved.
-    """
+def reconcile_interrupted_jobs(stale_seconds: int = 120) -> int:
+    """Fail active jobs only after their worker heartbeat lease has expired."""
     initialize_storage()
     with _connect() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE jobs
-            SET status = 'failed',
-                error = 'Job interrupted or timed out. Ready to be retried.'
-            WHERE status IN ('queued', 'running')
-              AND datetime(COALESCE(updated_at, created_at)) < datetime('now', ? || ' seconds')
-            """,
-            (f"-{stale_seconds}",),
-        )
-        return cursor.rowcount
+        connection.execute("BEGIN IMMEDIATE;")
+        return _reconcile_expired_jobs(connection, stale_seconds)
 
 
 def prune_old_rate_limits(max_age_seconds: int = 3600) -> int:
@@ -332,14 +424,29 @@ def prune_old_rate_limits(max_age_seconds: int = 3600) -> int:
 def update_stored_job(job_id: str, step: str, completed_steps: list[str]) -> None:
     initialize_storage()
     now = datetime.now(timezone.utc).isoformat()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
     with _connect() as connection:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'running', step = ?, completed_steps = ?, updated_at = ?
+            SET status = 'running', step = ?, completed_steps = ?, updated_at = ?, lease_until = ?
             WHERE id = ?
             """,
-            (step, json.dumps(completed_steps), now, job_id),
+            (step, json.dumps(completed_steps), now, lease_until, job_id),
+        )
+
+
+def heartbeat_stored_job(job_id: str) -> None:
+    initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs SET updated_at = ?, lease_until = ?
+            WHERE id = ? AND status IN ('queued', 'running')
+            """,
+            (now, lease_until, job_id),
         )
 
 
@@ -350,11 +457,22 @@ def complete_stored_job(job_id: str, passport_id: str, completed_steps: list[str
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?, updated_at = ?
+            SET status = 'done', step = 'Done', completed_steps = ?, passport_id = ?, updated_at = ?, lease_until = NULL
             WHERE id = ?
             """,
             (json.dumps(completed_steps), passport_id, now, job_id),
         )
+        row = connection.execute(
+            "SELECT access_token_hash FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if row and row["access_token_hash"]:
+            connection.execute(
+                """
+                INSERT INTO passport_owners (passport_id, access_token_hash) VALUES (?, ?)
+                ON CONFLICT(passport_id) DO UPDATE SET access_token_hash = excluded.access_token_hash
+                """,
+                (passport_id, row["access_token_hash"]),
+            )
 
 
 def fail_stored_job(job_id: str, error: str) -> None:
@@ -364,7 +482,7 @@ def fail_stored_job(job_id: str, error: str) -> None:
         connection.execute(
             """
             UPDATE jobs
-            SET status = 'failed', error = ?, updated_at = ?
+            SET status = 'failed', error = ?, updated_at = ?, lease_until = NULL
             WHERE id = ?
             """,
             (error, now, job_id),
@@ -374,6 +492,8 @@ def fail_stored_job(job_id: str, error: str) -> None:
 def get_stored_job(job_id: str) -> dict[str, Any] | None:
     initialize_storage()
     with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        _reconcile_expired_jobs(connection)
         row = connection.execute(
             "SELECT * FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()
@@ -385,6 +505,16 @@ def get_stored_job(job_id: str) -> dict[str, Any] | None:
     return data
 
 
+def get_passport_owner_token_hash(passport_id: str) -> str | None:
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT access_token_hash FROM passport_owners WHERE passport_id = ?",
+            (passport_id,),
+        ).fetchone()
+    return row["access_token_hash"] if row else None
+
+
 def check_storage_rate_limit(key: str, max_requests: int, window_seconds: float) -> bool:
     """Persistent sliding-window rate limit backed by SQLite WAL mode.
     Shared across multiple workers and survives process restarts.
@@ -394,6 +524,10 @@ def check_storage_rate_limit(key: str, max_requests: int, window_seconds: float)
     cutoff = now - window_seconds
     with _connect() as connection:
         connection.execute("BEGIN IMMEDIATE;")
+        connection.execute(
+            "DELETE FROM rate_limits WHERE timestamp < ?",
+            (now - 3600,),
+        )
         connection.execute(
             "DELETE FROM rate_limits WHERE key = ? AND timestamp < ?",
             (key, cutoff),

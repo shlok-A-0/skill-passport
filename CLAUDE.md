@@ -141,7 +141,7 @@ Only two things change what counts; everything else is an advisory signal for a 
 - **LLM:** Gemini Flash (current model, name set via `GEMINI_MODEL` in `.env`). Optional later: Groq as a fallback provider.
 - **External APIs:** GitHub REST API with a personal access token (classic, read-only public repos). Unauthenticated limit is only 60 requests/hour.
 - **Ports:** backend 8000, frontend 5173 (CORS enabled for 5173).
-- **Environment (`backend/.env`):** `GITHUB_TOKEN`, `GEMINI_API_KEY`, `GEMINI_MODEL`.
+- **Environment (`backend/.env`):** `GITHUB_TOKEN`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `APP_ENV`, `RECRUITER_KEY`. Default to production; set `APP_ENV=development` explicitly for local work. All non-development environments require `RECRUITER_KEY` at startup.
 - **Later deployment (Stage 2):** Vercel for the frontend; Render or Railway for the FastAPI backend (background jobs + SQLite don't fit Vercel functions). Firebase is **not** needed.
 
 ---
@@ -304,13 +304,13 @@ Each verified code citation gets advisory integrity signals (section 3.2), inclu
 |---|---|---|
 | GET | `/health` | Health check |
 | GET | `/roles` | Role list |
-| POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional), `target_role` → returns `job_id` |
+| POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional), `target_role` → returns `job_id`; 26 MB request-body cap before multipart parsing |
 | GET | `/jobs/{id}` | Step status: Reading GitHub → Reading resume → Proposing skills → Verifying evidence → Matching role → Building growth plan → Done |
-| GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, evidence records or good-answer notes; every excluded citation listed with `citation_key`, links, neutral reason and its review-request status; `coverage` included) |
+| GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, evidence records, good-answer notes, or stored resume/certificate mentions; every excluded citation listed with `citation_key`, links, neutral reason and its review-request status; `coverage` included) |
 | GET | `/passports` | All passports, student-safe |
 | GET | `/passport/{id}/review` | Full passport for recruiters, plus `review_requests` and `requirement_packets` (needs `X-Recruiter-Key` when `RECRUITER_KEY` is set) |
 | GET | `/passports/review` | All full passports (Placement Cell); same key rule |
-| POST | `/passport/{id}/review-requests` | Student asks for a review of an excluded citation: `{citation_key, note}` (≤1,000 chars); ≤10 per passport, one open per citation |
+| POST | `/passport/{id}/review-requests` | Student asks for a review of an excluded citation: `{citation_key, note}` (≤1,000 chars) with `X-Passport-Token`; ownership is checked against the stored token hash, and the ≤10 total / one-open-per-citation rules are atomic |
 | POST | `/review-requests/{id}/mark-reviewed` | Recruiter marks a request reviewed; same key rule as the review endpoints |
 | POST | `/passport/{id}/recheck` | Growth Loop re-verification; returns the student-safe passport and level changes |
 | GET | `/passport/{id}/badge` | Open Badges JSON-LD, including each code citation's `evidenceRecord` |
@@ -483,4 +483,4 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
   5. **Cryptographic Commit Verification Signal:** Added `_commit_signature_signal` to `integrity_signals()` in `verifier.py` to evaluate GPG/SSH commit signature validity in recruiter review.
   6. **Fail-Closed Access Control:** Added `APP_ENV` and `REQUIRE_RECRUITER_AUTH` configuration in `config.py` and `main.py`. In production or when enabled, recruiter review endpoints strictly fail-closed (500 if `RECRUITER_KEY` is unconfigured, 401 if missing or invalid), preventing accidental exposure of sensitive fraud signals.
   7. **GitHub Check Runs CI Status Verification:** Added `_fetch_ci_status()` in `github_ingest.py` (cache schema version 9) and `ci_run_verified` check in `verifier.py`. Rather than merely asserting YAML configuration existence, CI/CD evidence now actively validates whether GitHub Actions had a verified successful run on that commit.
-
+- 2026-10-20: **Authorization, persistence and recovery hardening:** Review requests require the passport owner token; SQLite serializes limit/duplicate validation and enforces one open request per citation, migrating old duplicates to reviewed history before creating the partial unique index. Passport owner hashes are stored independently from short-lived job rows; 30-day job cleanup and hourly rate-limit cleanup run at startup, with expired rate-limit entries also removed during rate-limit checks. Active jobs use renewable 120-second leases with a 30-second heartbeat so another worker does not fail a slow pipeline. Student responses omit stored resume/certificate mentions, and parser mentions contain only the matched skill name. The frontend restores and retries pending jobs from `sessionStorage`; review actions are shown only in the owner browser session. The app defaults to production auth and requires an explicit local-development setting. An ASGI request-body cap runs before multipart parsing, and CI runs backend tests plus frontend tests/build on pushes and pull requests.

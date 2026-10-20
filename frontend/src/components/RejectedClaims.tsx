@@ -34,6 +34,7 @@ function Links({ item, ownLabel }: { item: RejectedClaim; ownLabel: string }) {
 
 /** Student: an excluded citation with a "Request review" form. */
 function StudentExcluded({ item, passportId }: { item: RejectedClaim; passportId: string }) {
+  const ownsPassport = api.hasPassportToken(passportId);
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
@@ -73,7 +74,9 @@ function StudentExcluded({ item, passportId }: { item: RejectedClaim; passportId
           {error && <p className="notice-error">{error}</p>}
         </div>
       ) : (
-        item.citation_key && <button className="button button-light review-button" onClick={() => setOpen(true)}><MessageSquare size={13} /> Request review</button>
+        item.citation_key && (ownsPassport
+          ? <button className="button button-light review-button" onClick={() => setOpen(true)}><MessageSquare size={13} /> Request review</button>
+          : <p className="muted">Review requests must be submitted from the browser session that created this passport.</p>)
       )}
     </article>
   );

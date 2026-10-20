@@ -154,7 +154,7 @@ export type PassportSkill = {
   level: "Claimed" | "Used" | "Applied" | "Demonstrated";
   certified: boolean;
   evidence: Evidence[];
-  resume_mention: string | null;
+  resume_mention?: string | null;
 };
 
 export type Passport = {
@@ -224,6 +224,10 @@ class ApiError extends Error {
   }
 }
 
+export function isMissingJobError(reason: unknown): boolean {
+  return reason instanceof ApiError && reason.status === 404;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
@@ -269,25 +273,37 @@ export const api = {
   createPassport: async (data: FormData) => {
     const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
     sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);
+    sessionStorage.setItem("passport-pending-job-id", created.job_id);
     return created;
   },
+  pendingJobId: () => sessionStorage.getItem("passport-pending-job-id"),
+  clearPendingJob: (id: string) => {
+    if (sessionStorage.getItem("passport-pending-job-id") === id) {
+      sessionStorage.removeItem("passport-pending-job-id");
+    }
+  },
+  hasPassportToken: (id: string) => Boolean(sessionStorage.getItem(`passport-token:${id}`)),
   latestPassportId: () => sessionStorage.getItem("passport-latest-id"),
   job: async (id: string) => {
     const job = await request<PassportJob>(`/jobs/${id}`, {
       headers: { "X-Passport-Token": sessionStorage.getItem(`passport-token:${id}`) ?? "" },
     });
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
+    if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
     return job;
   },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
   reviewPassport: (id: string) => reviewRequest<Passport>(`/passport/${id}/review`),
   reviewPassports: () => reviewRequest<Passport[]>("/passports/review"),
-  requestReview: (passportId: string, citation_key: string, note: string) =>
-    request<ReviewRequest>(`/passport/${passportId}/review-requests`, {
+  requestReview: (passportId: string, citation_key: string, note: string) => {
+    const token = sessionStorage.getItem(`passport-token:${passportId}`);
+    if (!token) throw new Error("Review requests must be submitted from the browser session that created this passport.");
+    return request<ReviewRequest>(`/passport/${passportId}/review-requests`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Passport-Token": token },
       body: JSON.stringify({ citation_key, note }),
-    }),
+    });
+  },
   markReviewed: (requestId: string) =>
     reviewRequest<ReviewRequest>(`/review-requests/${requestId}/mark-reviewed`, { method: "POST" }),
   recheck: (id: string) => {

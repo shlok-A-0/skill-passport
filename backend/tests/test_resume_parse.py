@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.resume_parse import parse_resume, redact_personal_data
+from app.services.resume_parse import match_resume_skills, parse_resume, redact_personal_data
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 
@@ -46,6 +46,14 @@ def test_redaction_removes_identifiers_and_institution_lines() -> None:
     ):
         assert private_value not in result
     assert "Python" in result
+
+
+def test_resume_skill_mentions_do_not_retain_names_from_shared_header_lines() -> None:
+    mentions = match_resume_skills("Jordan Smith | Python | React")
+    relevant = [item for item in mentions if item["skill_id"] in {"python", "react"}]
+    assert {item["skill_id"] for item in relevant} == {"python", "react"}
+    assert {item["mention"] for item in relevant} == {"Python", "React"}
+    assert all("Jordan Smith" not in item["mention"] for item in relevant)
 
 
 def test_invalid_pdf_fails_with_clear_parse_error() -> None:

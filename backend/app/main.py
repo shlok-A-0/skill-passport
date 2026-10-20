@@ -1,10 +1,13 @@
 import copy
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import (
@@ -20,6 +23,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import (
     ALLOW_DEBUG_ENDPOINTS,
@@ -37,19 +41,24 @@ from app.services.jobs import (
     get_active_jobs_count,
     get_job,
     is_active_job_running_for,
+    keep_job_lease,
     reserve_job,
     update_job,
 )
 from app.services.packets import requirement_packets
 from app.services.pipeline import recheck_passport, run_passport_job
 from app.services.storage import (
-    add_review_request,
     check_storage_rate_limit,
+    create_review_request,
     get_passport,
+    get_passport_owner_token_hash,
     get_review_requests_by_passports,
     list_passports,
     list_review_requests,
     mark_review_request_reviewed,
+    prune_old_jobs,
+    prune_old_rate_limits,
+    reconcile_interrupted_jobs,
 )
 from app.services.verifier import (
     CHECK_LABELS,
@@ -59,7 +68,120 @@ from app.services.verifier import (
     citation_key,
 )
 
-app = FastAPI(title="Skill Passport", version="0.1.0")
+
+MAX_CERTIFICATES = 5
+MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_REQUEST_BODY_BYTES = MAX_TOTAL_UPLOAD_BYTES + 1024 * 1024
+
+
+class RequestBodyLimitMiddleware:
+    def __init__(self, app: ASGIApp, max_body_size: int) -> None:
+        self.app = app
+        self.max_body_size = max_body_size
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_length = next(
+            (value for name, value in scope["headers"] if name == b"content-length"),
+            None,
+        )
+        if content_length is not None:
+            try:
+                length = int(content_length)
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length.")
+                return
+            if length < 0:
+                await self._reject(send, 400, "Invalid Content-Length.")
+                return
+            if length > self.max_body_size:
+                await self._reject(send)
+                return
+
+        received = 0
+        too_large = False
+        error_body_sent = False
+
+        async def limited_receive():
+            nonlocal received, too_large
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_size:
+                    too_large = True
+                    raise RequestBodyTooLarge
+            return message
+
+        response_started = False
+
+        async def track_response(message):
+            nonlocal response_started, error_body_sent
+            if message["type"] == "http.response.start":
+                response_started = True
+                if too_large:
+                    message = {
+                        **message,
+                        "status": 413,
+                        "headers": [(b"content-type", b"application/json")],
+                    }
+            elif too_large and message["type"] == "http.response.body":
+                message = {
+                    **message,
+                    "body": (
+                        b'{"detail":"Request body exceeds the 26 MB limit."}'
+                        if not error_body_sent
+                        else b""
+                    ),
+                }
+                error_body_sent = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, track_response)
+        except RequestBodyTooLarge:
+            if not response_started:
+                await self._reject(send)
+
+    async def _reject(self, send: Send, status: int = 413, detail: str = "Request body exceeds the 26 MB limit.") -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": json.dumps({"detail": detail}).encode(),
+            }
+        )
+
+
+class RequestBodyTooLarge(Exception):
+    pass
+
+
+def startup() -> None:
+    if REQUIRE_RECRUITER_AUTH and not RECRUITER_KEY:
+        raise RuntimeError("RECRUITER_KEY must be configured when recruiter authentication is required.")
+    reconcile_interrupted_jobs()
+    prune_old_jobs()
+    prune_old_rate_limits()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    startup()
+    yield
+
+
+app = FastAPI(title="Skill Passport", version="0.1.0", lifespan=lifespan)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BYTES)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
@@ -119,7 +241,10 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
     teach how to get around the checks), but with every outcome that affects the student:
     each excluded citation is listed so they can request a review."""
     view = copy.deepcopy(passport)
+    view.pop("resume_skill_mentions", None)
+    view.pop("certificate_skill_mentions", None)
     for skill in view.get("skills", []):
+        skill.pop("resume_mention", None)
         for item in skill.get("evidence", []):
             item.pop("integrity", None)
             item.pop("record", None)  # the evidence record is for recruiters and the badge
@@ -174,7 +299,10 @@ def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> Non
 
 
 def _valid_passport_token(job: dict[str, Any] | None, token: str | None) -> bool:
-    expected = job.get("access_token_hash") if job else None
+    return _valid_token_hash(job.get("access_token_hash") if job else None, token)
+
+
+def _valid_token_hash(expected: str | None, token: str | None) -> bool:
     if not expected or not token:
         return False
     actual = hashlib.sha256(token.encode()).hexdigest()
@@ -186,8 +314,7 @@ def _require_passport_access(
     token: str | None,
     recruiter_key: str | None = None,
 ) -> None:
-    job = get_job(passport_id)
-    if _valid_passport_token(job, token):
+    if _valid_token_hash(get_passport_owner_token_hash(passport_id), token):
         return
     if RECRUITER_KEY and recruiter_key and hmac.compare_digest(
         recruiter_key.encode(), RECRUITER_KEY.encode()
@@ -222,11 +349,6 @@ def skills() -> list[dict[str, str]]:
         {"id": skill["id"], "name": skill["name"], "category": skill["category"]}
         for skill in get_skills()
     ]
-
-
-MAX_CERTIFICATES = 5
-MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
-MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB aggregate limit
 
 
 async def stream_and_validate_file(
@@ -404,17 +526,26 @@ class ReviewRequestBody(BaseModel):
 
 
 @app.post("/passport/{passport_id}/review-requests", status_code=201)
-def create_review_request(passport_id: str, body: ReviewRequestBody) -> dict:
+def create_passport_review_request(
+    passport_id: str,
+    body: ReviewRequestBody,
+    x_passport_token: str | None = Header(default=None),
+) -> dict:
     """A student asks for a human look at an excluded citation. Never changes levels or exclusions."""
+    _require_passport_access(passport_id, x_passport_token)
     stored = _stored_passport(passport_id)
     if body.citation_key not in _excluded_keys(stored):
         raise HTTPException(status_code=422, detail="Reviews can only be requested for citations that were not counted.")
-    existing = list_review_requests(passport_id)
-    if len(existing) >= MAX_REVIEW_REQUESTS:
+    result, reason = create_review_request(
+        passport_id, body.citation_key, body.note.strip(), MAX_REVIEW_REQUESTS
+    )
+    if reason == "limit":
         raise HTTPException(status_code=429, detail=f"At most {MAX_REVIEW_REQUESTS} review requests per passport.")
-    if any(item["citation_key"] == body.citation_key and item["status"] == "open" for item in existing):
+    if reason == "duplicate":
         raise HTTPException(status_code=409, detail="A review is already requested for this citation.")
-    return add_review_request(passport_id, body.citation_key, body.note.strip())
+    if result is None:
+        raise HTTPException(status_code=500, detail="Could not create review request.")
+    return result
 
 
 @app.post("/review-requests/{request_id}/mark-reviewed", dependencies=[Depends(require_recruiter)])
@@ -455,8 +586,9 @@ def recheck_passport_endpoint(
 
     try:
         update_job(recheck_job_id, "Reading GitHub")
-        result = recheck_passport(existing)
-        complete_job(recheck_job_id, passport_id)
+        with keep_job_lease(recheck_job_id):
+            result = recheck_passport(existing)
+            complete_job(recheck_job_id, passport_id)
     except Exception as exc:
         fail_job(recheck_job_id, str(exc))
         logging.getLogger(__name__).exception("Passport re-check failed (job %s)", recheck_job_id)
