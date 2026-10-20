@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+from threading import Event, Thread
 from typing import Any
 
 from app.services.storage import (
@@ -6,8 +8,8 @@ from app.services.storage import (
     create_stored_job,
     fail_stored_job,
     get_stored_job,
+    heartbeat_stored_job,
     has_active_job_for_target,
-    reconcile_interrupted_jobs,
     reserve_stored_job,
     update_stored_job,
 )
@@ -63,8 +65,18 @@ def get_active_jobs_count() -> int:
     return count_active_jobs()
 
 
-# Reconcile any interrupted jobs when the backend boots
-try:
-    reconcile_interrupted_jobs()
-except Exception:
-    pass
+@contextmanager
+def keep_job_lease(job_id: str):
+    stop = Event()
+
+    def heartbeat() -> None:
+        while not stop.wait(30):
+            heartbeat_stored_job(job_id)
+
+    thread = Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)

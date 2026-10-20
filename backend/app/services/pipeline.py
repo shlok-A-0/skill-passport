@@ -9,7 +9,7 @@ from app.services.copy_check import add_copy_signals
 from app.services.coverage import build_coverage
 from app.services.github_ingest import ingest_github
 from app.services.growth_and_kit import generate_growth_and_kit
-from app.services.jobs import complete_job, fail_job, update_job
+from app.services.jobs import complete_job, fail_job, keep_job_lease, update_job
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.storage import get_passport, save_passport
@@ -187,16 +187,17 @@ def run_passport_job(
     is_demo: bool,
 ) -> None:
     update_job_id = job_id
-    try:
-        build_passport(
-            github_username=github_username,
-            target_role=target_role,
-            resume_bytes=resume_bytes,
-            certificate_bytes=certificate_bytes,
-            is_demo=is_demo,
-            passport_id=update_job_id,
-        )
-    except Exception as exc:
-        logger.exception("Passport job %s failed", job_id)
-        fail_job(job_id, str(exc))
-        raise
+    with keep_job_lease(job_id):
+        try:
+            build_passport(
+                github_username=github_username,
+                target_role=target_role,
+                resume_bytes=resume_bytes,
+                certificate_bytes=certificate_bytes,
+                is_demo=is_demo,
+                passport_id=update_job_id,
+            )
+        except Exception as exc:
+            logger.exception("Passport job %s failed", job_id)
+            fail_job(job_id, str(exc))
+            raise

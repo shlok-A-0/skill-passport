@@ -1,7 +1,8 @@
 import { ArrowRight, FileUp, Github, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type PassportJob, type Role } from "../api";
+import { api, isMissingJobError, type PassportJob, type Role } from "../api";
+import { nextJobPollDelay } from "../jobPolling";
 
 const steps = [
   "Reading GitHub",
@@ -34,26 +35,57 @@ export default function CreatePassport() {
   }, []);
 
   useEffect(() => {
+    const pendingJobId = api.pendingJobId();
+    if (pendingJobId) {
+      setJob({
+        job_id: pendingJobId,
+        status: "queued",
+        step: "Queued",
+        completed_steps: [],
+        error: null,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
     if (!job || job.status === "done" || job.status === "failed") return;
-    const timer = window.setInterval(() => {
-      api.job(job.job_id).then((next) => {
+    let active = true;
+    let timer = 0;
+    let delay = 1500;
+    const poll = async () => {
+      try {
+        const next = await api.job(job.job_id);
+        if (!active) return;
+        setError("");
         setJob(next);
         if (next.status === "done" && next.passport_id) {
           navigate(`/passport/${next.passport_id}`);
+          return;
         }
         if (next.status === "failed") {
           setError(next.error || "Passport generation failed.");
+          return;
         }
-      }).catch((reason: Error) => {
-        window.clearInterval(timer);
-        setJob((current) => (current ? { ...current, status: "failed" } : current));
-        setError(reason.message.includes("Job not found")
-          ? "The server restarted and lost this job. Please generate the passport again."
-          : reason.message);
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [job, navigate]);
+        delay = 1500;
+      } catch (reason) {
+        if (!active) return;
+        if (isMissingJobError(reason)) {
+          api.clearPendingJob(job.job_id);
+          setJob((current) => current?.job_id === job.job_id ? { ...current, status: "failed" } : current);
+          setError("This job is no longer available. Please generate the passport again.");
+          return;
+        }
+        setError("Connection interrupted. Retrying passport status automatically…");
+        delay = nextJobPollDelay(delay);
+      }
+      timer = window.setTimeout(poll, delay);
+    };
+    timer = window.setTimeout(poll, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [job?.job_id, job?.status, navigate]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

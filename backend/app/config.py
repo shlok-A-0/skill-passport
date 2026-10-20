@@ -27,11 +27,11 @@ FRONTEND_ORIGINS = [
 # Bump whenever verification or level rules change; stored in every evidence record.
 VERIFIER_VERSION = "2026-10-16"
 # Environment and access control
-APP_ENV = os.getenv("APP_ENV", "development").lower()
+APP_ENV = os.getenv("APP_ENV", "production").lower()
 # When set or in production, recruiter review endpoints enforce fail-closed authentication.
 REQUIRE_RECRUITER_AUTH = (
     os.getenv("REQUIRE_RECRUITER_AUTH", "").lower() in ("true", "1", "yes")
-    or APP_ENV == "production"
+    or APP_ENV != "development"
 )
 # When set, the recruiter review endpoints require a matching X-Recruiter-Key header.
 RECRUITER_KEY = os.getenv("RECRUITER_KEY", "")

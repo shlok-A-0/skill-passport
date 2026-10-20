@@ -94,8 +94,7 @@ def match_resume_skills(text: str) -> list[dict[str, str]]:
             if found_line:
                 break
         if found_line:
-            # Mention lines are stored in the passport, so personal details are removed first.
-            matches.append({"skill_id": skill["id"], "mention": redact_personal_data(found_line, detect_name=False)})
+            matches.append({"skill_id": skill["id"], "mention": skill["name"]})
     return matches
 
 

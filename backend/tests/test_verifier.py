@@ -753,8 +753,8 @@ def test_resume_mention_lines_are_redacted() -> None:
     text = "Contact jane.doe@example.com +91 98765 43210 | Python, Docker\nPython Django"
     mentions = {item["skill_id"]: item["mention"] for item in match_resume_skills(text)}
     assert "@" not in mentions["python"] and "98765" not in mentions["python"]
-    assert "[REDACTED EMAIL]" in mentions["python"]
-    assert mentions["django"] == "Python Django"  # skill lines are not mistaken for a name
+    assert mentions["python"] == "Python"
+    assert mentions["django"] == "Django"
 
 
 def test_stored_mentions_are_redacted_on_recheck() -> None:
@@ -1145,5 +1145,3 @@ def test_ci_evidence_flags_failed_or_missing_runs() -> None:
     item = evidence[0]
     assert item["checks"]["ci_run_verified"] is False
     assert "failed" in item["explanation"]
-
-
