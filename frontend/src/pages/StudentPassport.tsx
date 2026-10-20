@@ -71,7 +71,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       const attempt = await pollJobAttempt(
         consecutiveFailures,
         () => api.job(recheckJobId),
-        async () => { await load(); },
+        async () => { if (active) await load(); },
       );
       if (!active) return;
       consecutiveFailures = attempt.consecutiveFailures;
