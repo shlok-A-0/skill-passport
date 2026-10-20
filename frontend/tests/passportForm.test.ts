@@ -13,6 +13,18 @@ test("passport form reports the missing resume specifically", () => {
   );
 });
 
+test("passport form rejects empty resume and certificate files", () => {
+  const base = { username: "octocat", resume: file("resume.pdf"), role: "backend-intern" };
+  assert.match(
+    validatePassportForm({ ...base, resume: file("empty.pdf", 0), certificates: [] }) ?? "",
+    /resume PDF is empty/,
+  );
+  assert.match(
+    validatePassportForm({ ...base, certificates: [file("empty-certificate.pdf", 0)] }) ?? "",
+    /certificate PDF is empty/,
+  );
+});
+
 test("passport form rejects malformed usernames before submitting", () => {
   assert.match(
     validatePassportForm({ username: "bad_name", resume: file("resume.pdf"), role: "backend-intern", certificates: [] }) ?? "",

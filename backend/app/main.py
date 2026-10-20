@@ -435,6 +435,8 @@ async def stream_and_validate_file(
                 detail=f"Total upload size across resume and certificates must be {max_aggregate // (1024 * 1024)} MB or smaller.",
             )
         chunks.append(chunk)
+    if file_bytes == 0:
+        raise HTTPException(status_code=422, detail=f"{error_label} must not be empty.")
     return b"".join(chunks), current_aggregate + file_bytes
 
 

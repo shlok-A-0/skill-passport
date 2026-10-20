@@ -124,6 +124,36 @@ def test_create_requires_resume_and_valid_github_username(tmp_path, monkeypatch)
     assert "GitHub username" in invalid_username.json()["detail"]
 
 
+def test_create_rejects_empty_resume_and_certificate_before_starting_jobs(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    started = []
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args: started.append(args))
+    client = TestClient(main_module.app)
+
+    empty_resume = client.post(
+        "/passport/create",
+        data={"github_username": "empty-resume", "target_role": "backend-intern", "is_demo": "true"},
+        files=[
+            ("resume", ("resume.pdf", b"", "application/pdf")),
+            ("certificates", ("certificate.pdf", b"%PDF-1.4 certificate", "application/pdf")),
+        ],
+    )
+    assert empty_resume.status_code == 422
+    assert "Resume PDF must not be empty" in empty_resume.json()["detail"]
+
+    empty_certificate = client.post(
+        "/passport/create",
+        data={"github_username": "empty-certificate", "target_role": "backend-intern", "is_demo": "true"},
+        files=[
+            ("resume", ("resume.pdf", b"%PDF-1.4 resume", "application/pdf")),
+            ("certificates", ("certificate.pdf", b"", "application/pdf")),
+        ],
+    )
+    assert empty_certificate.status_code == 422
+    assert "Each certificate must not be empty" in empty_certificate.json()["detail"]
+    assert started == []
+
+
 def passport_with_fraud_signals(passport_id: str) -> dict:
     passport = fake_passport(passport_id)
     passport["skills"][0]["evidence"][0]["integrity"] = [
