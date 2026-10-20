@@ -91,6 +91,10 @@ h2 { margin: 6px 0 0; font: 700 18px/1.2 Manrope, sans-serif; letter-spacing: -.
 .upload-box small { color: var(--subtle); font-weight: 500; }
 .cert-upload { display: flex !important; align-items: center; gap: 8px !important; flex-wrap: wrap; }
 .cert-upload input { flex-basis: 100%; width: 100%; min-width: 0; box-sizing: border-box; padding-top: 8px; }
+.certificate-list { list-style: none; margin: -8px 0 4px; padding: 0; display: grid; gap: 6px; }
+.certificate-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink-soft); font-size: 13px; }
+.certificate-list li span { overflow-wrap: anywhere; }
+.certificate-list button { border: 0; padding: 4px 8px; color: var(--accent); background: transparent; cursor: pointer; }
 .demo-toggle { display: flex !important; align-items: center; gap: 7px !important; color: var(--muted) !important; font-weight: 500 !important; }
 .demo-toggle input { accent-color: var(--accent); }
 .demo-toggle strong { color: var(--warning); font-size: 10px; letter-spacing: .5px; }

@@ -40,7 +40,7 @@ TRUSTED_PROXY_IPS = frozenset(
     if (normalized := _normalize_ip(address)) is not None
 )
 # Bump whenever verification or level rules change; stored in every evidence record.
-VERIFIER_VERSION = "2026-10-20.2"
+VERIFIER_VERSION = "2026-10-21"
 # Non-demo passports need a public-gist proof that the applicant controls the GitHub account.
 # Only an explicit false value turns it off (development only, enforced at startup); an
 # unrecognised value keeps it on and makes startup fail, so a typo never disables the proof.

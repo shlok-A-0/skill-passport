@@ -217,9 +217,27 @@ export default function CreatePassport() {
             <small>PDF · Max 10 MB</small>
             <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
-          <label className="cert-upload">Certificates <span className="muted">optional · PDF</span>
-            <input type="file" accept="application/pdf,.pdf" multiple onChange={(event) => { setCertificates(Array.from(event.target.files ?? [])); setError(""); }} />
+          <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs · select multiple</span>
+            <input type="file" accept="application/pdf,.pdf" multiple disabled={certificates.length >= 5} onChange={(event) => {
+              const selected = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              setCertificates((current) => {
+                const remaining = 5 - current.length;
+                if (selected.length > remaining) {
+                  setError("Upload no more than 5 certificates. Extra selected files were not added.");
+                  return [...current, ...selected.slice(0, remaining)];
+                }
+                setError("");
+                return [...current, ...selected];
+              });
+            }} />
           </label>
+          {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
+            {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
+              <span>{certificate.name}</span>
+              <button type="button" onClick={() => { setCertificates((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
+            </li>)}
+          </ul>}
           <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => { setDemo(event.target.checked); setError(""); }} /> Mark this passport as <strong>DEMO DATA</strong></label>
           {!demo && (
             <div className="notice notice-warning">

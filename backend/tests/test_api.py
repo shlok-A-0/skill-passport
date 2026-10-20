@@ -62,8 +62,10 @@ def fake_passport(passport_id: str) -> dict:
 
 def test_create_job_persist_and_get_passport(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
+    received_certificates = []
 
     def fake_runner(job_id, username, role, resume, certificates, is_demo):
+        received_certificates.extend(certificates)
         passport = fake_passport(job_id)
         passport["github_username"] = username
         passport["is_demo"] = is_demo
@@ -79,9 +81,14 @@ def test_create_job_persist_and_get_passport(tmp_path, monkeypatch) -> None:
             "target_role": "backend-intern",
             "is_demo": "true",
         },
-        files={"resume": ("demo.pdf", b"%PDF-1.4 demo", "application/pdf")},
+        files=[
+            ("resume", ("demo.pdf", b"%PDF-1.4 demo", "application/pdf")),
+            ("certificates", ("course.pdf", b"%PDF-1.4 course", "application/pdf")),
+            ("certificates", ("award.pdf", b"%PDF-1.4 award", "application/pdf")),
+        ],
     )
     assert response.status_code == 202
+    assert received_certificates == [b"%PDF-1.4 course", b"%PDF-1.4 award"]
     job_id = response.json()["job_id"]
     access_token = response.json()["access_token"]
     assert access_token

@@ -38,6 +38,11 @@ def build_coverage(ingestion: dict[str, Any]) -> dict[str, Any]:
             notes.append(f"Tree truncated for repo {repo['name']}: GitHub returned only part of the file list.")
         if dropped:
             notes.append(f"{dropped} file(s) from {repo['name']} were read but left out of the AI proposal step (line limit).")
+        supporting_skipped = repo.get("supporting_files_not_read", 0)
+        if supporting_skipped:
+            notes.append(
+                f"{supporting_skipped} dependency or configuration file(s) from {repo['name']} were not read (supporting-file budget)."
+            )
     return {
         "repos_listed": ingestion.get("repos_listed", len(repos)),
         "repos_analysed": len(repos),
