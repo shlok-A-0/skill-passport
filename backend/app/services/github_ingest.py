@@ -10,6 +10,7 @@ from urllib.parse import quote
 import httpx
 
 from app.config import CACHE_DIR, GITHUB_TOKEN
+from app.services.json_cache import write_json_cache
 
 API_ROOT = "https://api.github.com"
 DEPENDENCY_FILES = {
@@ -866,8 +867,8 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
         "repos_listed": len(repositories),
         "skipped_repos": skipped_repos,
     }
-    cache_path.write_text(
-        json.dumps({"schema_version": CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": result}),
-        encoding="utf-8",
+    write_json_cache(
+        cache_path,
+        {"schema_version": CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": result},
     )
     return result

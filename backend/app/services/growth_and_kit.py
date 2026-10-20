@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.config import CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
 from app.services.gemini import generate_json
 from app.services.framework import skill_map
+from app.services.json_cache import write_json_cache
 
 
 class GrowthTask(BaseModel):
@@ -199,7 +200,7 @@ def generate_growth_and_kit(
             cached = parse_growth_and_kit(cache_path.read_text(encoding="utf-8"))
             return _usable_items(cached, expected_growth_ids, expected_interview_ids, repo_names)
         except (ValueError, ValidationError):
-            pass  # unusable cache entry: ask Gemini again
+            cache_path.unlink(missing_ok=True)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = prompt
@@ -211,7 +212,7 @@ def generate_growth_and_kit(
                 parse_growth_and_kit(response_text),
                 expected_growth_ids, expected_interview_ids, repo_names,
             )
-            cache_path.write_text(json.dumps(payload), encoding="utf-8")
+            write_json_cache(cache_path, payload)
             return payload
         except (ValueError, ValidationError) as exc:
             last_error = exc

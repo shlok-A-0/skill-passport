@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.config import CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
 from app.services.gemini import generate_json
 from app.services.framework import get_skills
+from app.services.json_cache import write_json_cache
 
 
 class ProposedClaim(BaseModel):
@@ -147,7 +148,7 @@ def propose_claims(
         try:
             proposal = _lenient_proposal(response_text)
             payload = proposal.model_dump(mode="json")
-            cache_path.write_text(json.dumps(payload), encoding="utf-8")
+            write_json_cache(cache_path, payload)
             return payload["claims"]
         except (ValueError, ValidationError) as exc:
             last_error = exc
