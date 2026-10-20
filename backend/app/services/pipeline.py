@@ -34,6 +34,28 @@ def _redact_mentions(items: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
+def _preserve_missing_skills(
+    previous_skills: list[dict[str, Any]], current_skills: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Keep prior skills visible when fresh checks find no current support for them."""
+    current_ids = {item.get("skill_id") for item in current_skills}
+    for previous in previous_skills:
+        skill_id = previous.get("skill_id")
+        if not isinstance(skill_id, str) or not skill_id or skill_id in current_ids:
+            continue
+        current_skills.append(
+            {
+                "skill_id": skill_id,
+                "name": previous.get("name") or skill_id,
+                "level": "Claimed",
+                "certified": False,
+                "evidence": [],
+            }
+        )
+        current_ids.add(skill_id)
+    return current_skills
+
+
 def build_passport(
     github_username: str,
     target_role: str,
@@ -103,6 +125,10 @@ def build_passport(
     # Earlier-source matches and citations with no candidate-written lines are removed before
     # role matching, so the match sees the final levels.
     exclude_uncounted_citations(verified, ingestion["repos"])
+    if existing:
+        verified["skills"] = _preserve_missing_skills(
+            existing.get("skills", []), verified["skills"]
+        )
     progress("Matching role")
     coverage = build_coverage(ingestion)
     role_match = match_role(verified["skills"], target_role, coverage)

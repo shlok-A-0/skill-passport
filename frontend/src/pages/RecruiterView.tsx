@@ -150,9 +150,9 @@ export default function RecruiterView() {
             {claimedSkills.length ? (
               <>
                 <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>Listed on resume. No evidence found in the analysed files.</p>
+                <p>These skills may be listed on the resume or certificates, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
               </>
-            ) : <p>No resume-only claims in this passport.</p>}
+            ) : <p>No unverified claims in this passport.</p>}
           </section>
           <details className="panel interview-summary">
             <summary><span><div className="eyebrow">DEFEND-YOUR-WORK KIT</div><strong>Interview questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>

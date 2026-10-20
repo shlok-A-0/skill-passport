@@ -12,7 +12,7 @@ export const LEVEL_LABELS: Record<Level, string> = {
 
 /** Student-facing definitions (the Evidence Ladder legend). Evidence of use, never ability. */
 export const LEVEL_HELP_STUDENT: Record<Level, string> = {
-  Claimed: "Mentioned on your resume or a certificate; no evidence in the analysed files.",
+  Claimed: "Mentioned on your resume or a certificate, found only in uncommitted files, or retained from an earlier check; no current evidence was found in the analysed files.",
   Used: "Listed in a dependency or config file you committed to.",
   Applied: "Used in source code you committed to (exact lines cited).",
   Demonstrated: "Applied, and exercised by tests you committed to that target that code.",
@@ -20,7 +20,7 @@ export const LEVEL_HELP_STUDENT: Record<Level, string> = {
 
 /** Neutral definitions for tooltips seen by anyone. */
 export const LEVEL_HELP: Record<Level, string> = {
-  Claimed: "Mentioned on the resume or a certificate; no evidence in the analysed files.",
+  Claimed: "Mentioned on the resume or a certificate, found only in uncommitted files, or retained from an earlier check; no current evidence was found in the analysed files.",
   Used: "Listed in a dependency or config file the candidate committed to.",
   Applied: "Used in source code the candidate committed to (exact lines cited).",
   Demonstrated: "Applied, and exercised by tests the candidate committed to that target that code.",

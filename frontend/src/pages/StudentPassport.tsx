@@ -183,11 +183,11 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           </section>
           {claimed.length > 0 && (
             <section className="panel claimed-panel">
-              <div className="panel-heading"><div><div className="eyebrow">SEPARATE · NEVER COUNTED AS MET</div><h2>On your resume, not yet evidenced</h2></div><span className="count-tag">{claimed.length}</span></div>
+              <div className="panel-heading"><div><div className="eyebrow">SEPARATE · NEVER COUNTED AS MET</div><h2>Claimed, not yet evidenced</h2></div><span className="count-tag">{claimed.length}</span></div>
               <div className="claimed-skills">{claimed.map((skill) => (
                 <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
               ))}</div>
-              <p className="muted">Listed on resume or certificates, or found only in files you did not commit to. No qualifying evidence was found.</p>
+              <p className="muted">These skills may be listed on your resume or certificates, found only in files you did not commit to, or retained from an earlier check. No qualifying evidence was found in the latest analysis.</p>
             </section>
           )}
           <section className="panel growth-panel">

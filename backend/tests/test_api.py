@@ -836,8 +836,12 @@ def test_debug_routes_disabled_by_default(monkeypatch) -> None:
 
 def test_app_environment_defaults_to_production(monkeypatch) -> None:
     import importlib
+    import dotenv
     from app import config
 
+    # Ignore a developer's local backend/.env so this test measures unset-environment defaults.
+    original_load_dotenv = config.load_dotenv
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.delenv("APP_ENV", raising=False)
     importlib.reload(config)
     try:
@@ -846,6 +850,7 @@ def test_app_environment_defaults_to_production(monkeypatch) -> None:
     finally:
         monkeypatch.setenv("APP_ENV", "development")
         importlib.reload(config)
+        config.load_dotenv = original_load_dotenv
 
 
 def test_passport_create_atomic_reservation_duplicate_and_capacity(tmp_path, monkeypatch) -> None:
