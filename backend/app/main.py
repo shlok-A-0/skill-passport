@@ -171,6 +171,13 @@ class RequestBodyTooLarge(Exception):
 def startup() -> None:
     if REQUIRE_RECRUITER_AUTH and not RECRUITER_KEY:
         raise RuntimeError("RECRUITER_KEY must be configured when recruiter authentication is required.")
+    if not config.OWNERSHIP_PROOF_SETTING_VALID:
+        raise RuntimeError("REQUIRE_OWNERSHIP_PROOF must be true or false.")
+    if not config.REQUIRE_OWNERSHIP_PROOF and config.APP_ENV != "development":
+        raise RuntimeError(
+            "REQUIRE_OWNERSHIP_PROOF=false is only allowed with APP_ENV=development; "
+            "real passports must prove the applicant controls the GitHub account."
+        )
     reconcile_interrupted_jobs()
     prune_old_jobs()
     prune_old_rate_limits()
@@ -504,8 +511,8 @@ async def create_passport(
     # Demo passports are labelled DEMO DATA and skip the proof.
     if config.REQUIRE_OWNERSHIP_PROOF and not is_demo:
         try:
-            # Calls GitHub, so it runs off the event loop.
-            await run_in_threadpool(verify_challenge, ownership_challenge_id, github_username)
+            # Calls GitHub, so it runs off the event loop. The proof is bound to this job's passport.
+            await run_in_threadpool(verify_challenge, ownership_challenge_id, github_username, job_id)
         except OwnershipError as exc:
             fail_job(job_id, str(exc))
             raise HTTPException(status_code=403, detail=str(exc)) from exc

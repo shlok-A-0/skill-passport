@@ -122,8 +122,9 @@ def build_passport(
             f"({generation_error}). Verified evidence is unaffected; use Re-check to try again."
         )
     now = datetime.now(timezone.utc).isoformat()
+    new_passport_id = passport_id or str(uuid.uuid4())
     passport = {
-        "id": passport_id or str(uuid.uuid4()),
+        "id": new_passport_id,
         "created_at": (existing or {}).get("created_at") or now,
         "updated_at": now,
         "github_username": ingestion["username"],
@@ -144,8 +145,10 @@ def build_passport(
         "growth_tasks": generated["growth_tasks"],
         "interview_kit": generated["interview_kit"],
         "is_demo": is_demo or bool(existing and existing.get("is_demo")),
-        # Recruiter-only; student_view() removes it.
+        # Recruiter-only; student_view() removes it. Ownership counts only for a proof recorded
+        # against this passport's own creation.
         "identity": identity_signals(
+            new_passport_id,
             ingestion["username"],
             is_demo or bool(existing and existing.get("is_demo")),
             resume_logins,

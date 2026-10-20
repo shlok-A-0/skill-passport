@@ -4,9 +4,11 @@ Every other check shows that code was written by a GitHub account; none shows th
 applying controls that account, so anyone could submit a well-known developer's username. The
 applicant proves control by publishing a public gist whose description is a one-time code issued
 here (no OAuth app needed). For non-demo passports this is a hard gate before the job starts.
+A successful proof is recorded against the one passport whose creation it authorised, so a proof
+for a username never makes another passport for that username show as proven.
 
 Two advisory signals are stored with the passport for recruiters only: whether ownership was
-proven, and whether the resume links to the same GitHub account.
+proven for this passport, and whether the resume links to the same GitHub account.
 """
 
 import re
@@ -62,10 +64,15 @@ def _connect() -> sqlite3.Connection:
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             verified_at TEXT,
-            gist_url TEXT
+            gist_url TEXT,
+            passport_id TEXT
         )
         """
     )
+    try:  # databases created before proofs were bound to a passport
+        connection.execute("ALTER TABLE ownership_challenges ADD COLUMN passport_id TEXT")
+    except sqlite3.OperationalError:
+        pass
     return connection
 
 
@@ -125,8 +132,14 @@ def _fetch_recent_gists(username: str) -> list[dict[str, Any]]:
     return gists if isinstance(gists, list) else []
 
 
-def verify_challenge(challenge_id: str | None, github_username: str) -> dict[str, Any]:
-    """Check that `github_username` published the challenge code as a public gist. Single use."""
+def verify_challenge(challenge_id: str | None, github_username: str, passport_id: str) -> dict[str, Any]:
+    """Check that `github_username` published the challenge code as a public gist. Single use.
+
+    On success the proof is recorded against `passport_id`, the passport whose creation it
+    authorises; it never counts for any other passport.
+    """
+    if not passport_id:
+        raise ValueError("A proof must be bound to the passport it authorises.")
     if not challenge_id:
         raise OwnershipError(
             "Prove this GitHub account is yours first: get a verification code and publish it as a public gist."
@@ -164,27 +177,33 @@ def verify_challenge(challenge_id: str | None, github_username: str) -> dict[str
     verified_at = _now().isoformat()
     gist_url = gist.get("html_url")
     with _connect() as connection:
-        # Only an unused code can be marked, so two simultaneous requests can't both succeed.
+        # Only an unused code can be marked, so two simultaneous requests can't both succeed, and
+        # the passport it authorises is recorded in the same step.
         cursor = connection.execute(
-            "UPDATE ownership_challenges SET verified_at = ?, gist_url = ? WHERE id = ? AND verified_at IS NULL",
-            (verified_at, gist_url, challenge_id),
+            """
+            UPDATE ownership_challenges SET verified_at = ?, gist_url = ?, passport_id = ?
+            WHERE id = ? AND verified_at IS NULL
+            """,
+            (verified_at, gist_url, passport_id, challenge_id),
         )
     if cursor.rowcount == 0:
         raise OwnershipError("This verification code was already used. Get a new code.")
     return {"verified": True, "method": "gist", "verified_at": verified_at, "gist_url": gist_url}
 
 
-def latest_ownership(github_username: str) -> dict[str, Any] | None:
-    """The most recent successful ownership proof for this username, if any."""
+def ownership_for_passport(passport_id: str) -> dict[str, Any] | None:
+    """The successful ownership proof recorded for this passport's creation, if any."""
+    if not passport_id:
+        return None
     with _connect() as connection:
         row = connection.execute(
             """
-            SELECT * FROM ownership_challenges
-            WHERE lower(github_username) = lower(?) AND verified_at IS NOT NULL
+            SELECT github_username, verified_at, gist_url FROM ownership_challenges
+            WHERE passport_id = ? AND verified_at IS NOT NULL
             ORDER BY verified_at DESC
             LIMIT 1
             """,
-            ((github_username or "").strip(),),
+            (passport_id,),
         ).fetchone()
     return dict(row) if row else None
 
@@ -203,23 +222,28 @@ def _signal(signal_id: str, label: str, status: str, detail: str) -> dict[str, s
     return {"id": signal_id, "label": label, "status": status, "detail": detail}
 
 
-def ownership_signal(github_username: str, is_demo: bool) -> dict[str, str]:
-    proof = latest_ownership(github_username)
-    if proof:
-        return _signal(
-            "account_ownership", OWNERSHIP_LABEL, "ok",
-            f"Proven on {proof['verified_at'][:10]}: the applicant posted a one-time code as a public gist "
-            "from this account.",
-        )
+def ownership_signal(passport_id: str, github_username: str, is_demo: bool) -> dict[str, str]:
+    """ok only when this passport's own creation was authorised by a proof for this account."""
     if is_demo:
         return _signal(
             "account_ownership", OWNERSHIP_LABEL, "unknown",
-            "Demo passport (DEMO DATA); account ownership was not checked.",
+            "Demo passport (DEMO DATA); account ownership is not checked.",
         )
+    proof = ownership_for_passport(passport_id)
+    if proof and _same_login(proof["github_username"], github_username):
+        return {
+            **_signal(
+                "account_ownership", OWNERSHIP_LABEL, "ok",
+                f"Proven on {proof['verified_at'][:10]} for this passport: the applicant posted a one-time "
+                "code as a public gist from this account.",
+            ),
+            "verified_at": proof["verified_at"],
+            "gist_url": proof["gist_url"],
+        }
     return _signal(
         "account_ownership", OWNERSHIP_LABEL, "warn",
-        "Ownership of this GitHub account was never proven by the applicant. Anyone can enter a public "
-        "username; ask the candidate to verify.",
+        "This passport was created without proof that the applicant controls this GitHub account. "
+        "Anyone can enter a public username; ask the candidate to verify.",
     )
 
 
@@ -243,6 +267,7 @@ def resume_link_signal(github_username: str, logins: list[str]) -> dict[str, str
 
 
 def identity_signals(
+    passport_id: str,
     github_username: str,
     is_demo: bool,
     resume_logins: list[str] | None,
@@ -260,4 +285,4 @@ def identity_signals(
         )
     else:
         resume = resume_link_signal(github_username, resume_logins)
-    return [ownership_signal(github_username, is_demo), resume]
+    return [ownership_signal(passport_id, github_username, is_demo), resume]
