@@ -1,8 +1,9 @@
 import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, isMissingJobError, type OwnershipChallenge, type PassportJob, type Role } from "../api";
 import { nextJobPollDelay } from "../jobPolling";
+import { sameGitHubUsername } from "../ownership";
 
 const PROOF_REQUIRED = "Prove this GitHub account is yours first: get a verification code and publish it as a public gist.";
 
@@ -31,23 +32,36 @@ export default function CreatePassport() {
   const [challenge, setChallenge] = useState<OwnershipChallenge | null>(null);
   const [gettingCode, setGettingCode] = useState(false);
   const [copied, setCopied] = useState(false);
+  const usernameRef = useRef(username);
+  const challengeRequestId = useRef(0);
 
   function changeUsername(value: string) {
+    const changed = !sameGitHubUsername(usernameRef.current, value);
+    usernameRef.current = value;
     setUsername(value);
-    // A code only proves the account it was issued for.
-    if (challenge && challenge.github_username.toLowerCase() !== value.trim().toLowerCase()) setChallenge(null);
+    if (changed) {
+      // A code only proves the account it was issued for; invalidate in-flight responses too.
+      challengeRequestId.current += 1;
+      setChallenge(null);
+      setGettingCode(false);
+    }
   }
 
   async function getCode() {
+    const requestedUsername = username.trim();
+    const requestId = ++challengeRequestId.current;
     setError("");
     setGettingCode(true);
     try {
-      setChallenge(await api.ownershipChallenge(username.trim()));
+      const nextChallenge = await api.ownershipChallenge(requestedUsername);
+      if (requestId !== challengeRequestId.current || !sameGitHubUsername(requestedUsername, usernameRef.current)) return;
+      setChallenge(nextChallenge);
       setCopied(false);
     } catch (reason) {
+      if (requestId !== challengeRequestId.current || !sameGitHubUsername(requestedUsername, usernameRef.current)) return;
       setError(reason instanceof Error ? reason.message : "Could not get a verification code.");
     } finally {
-      setGettingCode(false);
+      if (requestId === challengeRequestId.current) setGettingCode(false);
     }
   }
 
@@ -129,7 +143,8 @@ export default function CreatePassport() {
       setError("Add a GitHub username, a resume PDF, and a target role.");
       return;
     }
-    if (!demo && !challenge) {
+    if (!demo && (!challenge || !sameGitHubUsername(challenge.github_username, username))) {
+      if (challenge) setChallenge(null);
       setError(PROOF_REQUIRED);
       return;
     }
