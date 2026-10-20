@@ -10,7 +10,7 @@ import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
-import { consecutivePollFailuresAfterRequest, nextJobPollDelay } from "../jobPolling";
+import { MAX_CONSECUTIVE_POLL_FAILURES, nextJobPollDelay, pollJobAttempt } from "../jobPolling";
 
 const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
   (level) => [level, LEVEL_HELP_STUDENT[level]] as const,
@@ -68,45 +68,40 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     let delay = 1500;
     let consecutiveFailures = 0;
     const poll = async () => {
-      try {
-        const job = await api.job(recheckJobId);
-        if (!active) return;
-        if (job.status === "done") {
-          await load();
-          if (!active) return;
-          consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, true);
-          if (active) {
-            setError("");
-            setRecheckJobId(null);
-            setBusy(false);
-          }
-          return;
-        }
-        if (job.status === "failed") {
-          setError(job.error || "Re-check failed. Please try again.");
-          setRecheckJobId(null);
-          setBusy(false);
-          return;
-        }
-        consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, true);
-        delay = 1500;
-      } catch (reason) {
-        if (!active) return;
-        if (isMissingJobError(reason)) {
+      const attempt = await pollJobAttempt(
+        consecutiveFailures,
+        () => api.job(recheckJobId),
+        async () => { await load(); },
+      );
+      if (!active) return;
+      consecutiveFailures = attempt.consecutiveFailures;
+      if (!attempt.ok) {
+        if (isMissingJobError(attempt.error)) {
           api.clearPendingRecheck(recheckJobId);
           setError("This re-check is no longer available. Please try again.");
           setRecheckJobId(null);
           setBusy(false);
           return;
         }
-        consecutiveFailures = consecutivePollFailuresAfterRequest(consecutiveFailures, false);
-        if (consecutiveFailures >= 8) {
+        if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
           setPollingPaused(true);
           setError("Could not reach the server to check this re-check. It may still be running; retry the status check when your connection is back.");
           return;
         }
         setError("Connection interrupted. Retrying re-check status automatically…");
         delay = nextJobPollDelay(delay);
+      } else if (attempt.job.status === "done") {
+        setError("");
+        setRecheckJobId(null);
+        setBusy(false);
+        return;
+      } else if (attempt.job.status === "failed") {
+        setError(attempt.job.error || "Re-check failed. Please try again.");
+        setRecheckJobId(null);
+        setBusy(false);
+        return;
+      } else {
+        delay = 1500;
       }
       timer = window.setTimeout(poll, delay);
     };
