@@ -18,7 +18,11 @@ HTTPS to GitHub uses the Windows certificate store (via `truststore`), so it als
 
 Always activate this `backend\.venv` before installing or running; packages installed into another Python (or the old `.venv` in the project root) won't be seen by the server. Check with `python -c "import httpx, truststore"`.
 
-`backend/.env` must contain `GITHUB_TOKEN`, `GEMINI_API_KEY`, and `GEMINI_MODEL`. Set `APP_ENV=development` explicitly for local use; all other environments require `RECRUITER_KEY` and the backend refuses to start without it. `FRONTEND_ORIGINS` (comma-separated) lists the frontend URLs allowed to call the API; it defaults to `http://localhost:5173`, so add your Vercel URL when deploying. Debug endpoints are disabled unless `ALLOW_DEBUG_ENDPOINTS=true` is explicitly set. Passport creation returns an owner access token that the creating browser tab keeps in session storage; it is required for job polling, review requests and passport re-checks. The API rejects request bodies larger than 26 MB before multipart parsing; configure the deployment's reverse proxy or hosting platform with a matching or smaller request-body limit. The existing `.env` is ignored by Git; do not replace it with `.env.example`. The current Gemini model setting is `gemini-flash-latest`.
+`backend/.env` must contain `GITHUB_TOKEN`, `GEMINI_API_KEY`, and `GEMINI_MODEL`. Set `APP_ENV=development` explicitly for local use. Production requires a `RECRUITER_ACCOUNTS` JSON object with a distinct named key per recruiter; for example `{"reviewer-alice":"<at-least-32-random-characters>"}`. Give each recruiter their own secret in the `X-Recruiter-Key` header; remove one entry and restart to revoke that recruiter's access. The deprecated single `RECRUITER_KEY` is accepted only in local development. Marking a review records the recruiter's name in the review-request audit trail. `FRONTEND_ORIGINS` (comma-separated) lists the frontend URLs allowed to call the API; it defaults to `http://localhost:5173`, so add your Vercel URL when deploying. Debug endpoints are disabled unless `ALLOW_DEBUG_ENDPOINTS=true` is explicitly set. Passport creation returns an owner access token that the creating browser tab keeps in session storage; it is required for job polling, review requests and passport re-checks. The API rejects request bodies larger than 26 MB before multipart parsing; configure the deployment's reverse proxy or hosting platform with a matching or smaller request-body limit. The existing `.env` is ignored by Git; do not replace it with `.env.example`. The current Gemini model setting is `gemini-flash-latest`.
+
+Certificates are optional: upload up to five PDF files (10 MB each, 25 MB total with the resume). You can select several in one file-picker window or add more in a later selection; selected files are listed so you can remove one before submitting.
+
+**Deployment boundary:** the backend stores passports and job status in SQLite and runs generation in the web process after returning the request. Deploy one backend instance with a persistent disk for the database and cache. If that process restarts during generation, the job is marked failed and the user must retry; uploaded PDFs are not retained for automatic recovery. Do not scale this setup across ephemeral or independent instances. Reliable horizontal scaling needs a separate durable worker queue and shared persistent storage, designed so raw resumes are not retained longer than necessary. Keep the current five-job limit until production metrics justify changing it.
 
 The ownership check confirms that the applicant can post a one-time code from the GitHub account used for the passport. It does not establish the applicant’s real-world identity.
 
@@ -38,7 +42,10 @@ npm run dev
 - Recruiter evidence review (all signals, evidence records, review requests): <http://localhost:5173/recruiter/{passport-id}/evidence>
 - Placement Cell: <http://localhost:5173/placement>
 - FastAPI docs: <http://localhost:8000/docs>
-- Health check: <http://localhost:8000/health>
+- Liveness check: <http://localhost:8000/health>
+- Readiness check (database and required production integrations): <http://localhost:8000/ready>
+
+Recruiter cohort list endpoints return at most 50 passports by default and support `limit` (1–100) and `offset` query parameters. The Placement Cell loads more on demand; its current CSV export covers the passports loaded in the page.
 
 Three fictional resume PDFs for local demonstrations are in `samples/`. Each includes a visible `DEMO DATA` label. Mark generated passports as demo data in the create form.
 

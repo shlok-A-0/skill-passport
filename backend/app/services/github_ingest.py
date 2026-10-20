@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import time
@@ -43,6 +44,7 @@ MAX_SOURCE_FILES = 6
 MAX_SOURCE_BYTES = 80_000
 MIN_PREFERRED_LINES = 15  # shorter files are only used when nothing longer is left
 MAX_SOURCE_FETCHES = 15
+MAX_SUPPORTING_FILE_FETCHES = 12  # dependency/config files read per repo, after size filtering
 RECENT_COMMITS = 10  # the user's latest commits whose changed files are read first
 CACHE_TTL_SECONDS = 6 * 60 * 60
 DOCKER_FILES = {
@@ -55,7 +57,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 9
+CACHE_SCHEMA_VERSION = 10
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 
 
@@ -182,7 +184,7 @@ def _recently_changed_paths(
             detail = _request(client, f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits/{sha}")
         except GitHubRateLimitError:
             raise
-        except GitHubIngestError:
+        except (GitHubIngestError, httpx.HTTPError, ValueError):
             continue
         for item in detail.get("files") or []:
             path = item.get("filename")
@@ -338,7 +340,7 @@ def _test_authorship(
             authored[path] = bool(_file_authorship(client, owner, repo, path, username))
         except GitHubRateLimitError:
             raise
-        except GitHubIngestError:
+        except (GitHubIngestError, httpx.HTTPError, ValueError):
             pass
     return authored
 
@@ -390,7 +392,7 @@ def _authored_paths(
             authored[path] = bool(_file_authorship(client, owner, repo, path, username))
         except GitHubRateLimitError:
             raise
-        except GitHubIngestError:
+        except (GitHubIngestError, httpx.HTTPError, ValueError):
             pass
     return authored
 
@@ -420,7 +422,7 @@ def _optional_content(
         return _get_file_content(client, owner, repo, path, branch)
     except GitHubRateLimitError:
         raise
-    except (GitHubIngestError, httpx.HTTPError):
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None
 
 
@@ -451,10 +453,15 @@ def _count_commits(
         response = _get(
             client, f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits", params=params
         )
-    except GitHubIngestError:
+    except GitHubRateLimitError:
+        raise
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None
     last = re.search(r'[?&]page=(\d+)>; rel="last"', response.headers.get("Link", ""))
-    return int(last.group(1)) if last else len(response.json())
+    try:
+        return int(last.group(1)) if last else len(response.json())
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None
 
 
 def _user_commits(
@@ -469,7 +476,7 @@ def _user_commits(
         )
     except GitHubRateLimitError:
         raise
-    except GitHubIngestError:
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None, False  # recorded as unknown
     if not isinstance(commits, list):
         return None, False
@@ -503,6 +510,8 @@ def oldest_commit_date(client: httpx.Client, owner: str, repo: str, path: str) -
         if last:
             response = _get(client, url, params={"path": path, "per_page": 1, "page": int(last.group(1))})
         commits = response.json()
+    except GitHubRateLimitError:
+        raise
     except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None
     if not isinstance(commits, list) or not commits:
@@ -523,7 +532,7 @@ def _fetch_ci_status(
         )
     except GitHubRateLimitError:
         raise
-    except GitHubIngestError:
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None
     check_runs = data.get("check_runs", [])
     total = data.get("total_count", len(check_runs))
@@ -589,7 +598,9 @@ def _file_history(
             f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits",
             params={"path": path, "per_page": HISTORY_PAGE_SIZE},
         )
-    except GitHubIngestError:
+    except GitHubRateLimitError:
+        raise
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return None
     if not commits:
         return None
@@ -617,7 +628,9 @@ def _file_history(
             client,
             f"{API_ROOT}/repos/{quote(owner)}/{quote(repo)}/commits/{creator['sha']}",
         )
-    except GitHubIngestError:
+    except GitHubRateLimitError:
+        raise
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
         return history
     files = detail.get("files") or []
     history["creation"] = {
@@ -673,6 +686,29 @@ def _file_blame(
         ]
         for item in ranges
     ]
+
+
+def _source_metadata(
+    client: httpx.Client, owner: str, repo: str, head_sha: str, path: str,
+    username: str,
+) -> dict[str, Any]:
+    """Fetch independent per-file attribution signals with bounded caller concurrency."""
+    try:
+        authored_shas = _file_authorship(client, owner, repo, path, username)
+    except GitHubRateLimitError:
+        raise
+    except (GitHubIngestError, httpx.HTTPError, ValueError):
+        authored_shas = []
+    history = _file_history(client, owner, repo, path, username)
+    first_commit_date = (history or {}).get("first_commit_date")
+    if history and not first_commit_date:
+        first_commit_date = oldest_commit_date(client, owner, repo, path)
+    return {
+        "authored_shas": authored_shas,
+        "history": history,
+        "blame": _file_blame(client, owner, repo, head_sha, path),
+        "first_commit_date": first_commit_date,
+    }
 
 
 def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
@@ -756,7 +792,10 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 for item in tree_response.get("tree", [])
                 if item.get("type") == "blob"
             ]
-            tree_set = set(tree)
+            sizes = {
+                item["path"]: item.get("size", MAX_FILE_BYTES + 1)
+                for item in tree_response.get("tree", []) if item.get("type") == "blob"
+            }
             dependency_paths = [
                 path for path in tree
                 if Path(path).name.lower() in DEPENDENCY_FILES
@@ -772,31 +811,36 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 or path in {"next.config.js", "next.config.ts"}
             ]
             tests = [path for path in tree if is_test_path(path)]
+            supporting_paths = sorted(
+                set(dependency_paths + configs),
+                key=lambda path: (len(path.split("/")), len(path), path.casefold()),
+            )
+            readable_supporting_paths = [
+                path for path in supporting_paths if sizes.get(path, MAX_FILE_BYTES + 1) <= MAX_FILE_BYTES
+            ]
+            selected_supporting_paths = set(readable_supporting_paths[:MAX_SUPPORTING_FILE_FETCHES])
+            supporting_files_too_large = len(supporting_paths) - len(readable_supporting_paths)
+            supporting_files_over_budget = len(readable_supporting_paths) - len(selected_supporting_paths)
+            supporting_files_not_read = len(supporting_paths) - len(selected_supporting_paths)
             dependency_contents = {}
             for path in dependency_paths:
+                if path not in selected_supporting_paths:
+                    continue
                 content = _optional_content(client, owner, name, path, branch)
                 if content is not None:
                     dependency_contents[path] = content
             config_contents = {}
             for path in configs:
-                blob = next(
-                    (
-                        item for item in tree_response.get("tree", [])
-                        if item.get("path") == path and item.get("type") == "blob"
-                    ),
-                    None,
-                )
-                if blob and blob.get("size", MAX_FILE_BYTES + 1) <= MAX_FILE_BYTES:
-                    content = _optional_content(client, owner, name, path, branch)
-                    if content is not None:
-                        config_contents[path] = content
+                if path not in selected_supporting_paths:
+                    continue
+                content = _optional_content(client, owner, name, path, branch)
+                if content is not None:
+                    config_contents[path] = content
+            supporting_files_fetched = set(dependency_contents) | set(config_contents)
+            supporting_files_failed_to_fetch = len(selected_supporting_paths - supporting_files_fetched)
 
             user_commits, user_commits_complete = _user_commits(client, owner, name, username)
             recent = _recently_changed_paths(client, owner, name, user_commits or [])
-            sizes = {
-                item["path"]: item.get("size", MAX_FILE_BYTES + 1)
-                for item in tree_response.get("tree", []) if item.get("type") == "blob"
-            }
             skip_reasons: dict[str, int] = {}
             selected = _select_source_files(
                 _ordered_candidates(tree, recent), sizes,
@@ -804,31 +848,32 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                 skip_reasons,
             )
             source_files: dict[str, dict[str, Any]] = {}
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="github-file-meta") as executor:
+                metadata_futures = {
+                    path: executor.submit(
+                        _source_metadata, client, owner, name, head_sha, path, username,
+                    )
+                    for path in selected
+                }
+                metadata_by_path = {path: future.result() for path, future in metadata_futures.items()}
             for path, (content, lines) in selected.items():
-                try:
-                    commits = _file_authorship(client, owner, name, path, username)
-                except GitHubRateLimitError:
-                    raise
-                except GitHubIngestError:
-                    commits = []  # authorship unknown: the claim's "authored" check fails
-                history = _file_history(client, owner, name, path, username)
+                metadata = metadata_by_path[path]
                 source_files[path] = {
                     "content": content,
                     "lines": lines,
-                    "authored_shas": commits,
+                    "authored_shas": metadata["authored_shas"],
                     "line_count": len(lines),
-                    "history": history,
-                    "blame": _file_blame(client, owner, name, head_sha, path),
+                    "history": metadata["history"],
+                    "blame": metadata["blame"],
                     "commit_verification": head_verification,
                     "commit_verification_scope": "head",
                     # When this file first appeared here; compared with matches found elsewhere.
-                    "first_commit_date": (history or {}).get("first_commit_date")
-                    or (oldest_commit_date(client, owner, name, path) if history else None),
+                    "first_commit_date": metadata["first_commit_date"],
                     "retrieved_at": retrieved_at,
                 }
 
             authored_paths = _authored_paths(
-                client, owner, name, [*dependency_paths, *config_contents], username
+                client, owner, name, [*dependency_contents, *config_contents], username
             )
             test_contents = _test_contents(
                 tests, source_files, sizes, lambda path: _optional_content(client, owner, name, path, branch),
@@ -863,6 +908,10 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     "authored_paths": authored_paths,
                     "source_file_count": sum(1 for path in tree if _source_candidate(path)),
                     "coverage": _repo_coverage(tree, source_files, skip_reasons, tree_response),
+                    "supporting_files_not_read": supporting_files_not_read,
+                    "supporting_files_too_large": supporting_files_too_large,
+                    "supporting_files_over_budget": supporting_files_over_budget,
+                    "supporting_files_failed_to_fetch": supporting_files_failed_to_fetch,
                     "user_commits": user_commits,
                     "user_commits_complete": user_commits_complete,
                     "commit_counts": {

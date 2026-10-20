@@ -45,7 +45,7 @@ export default function CoverageSummary({ coverage }: { coverage?: Coverage }) {
           {coverage.repos_skipped.length > 0 && (
             <p><strong>Repositories not analysed:</strong> {coverage.repos_skipped.map((repo) => `${repo.name} (${repo.reason})`).join(", ")}</p>
           )}
-          {coverage.notes.map((note) => <p key={note}>{note}</p>)}
+          {coverage.notes.map((note, index) => <p key={`${index}-${note}`}>{note}</p>)}
           <p className="muted">Skills not found here may still be in files that weren't read.</p>
         </div>
       )}

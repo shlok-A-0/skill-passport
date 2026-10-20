@@ -118,10 +118,15 @@ def initialize_storage() -> None:
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
-                reviewed_at TEXT
+                reviewed_at TEXT,
+                reviewer_id TEXT
             )
             """
         )
+        try:
+            connection.execute("ALTER TABLE review_requests ADD COLUMN reviewer_id TEXT")
+        except sqlite3.OperationalError:
+            pass
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS rate_limits (
@@ -173,6 +178,23 @@ def initialize_storage() -> None:
     _initialized_dbs.add(db_key)
 
 
+def check_storage_ready() -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO passports (id, created_at, github_username, target_role, payload)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), datetime.now(timezone.utc).isoformat(), "readiness", "readiness", "{}"),
+        )
+        connection.execute(
+            "INSERT INTO jobs (id, status, step, created_at) VALUES (?, 'queued', 'Queued', ?)",
+            (str(uuid.uuid4()), datetime.now(timezone.utc).isoformat()),
+        )
+        connection.rollback()
+
+
 def save_passport(passport: dict[str, Any]) -> None:
     initialize_storage()
     with _connect() as connection:
@@ -212,6 +234,47 @@ def list_passports() -> list[dict[str, Any]]:
             "SELECT payload FROM passports ORDER BY created_at DESC, id"
         ).fetchall()
     return [json.loads(row["payload"]) for row in rows]
+
+
+def list_passports_page(limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
+    """Return a bounded, newest-first page and the total count."""
+    initialize_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT payload FROM passports ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        total = connection.execute("SELECT COUNT(*) AS count FROM passports").fetchone()["count"]
+    return [json.loads(row["payload"]) for row in rows], total
+
+
+def list_latest_passports_page(limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
+    """Return the newest-created passport per student before applying pagination."""
+    initialize_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            WITH ranked AS (
+                SELECT id, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY lower(github_username)
+                           ORDER BY created_at DESC, id
+                       ) AS student_rank
+                FROM passports
+            )
+            SELECT passports.payload
+            FROM passports
+            JOIN ranked ON ranked.id = passports.id
+            WHERE ranked.student_rank = 1
+            ORDER BY ranked.created_at DESC, ranked.id
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total = connection.execute(
+            "SELECT COUNT(DISTINCT lower(github_username)) AS count FROM passports"
+        ).fetchone()["count"]
+    return [json.loads(row["payload"]) for row in rows], total
 
 
 def create_review_request(
@@ -263,24 +326,35 @@ def list_review_requests(passport_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def mark_review_request_reviewed(request_id: str) -> dict[str, Any] | None:
+def mark_review_request_reviewed(request_id: str, reviewer_id: str) -> dict[str, Any] | None:
     initialize_storage()
     with _connect() as connection:
         connection.execute(
-            "UPDATE review_requests SET status = 'reviewed', reviewed_at = ? WHERE id = ?",
-            (datetime.now(timezone.utc).isoformat(), request_id),
+            """
+            UPDATE review_requests
+            SET status = 'reviewed', reviewed_at = ?, reviewer_id = ?
+            WHERE id = ? AND status = 'open'
+            """,
+            (datetime.now(timezone.utc).isoformat(), reviewer_id, request_id),
         )
         row = connection.execute("SELECT * FROM review_requests WHERE id = ?", (request_id,)).fetchone()
     return dict(row) if row else None
 
 
-def get_review_requests_by_passports() -> dict[str, list[dict[str, Any]]]:
-    """Batch fetch all review requests grouped by passport_id (eliminates N+1 queries)."""
+def get_review_requests_by_passports(passport_ids: list[str] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Batch fetch requests for a passport page (or all when called without IDs)."""
+    if passport_ids is not None and not passport_ids:
+        return {}
     initialize_storage()
     with _connect() as connection:
-        rows = connection.execute(
-            "SELECT * FROM review_requests ORDER BY created_at, id"
-        ).fetchall()
+        if passport_ids is None:
+            rows = connection.execute("SELECT * FROM review_requests ORDER BY created_at, id").fetchall()
+        else:
+            placeholders = ",".join("?" for _ in passport_ids)
+            rows = connection.execute(
+                f"SELECT * FROM review_requests WHERE passport_id IN ({placeholders}) ORDER BY created_at, id",
+                passport_ids,
+            ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         item = dict(row)

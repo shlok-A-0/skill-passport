@@ -370,12 +370,15 @@ def test_identity_signals_keep_the_resume_signal_on_recheck_and_are_recruiter_on
 def startup_settings(monkeypatch):
     """Set the ownership/environment settings startup() checks; recruiter auth is satisfied."""
     monkeypatch.setattr(main_module, "REQUIRE_RECRUITER_AUTH", True)
-    monkeypatch.setattr(main_module, "RECRUITER_KEY", "configured")
+    monkeypatch.setattr(main_module, "RECRUITER_ACCOUNTS", {"test-recruiter": "r" * 40})
+    monkeypatch.setattr(config, "RECRUITER_ACCOUNTS_SETTING_VALID", True)
 
     def apply(app_env: str, require_proof: bool, valid: bool = True) -> None:
         monkeypatch.setattr(config, "APP_ENV", app_env)
         monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", require_proof)
         monkeypatch.setattr(config, "OWNERSHIP_PROOF_SETTING_VALID", valid)
+        monkeypatch.setattr(config, "GITHUB_TOKEN", "test-github-token")
+        monkeypatch.setattr(config, "GEMINI_API_KEY", "test-gemini-key")
 
     return apply
 
@@ -390,6 +393,14 @@ def test_production_starts_with_the_ownership_proof_on(startup_settings) -> None
     startup_settings("production", require_proof=True)
     with TestClient(main_module.app) as client:
         assert client.get("/health").status_code == 200
+
+
+def test_production_startup_requires_external_api_credentials(startup_settings, monkeypatch) -> None:
+    startup_settings("production", require_proof=True)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    with pytest.raises(RuntimeError, match="Missing required production setting.*GEMINI_API_KEY"):
+        with TestClient(main_module.app):
+            pass
 
 
 @pytest.mark.parametrize("app_env", ["production", "staging", "dev", ""])

@@ -1,4 +1,5 @@
 import ipaddress
+import json
 import os
 from pathlib import Path
 
@@ -40,7 +41,7 @@ TRUSTED_PROXY_IPS = frozenset(
     if (normalized := _normalize_ip(address)) is not None
 )
 # Bump whenever verification or level rules change; stored in every evidence record.
-VERIFIER_VERSION = "2026-10-20.2"
+VERIFIER_VERSION = "2026-10-21"
 # Non-demo passports need a public-gist proof that the applicant controls the GitHub account.
 # Only an explicit false value turns it off (development only, enforced at startup); an
 # unrecognised value keeps it on and makes startup fail, so a typo never disables the proof.
@@ -56,6 +57,23 @@ REQUIRE_RECRUITER_AUTH = (
 )
 # When set, the recruiter review endpoints require a matching X-Recruiter-Key header.
 RECRUITER_KEY = os.getenv("RECRUITER_KEY", "")
+# Production uses individually named keys so one recruiter can be revoked without rotating
+# everyone else's credential. Example: {"recruiter-a":"<random secret>", ...}.
+_RECRUITER_ACCOUNTS_RAW = os.getenv("RECRUITER_ACCOUNTS", "")
+try:
+    _recruiter_accounts = json.loads(_RECRUITER_ACCOUNTS_RAW or "{}")
+except json.JSONDecodeError:
+    _recruiter_accounts = None
+RECRUITER_ACCOUNTS_SETTING_VALID = (
+    isinstance(_recruiter_accounts, dict)
+    and all(
+        isinstance(name, str) and 1 <= len(name) <= 64
+        and isinstance(secret, str) and len(secret) >= 32
+        for name, secret in _recruiter_accounts.items()
+    )
+    and len(set(_recruiter_accounts.values())) == len(_recruiter_accounts)
+)
+RECRUITER_ACCOUNTS = _recruiter_accounts if RECRUITER_ACCOUNTS_SETTING_VALID else {}
 # Debug endpoints require explicit opt-in in every environment.
 ALLOW_DEBUG_ENDPOINTS = os.getenv("ALLOW_DEBUG_ENDPOINTS", "false").lower() in ("true", "1", "yes")
 CACHE_DIR = BASE_DIR / "cache"

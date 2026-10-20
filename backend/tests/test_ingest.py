@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -144,6 +145,25 @@ def test_user_commit_fetch_errors_are_recorded_as_unknown(monkeypatch) -> None:
         github_ingest._user_commits(object(), "student", "empty", "student")
 
 
+def test_optional_history_network_failures_do_not_abort_ingestion(monkeypatch) -> None:
+    def interrupted(*_args, **_kwargs):
+        raise httpx.ReadTimeout("temporary network failure")
+
+    monkeypatch.setattr(github_ingest, "_request", interrupted)
+    assert github_ingest._recently_changed_paths(object(), "student", "demo", [{"sha": "abc"}]) == []
+    assert github_ingest._user_commits(object(), "student", "demo", "student") == (None, False)
+    assert github_ingest._file_history(object(), "student", "demo", "app.py", "student") is None
+
+
+def test_optional_commit_count_does_not_hide_github_rate_limits(monkeypatch) -> None:
+    monkeypatch.setattr(
+        github_ingest, "_get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(GitHubRateLimitError("rate limited")),
+    )
+    with pytest.raises(GitHubRateLimitError):
+        github_ingest._count_commits(object(), "student", "demo")
+
+
 def _code(lines: int) -> str:
     return "\n".join(f"value_{index} = {index}" for index in range(lines))
 
@@ -267,6 +287,41 @@ def test_coverage_counts_read_skipped_and_unread_files(fake_github: FakeGitHub) 
     assert coverage["source_files_read"] == 6 + 3
     assert coverage["lines_read"] == 180 + 60
     assert coverage["files_dropped_by_line_cap"] == 0
+
+
+def test_supporting_file_reads_are_bounded_and_reported(fake_github: FakeGitHub) -> None:
+    from app.services.coverage import build_coverage
+
+    files = {f"packages/app{index}/package.json": "{}" for index in range(20)}
+    fake_github.add_repo("monorepo", files)
+
+    ingestion = github_ingest.ingest_github("student")
+    repo = ingestion["repos"][0]
+
+    content_calls = [call for call in fake_github.calls if "/contents/" in call]
+    assert len(content_calls) == github_ingest.MAX_SUPPORTING_FILE_FETCHES
+    assert len(repo["dependency_contents"]) == github_ingest.MAX_SUPPORTING_FILE_FETCHES
+    assert repo["supporting_files_not_read"] == 20 - github_ingest.MAX_SUPPORTING_FILE_FETCHES
+    assert any("supporting-file budget" in note for note in build_coverage(ingestion)["notes"])
+
+
+def test_selected_supporting_files_that_fail_fetch_are_reported(fake_github: FakeGitHub, monkeypatch) -> None:
+    from app.services.coverage import build_coverage
+
+    fake_github.add_repo("project", {"package.json": "{}"})
+    original = github_ingest._optional_content
+
+    def fail_package_fetch(client, owner, repo, path, branch):
+        if path == "package.json":
+            return None
+        return original(client, owner, repo, path, branch)
+
+    monkeypatch.setattr(github_ingest, "_optional_content", fail_package_fetch)
+    ingestion = github_ingest.ingest_github("student")
+    repo = ingestion["repos"][0]
+    coverage = build_coverage(ingestion)
+    assert repo["supporting_files_failed_to_fetch"] == 1
+    assert any("could not be fetched from GitHub" in note for note in coverage["notes"])
 
 
 def test_coverage_counts_files_dropped_by_the_prompt_line_cap(monkeypatch) -> None:

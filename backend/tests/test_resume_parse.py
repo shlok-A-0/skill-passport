@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services import resume_parse
 from app.services.resume_parse import match_resume_skills, parse_resume, redact_personal_data
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
@@ -28,6 +29,21 @@ def test_demo_resumes_are_parseable_and_visibly_labelled(
     assert "[REDACTED NAME]" in result["redacted_text"]
     assert "[REDACTED EMAIL]" in result["redacted_text"]
     assert "[REDACTED PHONE]" in result["redacted_text"]
+
+
+def test_resume_page_limit_rejects_oversized_documents(monkeypatch) -> None:
+    class FakePdf:
+        pages = [object()] * (resume_parse.MAX_PDF_PAGES + 1)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(resume_parse.pdfplumber, "open", lambda _stream: FakePdf())
+    with pytest.raises(ValueError, match="50 pages or fewer"):
+        resume_parse.extract_resume_text(b"not parsed by the fake")
 
 
 def test_redaction_removes_identifiers_and_institution_lines() -> None:

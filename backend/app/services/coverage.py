@@ -38,6 +38,20 @@ def build_coverage(ingestion: dict[str, Any]) -> dict[str, Any]:
             notes.append(f"Tree truncated for repo {repo['name']}: GitHub returned only part of the file list.")
         if dropped:
             notes.append(f"{dropped} file(s) from {repo['name']} were read but left out of the AI proposal step (line limit).")
+        supporting_skipped = repo.get("supporting_files_not_read", 0)
+        if supporting_skipped:
+            notes.append(
+                f"{supporting_skipped} dependency or configuration file(s) from {repo['name']} were not read."
+            )
+        too_large = repo.get("supporting_files_too_large", 0)
+        over_budget = repo.get("supporting_files_over_budget", 0)
+        failed = repo.get("supporting_files_failed_to_fetch", 0)
+        if too_large:
+            notes.append(f"{too_large} dependency or configuration file(s) from {repo['name']} exceeded the file-size limit.")
+        if over_budget:
+            notes.append(f"{over_budget} dependency or configuration file(s) from {repo['name']} were skipped after the supporting-file budget was reached.")
+        if failed:
+            notes.append(f"{failed} selected dependency or configuration file(s) from {repo['name']} could not be fetched from GitHub.")
     return {
         "repos_listed": ingestion.get("repos_listed", len(repos)),
         "repos_analysed": len(repos),

@@ -31,6 +31,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [recheckJobId, setRecheckJobId] = useState<string | null>(null);
+  const [pollingPaused, setPollingPaused] = useState(false);
   const [changes, setChanges] = useState<NonNullable<Passport["level_changes"]>>([]);
 
   const load = useCallback(async () => {
@@ -57,19 +58,23 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     const pending = api.pendingRecheckId(id);
     setRecheckJobId(pending ?? null);
     setBusy(Boolean(pending));
+    setPollingPaused(false);
   }, [id]);
 
   useEffect(() => {
-    if (!recheckJobId) return;
+    if (!recheckJobId || pollingPaused) return;
     let active = true;
     let timer = 0;
     let delay = 1500;
+    let consecutiveFailures = 0;
     const poll = async () => {
       try {
         const job = await api.job(recheckJobId);
         if (!active) return;
         if (job.status === "done") {
           await load();
+          if (!active) return;
+          consecutiveFailures = 0;
           if (active) {
             setError("");
             setRecheckJobId(null);
@@ -83,6 +88,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           setBusy(false);
           return;
         }
+        consecutiveFailures = 0;
         delay = 1500;
       } catch (reason) {
         if (!active) return;
@@ -91,6 +97,12 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           setError("This re-check is no longer available. Please try again.");
           setRecheckJobId(null);
           setBusy(false);
+          return;
+        }
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 8) {
+          setPollingPaused(true);
+          setError("Could not reach the server to check this re-check. It may still be running; retry the status check when your connection is back.");
           return;
         }
         setError("Connection interrupted. Retrying re-check status automatically…");
@@ -103,7 +115,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       active = false;
       window.clearTimeout(timer);
     };
-  }, [load, recheckJobId]);
+  }, [load, recheckJobId, pollingPaused]);
 
   const verified = useMemo(
     () => passport?.skills.filter((skill) => skill.level !== "Claimed" && skill.evidence.length) ?? [],
@@ -120,6 +132,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     try {
       const job = await api.recheck(id);
       setRecheckJobId(job.job_id);
+      setPollingPaused(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Re-check failed.");
       setBusy(false);
@@ -198,7 +211,8 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             )) : growthUnavailable(passport)
               ? <div className="notice notice-warning">{GROWTH_UNAVAILABLE}</div>
               : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
-            <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /> {busy ? "Re-checking GitHub…" : "Re-check GitHub now"}</button>
+            {pollingPaused && <button className="button button-light" onClick={() => { setError(""); setPollingPaused(false); }}>Retry status check</button>}
+            <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy && !pollingPaused ? "spin" : ""} /> {busy ? (pollingPaused ? "Re-check pending" : "Re-checking GitHub…") : "Re-check GitHub now"}</button>
           </section>
           <RejectedClaims claims={passport.rejected_claims} audience={audience} passportId={passport.id}
             requests={passport.review_requests} labels={passport.check_labels} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
