@@ -1,4 +1,5 @@
 import io
+import math
 import re
 from typing import Any
 
@@ -11,6 +12,8 @@ from app.services.identity import resume_github_logins
 
 MAX_PDF_PAGES = 50
 MAX_CERTIFICATE_OCR_PAGES = 10
+MAX_CERTIFICATE_OCR_PIXELS = 16_000_000
+MAX_CERTIFICATE_OCR_SIDE = 8192
 
 
 class PdfPageLimitError(Exception):
@@ -205,24 +208,49 @@ def _extract_certificate_pdf_text(pdf_bytes: bytes) -> str:
     except (pdfplumber.pdf.PdfminerException, PDFSyntaxError, OSError) as exc:
         raise ValueError(f"Could not parse certificate PDF: {exc}") from exc
 
-    ocr_indexes = [index for index, text in enumerate(pages) if not text.strip()]
-    if len(ocr_indexes) > MAX_CERTIFICATE_OCR_PAGES:
-        raise ValueError(
-            f"Scanned certificates are limited to {MAX_CERTIFICATE_OCR_PAGES} pages per document."
-        )
-    if ocr_indexes:
-        try:
-            with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
-                for index in ocr_indexes:
-                    page = document[index]
-                    pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-                    image_bytes = pixmap.tobytes("jpeg", jpg_quality=85)
-                    pages[index] = _document_ocr(image_bytes)
-        except RuntimeError:
-            raise
-        except Exception as exc:
-            raise ValueError("Could not render a scanned certificate PDF for OCR.") from exc
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+            # Blank pages have no image to OCR; don't require Vision credentials for them.
+            ocr_indexes = [
+                index for index, text in enumerate(pages)
+                if not text.strip() and document[index].get_images(full=True)
+            ]
+            if len(ocr_indexes) > MAX_CERTIFICATE_OCR_PAGES:
+                raise ValueError(
+                    f"Scanned certificates are limited to {MAX_CERTIFICATE_OCR_PAGES} pages per document."
+                )
+            for index in ocr_indexes:
+                pages[index] = _document_ocr(_render_certificate_page(document[index]))
+    except (RuntimeError, ValueError):
+        raise
+    except Exception as exc:
+        raise ValueError("Could not render a scanned certificate PDF for OCR.") from exc
     text = "\n".join(pages)
     if not text.strip():
         raise ValueError("No readable text found in the certificate PDF.")
     return text
+
+
+def _render_certificate_page(page) -> bytes:
+    """Render a PDF page within a bounded pixel budget before allocating its pixmap."""
+    width, height = float(page.rect.width), float(page.rect.height)
+    if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+        raise ValueError("Certificate PDF contains a page with invalid dimensions.")
+
+    scale = min(
+        1.5,
+        math.sqrt(MAX_CERTIFICATE_OCR_PIXELS) / math.sqrt(width) / math.sqrt(height),
+        MAX_CERTIFICATE_OCR_SIDE / width,
+        MAX_CERTIFICATE_OCR_SIDE / height,
+    )
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("Certificate PDF page is too large to render safely.")
+    pixel_width, pixel_height = math.ceil(width * scale), math.ceil(height * scale)
+    while (
+        pixel_width * pixel_height > MAX_CERTIFICATE_OCR_PIXELS
+        or max(pixel_width, pixel_height) > MAX_CERTIFICATE_OCR_SIDE
+    ):
+        scale *= 0.99
+        pixel_width, pixel_height = math.ceil(width * scale), math.ceil(height * scale)
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    return pixmap.tobytes("jpeg", jpg_quality=85)

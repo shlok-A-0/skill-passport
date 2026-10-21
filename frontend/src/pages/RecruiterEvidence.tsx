@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
@@ -19,6 +19,8 @@ export default function RecruiterEvidence() {
   const [selected, setSelected] = useState<PassportSkill | null>(null);
   const [error, setError] = useState("");
   const loadVersion = useRef(0);
+  const activeId = useRef(id);
+  useLayoutEffect(() => { activeId.current = id; }, [id]);
 
   useEffect(() => {
     const version = ++loadVersion.current;
@@ -76,7 +78,16 @@ export default function RecruiterEvidence() {
           </section>
           <RejectedClaims claims={passport.rejected_claims} audience="recruiter" passportId={passport.id}
             requests={passport.review_requests} labels={passport.check_labels}
-            onChanged={() => { api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message)); }} />
+            onChanged={() => {
+              if (passport.id !== activeId.current) return;
+              const version = ++loadVersion.current;
+              api.reviewPassport(id)
+                .then((data) => {
+                  if (version !== loadVersion.current) return;
+                  setPassport(data);
+                })
+                .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+            }} />
         </div>
         <aside className="evidence-column">
           {selected ? <EvidencePanel skill={selected} audience="recruiter" labels={passport.check_labels} /> :<section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}

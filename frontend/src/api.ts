@@ -1,3 +1,5 @@
+import { shouldRememberGenerationJob } from "./jobPolling";
+
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export type Evidence = {
@@ -326,7 +328,11 @@ export const api = {
   savedJob: (): PassportJob | null => {
     try {
       const raw = sessionStorage.getItem("passport-last-job");
-      return raw ? JSON.parse(raw) as PassportJob : null;
+      if (!raw) return null;
+      const job = JSON.parse(raw) as PassportJob;
+      return shouldRememberGenerationJob(job.job_id, sessionStorage.getItem("passport-pending-recheck"))
+        ? job
+        : null;
     } catch {
       sessionStorage.removeItem("passport-last-job");
       return null;
@@ -366,7 +372,20 @@ export const api = {
     const job = await request<PassportJob>(`/jobs/${id}`, {
       headers: { "X-Passport-Token": sessionStorage.getItem(`passport-token:${id}`) ?? "" },
     });
-    api.rememberJob(job);
+    const isGenerationJob = shouldRememberGenerationJob(
+      id,
+      sessionStorage.getItem("passport-pending-recheck"),
+    );
+    if (isGenerationJob) {
+      api.rememberJob(job);
+    } else if (job.status === "done" || job.status === "failed") {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("passport-last-job") ?? "null") as PassportJob | null;
+        if (saved?.job_id === id) sessionStorage.removeItem("passport-last-job");
+      } catch {
+        sessionStorage.removeItem("passport-last-job");
+      }
+    }
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
     if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
     if (job.status === "done" || job.status === "failed") api.clearPendingRecheck(id);

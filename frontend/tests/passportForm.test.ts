@@ -46,3 +46,15 @@ test("passport form rejects invalid and oversized certificate uploads", () => {
   );
   assert.match(validatePassportForm({ ...base, certificates: [file("large.pdf", 11 * 1024 * 1024)] }) ?? "", /10 MB/);
 });
+
+test("passport form accepts PNG and JPEG certificates", () => {
+  const base = { username: "octocat", resume: file("resume.pdf"), role: "backend-intern" };
+  assert.equal(
+    validatePassportForm({ ...base, certificates: [file("certificate.png", 100, "image/png")] }),
+    null,
+  );
+  assert.equal(
+    validatePassportForm({ ...base, certificates: [file("certificate.jpg", 100, "image/jpeg")] }),
+    null,
+  );
+});

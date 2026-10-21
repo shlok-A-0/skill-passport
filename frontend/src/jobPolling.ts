@@ -28,3 +28,12 @@ export async function pollJobAttempt<TJob extends { status: string }, TPassport>
     return { ok: false, error, consecutiveFailures: consecutiveFailures + 1 };
   }
 }
+
+export function shouldRememberGenerationJob(jobId: string, pendingRecheck: string | null): boolean {
+  if (!pendingRecheck) return true;
+  try {
+    return (JSON.parse(pendingRecheck) as { job_id?: string }).job_id !== jobId;
+  } catch {
+    return true;
+  }
+}

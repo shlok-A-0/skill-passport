@@ -4,6 +4,7 @@ import {
   MAX_CONSECUTIVE_POLL_FAILURES,
   nextJobPollDelay,
   pollJobAttempt,
+  shouldRememberGenerationJob,
 } from "../src/jobPolling.ts";
 
 test("job polling backs off and caps its retry delay", () => {
@@ -39,4 +40,11 @@ test("completed-job passport load failures accumulate until polling pauses", asy
   assert.equal(paused, true);
   assert.equal(jobRequests, MAX_CONSECUTIVE_POLL_FAILURES);
   assert.equal(passportRequests, MAX_CONSECUTIVE_POLL_FAILURES);
+});
+
+test("re-check jobs are not saved as the resumable creation job", () => {
+  const pendingRecheck = JSON.stringify({ job_id: "recheck-job", passport_id: "passport-a" });
+  assert.equal(shouldRememberGenerationJob("recheck-job", pendingRecheck), false);
+  assert.equal(shouldRememberGenerationJob("creation-job", pendingRecheck), true);
+  assert.equal(shouldRememberGenerationJob("creation-job", null), true);
 });
