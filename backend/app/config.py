@@ -74,6 +74,15 @@ RECRUITER_ACCOUNTS_SETTING_VALID = (
     and len(set(_recruiter_accounts.values())) == len(_recruiter_accounts)
 )
 RECRUITER_ACCOUNTS = _recruiter_accounts if RECRUITER_ACCOUNTS_SETTING_VALID else {}
+
+
+def _feature_flag(name: str) -> bool:
+    """On unless explicitly set to false/0/no."""
+    return (os.getenv(name) or "true").strip().lower() not in ("false", "0", "no")
+
+
+# Target roles built from a pasted job description (POST /roles/from-description).
+ENABLE_CUSTOM_ROLES = _feature_flag("ENABLE_CUSTOM_ROLES")
 # Debug endpoints require explicit opt-in in every environment.
 ALLOW_DEBUG_ENDPOINTS = os.getenv("ALLOW_DEBUG_ENDPOINTS", "false").lower() in ("true", "1", "yes")
 CACHE_DIR = BASE_DIR / "cache"

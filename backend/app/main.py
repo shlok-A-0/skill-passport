@@ -40,8 +40,15 @@ from app.config import (
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
+from app.services.gemini import GeminiUnavailableError
 from app.services.github_ingest import GitHubIngestError, validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
+from app.services.jd_parse import (
+    CUSTOM_ROLE_PREFIX,
+    JobDescriptionError,
+    build_custom_role,
+    role_definition,
+)
 from app.services.jobs import (
     fail_job,
     get_active_jobs_count,
@@ -56,6 +63,7 @@ from app.services.storage import (
     check_storage_rate_limit,
     check_storage_ready,
     create_review_request,
+    get_custom_role,
     get_passport,
     get_passport_owner_token_hash,
     get_review_requests_by_passports,
@@ -66,6 +74,7 @@ from app.services.storage import (
     prune_old_jobs,
     prune_old_rate_limits,
     reconcile_interrupted_jobs,
+    save_custom_role,
 )
 from app.services.verifier import (
     CHECK_LABELS,
@@ -438,6 +447,38 @@ def skills() -> list[dict[str, str]]:
     ]
 
 
+@app.get("/features")
+def features() -> dict[str, bool]:
+    """Optional features the frontend shows only when enabled."""
+    return {"custom_roles": config.ENABLE_CUSTOM_ROLES}
+
+
+class JobDescriptionBody(BaseModel):
+    title: str = Field(max_length=1000)
+    description: str = Field(max_length=20000)
+
+
+@app.post("/roles/from-description", status_code=201)
+def role_from_description(body: JobDescriptionBody, request: Request) -> dict:
+    """A target role from a pasted job description. The AI proposes requirements; code matches
+    skill names, sets minimum levels by fixed rules and checks every quote against the text."""
+    if not config.ENABLE_CUSTOM_ROLES:
+        raise HTTPException(status_code=404, detail="Not Found")
+    check_rate_limit(request, "role_from_description", max_requests=10, window_seconds=600)
+    try:
+        role = build_custom_role(body.title, body.description)
+    except JobDescriptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except GeminiUnavailableError as exc:
+        logging.getLogger(__name__).warning("Job description extraction unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Requirement extraction is unavailable right now (the AI service could not be reached). Please try again later or choose a listed role.",
+        ) from exc
+    save_custom_role(role)
+    return {**role, "name": role["title"], "custom": True}
+
+
 class OwnershipChallengeBody(BaseModel):
     github_username: str = Field(min_length=1, max_length=39)
 
@@ -520,7 +561,14 @@ async def create_passport(
         )
     role_ids = {role["id"] for role in get_roles()}
     role_names = {role["name"] for role in get_roles()}
-    if target_role not in role_ids | role_names:
+    role: str | dict[str, Any] = target_role
+    if target_role.startswith(CUSTOM_ROLE_PREFIX) and config.ENABLE_CUSTOM_ROLES:
+        stored_role = get_custom_role(target_role)
+        if not stored_role:
+            raise HTTPException(status_code=422, detail="Unknown target role.")
+        # The full definition travels with the passport, so re-check never needs roles.json.
+        role = role_definition(stored_role)
+    elif target_role not in role_ids | role_names:
         raise HTTPException(status_code=422, detail="Unknown target role.")
 
     # Atomic job slot reservation before accepting large file bodies
@@ -588,7 +636,7 @@ async def create_passport(
         run_passport_job,
         job_id,
         github_username,
-        target_role,
+        role,
         resume_bytes,
         cert_bytes,
         is_demo,

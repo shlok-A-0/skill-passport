@@ -118,7 +118,7 @@ def _preserve_missing_skills(
 
 def build_passport(
     github_username: str,
-    target_role: str,
+    target_role: str | dict[str, Any],
     resume_bytes: bytes,
     certificate_bytes: list[bytes] | None = None,
     is_demo: bool = False,
@@ -248,6 +248,9 @@ def build_passport(
         # The rules this passport was built with; recheck_all.py --only-incomplete rebuilds older ones.
         "verifier_version": VERIFIER_VERSION,
     }
+    if isinstance(target_role, dict):
+        # A role from a job description: re-check reuses this definition, not roles.json.
+        passport["custom_role"] = target_role
     if existing:
         # Union of old and new skills, after earlier sources were excluded; a skill
         # that is absent on one side counts as Claimed (no evidence).
@@ -290,7 +293,7 @@ def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dic
         ]
     return build_passport(
         github_username=existing["github_username"],
-        target_role=existing["role_match"]["role_id"],
+        target_role=existing.get("custom_role") or existing["role_match"]["role_id"],
         resume_bytes=b"",
         passport_id=existing["id"],
         job_id=job_id,
@@ -303,7 +306,7 @@ def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dic
 def run_passport_job(
     job_id: str,
     github_username: str,
-    target_role: str,
+    target_role: str | dict[str, Any],
     resume_bytes: bytes,
     certificate_bytes: list[bytes],
     is_demo: bool,

@@ -1,7 +1,8 @@
 import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, type OwnershipChallenge, type PassportJob, type Role } from "../api";
+import { api, skillLabel, type CustomRole, type OwnershipChallenge, type PassportJob, type Role } from "../api";
+import { droppedSummary, effectiveTargetRole, JOB_DESCRIPTION_OPTION, jobDescriptionInputError } from "../customRole";
 import { sameGitHubUsername } from "../ownership";
 import { validatePassportForm } from "../passportForm";
 
@@ -37,8 +38,47 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   const [challenge, setChallenge] = useState<OwnershipChallenge | null>(null);
   const [gettingCode, setGettingCode] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [customRolesEnabled, setCustomRolesEnabled] = useState(false);
+  const [jdTitle, setJdTitle] = useState("");
+  const [jdText, setJdText] = useState("");
+  const [extracted, setExtracted] = useState<CustomRole | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
   const usernameRef = useRef(username);
   const challengeRequestId = useRef(0);
+  const extractRequestId = useRef(0);
+  const usingJobDescription = role === JOB_DESCRIPTION_OPTION;
+
+  function changeJobDescription(title: string, text: string) {
+    // Editing the title or text invalidates the extraction, including one still in flight.
+    extractRequestId.current += 1;
+    setJdTitle(title);
+    setJdText(text);
+    setExtracted(null);
+    setExtracting(false);
+    setExtractError("");
+  }
+
+  async function extractRequirements() {
+    const inputError = jobDescriptionInputError(jdTitle, jdText);
+    if (inputError) {
+      setExtractError(inputError);
+      return;
+    }
+    const requestId = ++extractRequestId.current;
+    setExtracting(true);
+    setExtractError("");
+    try {
+      const result = await api.roleFromDescription(jdTitle.trim(), jdText.trim());
+      if (requestId === extractRequestId.current) setExtracted(result);
+    } catch (reason) {
+      if (requestId === extractRequestId.current) {
+        setExtractError(reason instanceof Error ? reason.message : "Could not extract requirements.");
+      }
+    } finally {
+      if (requestId === extractRequestId.current) setExtracting(false);
+    }
+  }
 
   function changeUsername(value: string) {
     const changed = !sameGitHubUsername(usernameRef.current, value);
@@ -87,12 +127,19 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       setRoles(items);
       if (items.length) setRole(items[0].id);
     }).catch((reason: Error) => setRoleError(reason.message));
+    // Optional features stay hidden if this call fails.
+    api.features().then((features) => setCustomRolesEnabled(features.custom_roles)).catch(() => setCustomRolesEnabled(false));
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    const validationError = validatePassportForm({ username, resume, role, certificates });
+    if (usingJobDescription && !extracted) {
+      setError("Extract the requirements from the job description first.");
+      return;
+    }
+    const targetRole = effectiveTargetRole(role, extracted?.id ?? null);
+    const validationError = validatePassportForm({ username, resume, role: targetRole, certificates });
     if (validationError) {
       setError(validationError);
       return;
@@ -110,7 +157,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
     const data = new FormData();
     data.append("github_username", username.trim());
     data.append("resume", resume);
-    data.append("target_role", role);
+    data.append("target_role", targetRole);
     data.append("is_demo", String(demo));
     if (!demo && challenge) data.append("ownership_challenge_id", challenge.challenge_id);
     certificates.forEach((file) => data.append("certificates", file));
@@ -159,8 +206,44 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
           <label>Target role
             <select value={role} onChange={(event) => { setRole(event.target.value); setError(""); }} disabled={!roles.length}>
               {roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {customRolesEnabled && <option value={JOB_DESCRIPTION_OPTION}>Paste a job description</option>}
             </select>
           </label>
+          {usingJobDescription && customRolesEnabled && (
+            <div className="jd-box">
+              <label>Job title
+                <span className="input-wrap"><input value={jdTitle} maxLength={120} onChange={(event) => changeJobDescription(event.target.value, jdText)} placeholder="e.g. Backend Engineer Intern" autoComplete="off" /></span>
+              </label>
+              <label>Job description <span className="muted">50–8,000 characters · {jdText.trim().length.toLocaleString("en-US")} used</span>
+                <textarea className="jd-textarea" value={jdText} rows={7} onChange={(event) => changeJobDescription(jdTitle, event.target.value)} placeholder="Paste the full job description" />
+              </label>
+              <button className="button button-light" type="button" onClick={extractRequirements} disabled={extracting}>
+                {extracting ? <LoaderCircle className="spin" size={14} /> : null} {extracting ? "Extracting…" : "Extract requirements"}
+              </button>
+              <p className="privacy-note">The description is sent to the AI to suggest requirements; it is not stored. Minimum levels are set by fixed rules, and every quote is checked against your text.</p>
+              {extractError && <div className="notice notice-error" role="alert">{extractError}</div>}
+              {extracted && (
+                <div className="jd-requirements" aria-live="polite">
+                  <strong>{extracted.requirements.length} requirements for {extracted.title}</strong>
+                  <ul>
+                    {extracted.requirements.map((item) => (
+                      <li key={item.skill_id}>
+                        <span><b>{skillLabel(item)}</b> <span className={`importance importance-${item.importance}`}>{item.importance}</span> <span className="muted">minimum {item.min_level}</span></span>
+                        <small className="muted">“{item.quote}”</small>
+                      </li>
+                    ))}
+                  </ul>
+                  {droppedSummary(extracted.dropped.length) && (
+                    <details className="muted">
+                      <summary>{droppedSummary(extracted.dropped.length)}</summary>
+                      <ul>{extracted.dropped.map((item, index) => <li key={index}>{item.quote ? `“${item.quote}”` : item.skill_id ?? "Unnamed"}: {item.reason}</li>)}</ul>
+                    </details>
+                  )}
+                  {extracted.note && <p className="muted">{extracted.note}</p>}
+                </div>
+              )}
+            </div>
+          )}
           <label className="upload-box">
             <span className="upload-icon"><FileUp size={20} /></span>
             <strong>{resume ? resume.name : "Upload your resume"}</strong>
@@ -207,7 +290,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             </div>
           )}
           {(error || generationError || (job?.status === "failed" ? job.error : "")) && <div className="notice notice-error" role="alert">{error || generationError || job?.error}</div>}
-          <button className="button submit-button" type="submit" disabled={submitting || Boolean(job && (job.status === "queued" || job.status === "running"))}>
+          <button className="button submit-button" type="submit" disabled={submitting || (usingJobDescription && !extracted) || Boolean(job && (job.status === "queued" || job.status === "running"))}>
             {submitting ? <LoaderCircle className="spin" size={17} /> : null}
             {submitting ? "Starting…" : "Generate Passport"} <ArrowRight size={17} />
           </button>

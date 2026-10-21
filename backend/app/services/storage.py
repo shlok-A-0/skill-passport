@@ -186,6 +186,18 @@ def initialize_storage() -> None:
             ON review_requests (passport_id, citation_key) WHERE status = 'open'
             """
         )
+        # Target roles built from a pasted job description. The description itself is not stored.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS custom_roles (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                requirements TEXT NOT NULL,
+                dropped TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
     _initialized_dbs.add(db_key)
 
 
@@ -324,6 +336,36 @@ def list_latest_passports_page(limit: int, offset: int) -> tuple[list[dict[str, 
             "SELECT COUNT(DISTINCT lower(github_username)) AS count FROM passports"
         ).fetchone()["count"]
     return [json.loads(row["payload"]) for row in rows], total
+
+
+def save_custom_role(role: dict[str, Any]) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            "INSERT INTO custom_roles (id, title, requirements, dropped, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                role["id"],
+                role["title"],
+                json.dumps(role["requirements"], ensure_ascii=False),
+                json.dumps(role.get("dropped", []), ensure_ascii=False),
+                role["created_at"],
+            ),
+        )
+
+
+def get_custom_role(role_id: str) -> dict[str, Any] | None:
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute("SELECT * FROM custom_roles WHERE id = ?", (role_id,)).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "requirements": json.loads(row["requirements"]),
+        "dropped": json.loads(row["dropped"]),
+        "created_at": row["created_at"],
+    }
 
 
 def create_review_request(

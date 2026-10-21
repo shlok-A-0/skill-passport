@@ -211,7 +211,22 @@ export type Passport = {
   requirement_packets?: RequirementPacket[];
   /** Review endpoints only: account ownership and resume link checks. */
   identity?: IntegritySignal[];
+  /** Present when the target role was built from a pasted job description. */
+  custom_role?: { id: string; name: string; title: string; requirements: CustomRoleRequirement[] };
 };
+
+/** A requirement extracted from a job description: quote checked against the text, level set by fixed rules. */
+export type CustomRoleRequirement = RoleRequirement & { quote: string; source: "exact" | "ai" };
+export type CustomRole = {
+  id: string;
+  name: string;
+  title: string;
+  requirements: CustomRoleRequirement[];
+  dropped: { skill_id: string | null; quote: string | null; reason: string }[];
+  created_at: string;
+  note?: string | null;
+};
+export type Features = { custom_roles: boolean };
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */
 export type OwnershipChallenge = {
@@ -311,6 +326,13 @@ async function reviewRequest<T>(path: string, options: RequestInit = {}): Promis
 
 export const api = {
   roles: () => request<Role[]>("/roles"),
+  features: () => request<Features>("/features"),
+  roleFromDescription: (title: string, description: string) =>
+    request<CustomRole>("/roles/from-description", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, description }),
+    }),
   ownershipChallenge: (github_username: string) =>
     request<OwnershipChallenge>("/ownership/challenge", {
       method: "POST",

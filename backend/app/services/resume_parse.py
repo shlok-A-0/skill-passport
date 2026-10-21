@@ -105,10 +105,12 @@ def extract_resume_text(pdf_bytes: bytes) -> str:
 COMMON_WORDS = {"go", "react", "express", "torch", "shell"}
 
 
-def _term_in_line(term: str, line: str) -> bool:
+def _term_span(term: str, line: str) -> tuple[int, int] | None:
+    """Where `term` occurs in `line` as a skill mention, or None."""
     pattern = rf"(?<!\w){re.escape(term)}(?!\w)"
     if term.lower() not in COMMON_WORDS:
-        return bool(re.search(pattern, line, flags=re.IGNORECASE))
+        match = re.search(pattern, line, flags=re.IGNORECASE)
+        return match.span() if match else None
     pattern = rf"(?<!\w){re.escape(term.capitalize())}(?!\w)"
     for match in re.finditer(pattern, line):  # case-sensitive: "Go", "React", "Express"
         before = line[:match.start()].rstrip()
@@ -116,28 +118,37 @@ def _term_in_line(term: str, line: str) -> bool:
         sentence_start = not before or before.endswith((".", "!", "?"))
         listed = not after or after[0] in ",/|;)" or before.endswith((",", ":", "/", "|", "(", "•", "-"))
         if not sentence_start or listed:
-            return True
-    return False
+            return match.span()
+    return None
 
 
-def match_resume_skills(text: str) -> list[dict[str, str]]:
-    skills = get_skills()
-    matches: list[dict[str, str]] = []
-    for skill in skills:
+def _term_in_line(term: str, line: str) -> bool:
+    return _term_span(term, line) is not None
+
+
+def find_skill_mentions(text: str) -> list[dict[str, Any]]:
+    """The first line mentioning each framework skill, with the matched span in that line."""
+    found: list[dict[str, Any]] = []
+    for skill in get_skills():
         terms = [skill["name"], *skill.get("aliases", [])]
         if skill["id"] == "pytorch":
             terms = [term for term in terms if term.lower() != "torch"]
-        found_line = None
+        hit = None
         for line in text.splitlines():
             for term in terms:
-                if _term_in_line(term, line):
-                    found_line = line.strip()
+                span = _term_span(term, line)
+                if span is not None:
+                    hit = {"skill_id": skill["id"], "name": skill["name"], "line": line, "span": span}
                     break
-            if found_line:
+            if hit:
                 break
-        if found_line:
-            matches.append({"skill_id": skill["id"], "mention": skill["name"]})
-    return matches
+        if hit:
+            found.append(hit)
+    return found
+
+
+def match_resume_skills(text: str) -> list[dict[str, str]]:
+    return [{"skill_id": item["skill_id"], "mention": item["name"]} for item in find_skill_mentions(text)]
 
 
 def parse_resume(pdf_bytes: bytes) -> dict[str, Any]:
