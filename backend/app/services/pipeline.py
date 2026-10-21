@@ -63,12 +63,16 @@ def _public_job_error(job_id: str, exc: Exception) -> str:
     if step == "Reading certificates" and isinstance(exc, ValueError):
         message = str(exc).lower()
         if "empty" in message:
-            return "An uploaded certificate PDF is empty. Upload a readable PDF or remove it and try again."
+            return "An uploaded certificate is empty. Upload a readable PDF or image, or remove it and try again."
         if "no readable text" in message:
-            return "We couldn’t read text in an uploaded certificate. Use a text-based PDF or remove it and try again."
-        return "We couldn’t read an uploaded certificate PDF. Check the file and try again."
+            return "We couldn’t read text in an uploaded certificate. Try a clearer image or PDF, or remove it and try again."
+        return "We couldn’t read an uploaded certificate. Check that it is a PDF, PNG, or JPEG and try again."
+    if step == "Reading certificates" and isinstance(exc, RuntimeError):
+        if "not configured" in str(exc).lower():
+            return "Image certificate reading is not configured on this server. Please contact the site administrator."
+        return "Hosted OCR could not read an uploaded certificate. Try a clearer image or PDF, or contact the site administrator."
     if step == "Reading certificates":
-        return "An uploaded certificate couldn’t be processed. Check the PDF and try again."
+        return "An uploaded certificate couldn’t be processed. Check the file and try again."
     return (
         f"Something went wrong during {step}. Please try again. "
         "If it happens again, check the backend terminal for details."

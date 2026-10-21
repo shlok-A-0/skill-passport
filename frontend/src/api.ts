@@ -1,3 +1,5 @@
+import { shouldRememberGenerationJob } from "./jobPolling";
+
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export type Evidence = {
@@ -318,10 +320,30 @@ export const api = {
   createPassport: async (data: FormData) => {
     const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
     sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);
+    sessionStorage.setItem(`passport-job-kind:${created.job_id}`, "generation");
     sessionStorage.setItem("passport-pending-job-id", created.job_id);
+    api.rememberJob({ job_id: created.job_id, status: "queued", step: "Queued", completed_steps: [], error: null });
     return created;
   },
   pendingJobId: () => sessionStorage.getItem("passport-pending-job-id"),
+  savedJob: (): PassportJob | null => {
+    try {
+      const raw = sessionStorage.getItem("passport-last-job");
+      if (!raw) return null;
+      const job = JSON.parse(raw) as PassportJob;
+      return shouldRememberGenerationJob(
+        job.job_id,
+        sessionStorage.getItem("passport-pending-recheck"),
+        sessionStorage.getItem(`passport-job-kind:${job.job_id}`),
+      )
+        ? job
+        : null;
+    } catch {
+      sessionStorage.removeItem("passport-last-job");
+      return null;
+    }
+  },
+  rememberJob: (job: PassportJob) => sessionStorage.setItem("passport-last-job", JSON.stringify(job)),
   clearPendingJob: (id: string) => {
     if (sessionStorage.getItem("passport-pending-job-id") === id) {
       sessionStorage.removeItem("passport-pending-job-id");
@@ -355,9 +377,25 @@ export const api = {
     const job = await request<PassportJob>(`/jobs/${id}`, {
       headers: { "X-Passport-Token": sessionStorage.getItem(`passport-token:${id}`) ?? "" },
     });
+    const isGenerationJob = shouldRememberGenerationJob(
+      id,
+      sessionStorage.getItem("passport-pending-recheck"),
+      sessionStorage.getItem(`passport-job-kind:${id}`),
+    );
+    if (isGenerationJob) {
+      api.rememberJob(job);
+    } else if (job.status === "done" || job.status === "failed") {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("passport-last-job") ?? "null") as PassportJob | null;
+        if (saved?.job_id === id) sessionStorage.removeItem("passport-last-job");
+      } catch {
+        sessionStorage.removeItem("passport-last-job");
+      }
+    }
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
     if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
     if (job.status === "done" || job.status === "failed") api.clearPendingRecheck(id);
+    if (job.status === "done" || job.status === "failed") sessionStorage.removeItem(`passport-job-kind:${id}`);
     return job;
   },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
@@ -383,6 +421,7 @@ export const api = {
       { method: "POST", headers: { "X-Passport-Token": token } },
     );
     sessionStorage.setItem(`passport-token:${job.job_id}`, job.access_token);
+    sessionStorage.setItem(`passport-job-kind:${job.job_id}`, "recheck");
     sessionStorage.setItem("passport-pending-recheck", JSON.stringify({ job_id: job.job_id, passport_id: id }));
     return job;
   },

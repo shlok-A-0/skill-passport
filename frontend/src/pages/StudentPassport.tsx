@@ -1,6 +1,6 @@
 import { Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
@@ -33,9 +33,18 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
   const [recheckJobId, setRecheckJobId] = useState<string | null>(null);
   const [pollingPaused, setPollingPaused] = useState(false);
   const [changes, setChanges] = useState<NonNullable<Passport["level_changes"]>>([]);
+  const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
-    const data = audience === "recruiter" ? await api.reviewPassport(id) : await api.passport(id);
+    const version = ++loadVersion.current;
+    let data: Passport;
+    try {
+      data = audience === "recruiter" ? await api.reviewPassport(id) : await api.passport(id);
+    } catch (reason) {
+      if (version !== loadVersion.current) return;
+      throw reason;
+    }
+    if (version !== loadVersion.current) return;
     setPassport(data);
     const requestedSkill = searchParams.get("skill");
     const strongestSkill = [...data.skills]
@@ -51,7 +60,11 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
   }, [audience, id, searchParams]);
 
   useEffect(() => {
+    setPassport(null);
+    setSelected(null);
+    setError("");
     load().catch((reason: Error) => setError(reason.message));
+    return () => { loadVersion.current += 1; };
   }, [load]);
 
   useEffect(() => {
@@ -149,8 +162,8 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     }
   }
 
-  if (error && !passport) return <div className="page-message notice-error">{error}</div>;
-  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence…</div>;
+  if (error && (!passport || passport.id !== id)) return <div className="page-message notice-error">{error}</div>;
+  if (!passport || passport.id !== id) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence…</div>;
 
   return (
     <div className="passport-page">
@@ -162,6 +175,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           <CoverageSummary coverage={passport.coverage} />
         </div>
         <div className="passport-actions">
+          <Link className="button button-light" to={`/placement?preferredRole=${encodeURIComponent(passport.target_role)}`}>View cohort for this role</Link>
           <button className="button button-light" onClick={downloadBadge}><Download size={15} /> Download credential</button>
         </div>
       </header>

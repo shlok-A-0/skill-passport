@@ -254,7 +254,8 @@ Backend Developer Intern, Frontend Developer Intern, Full-Stack Developer Intern
 - Disk cache keyed by username, with `schema_version: 3` (files with an older or missing version are expired and refetched); handle rate limits, 404s, empty repos.
 
 **P2. Ingest resume and certificates** (`resume_parse.py`)
-- pdfplumber with layout-aware extraction.
+- Resume PDF: pdfplumber with layout-aware extraction.
+- Certificates: text PDFs are extracted locally; scanned PDF pages and PNG/JPEG images use Google Cloud Vision OCR through backend Application Default Credentials. OCR output is used only for deterministic skill-name matching; only matched skill ids reach the LLM. Bound scanned PDF OCR to 10 pages per certificate.
 - Match skill names/aliases (case-insensitive, word boundaries); keep the matched line as the resume mention.
 - Certificates: same matching; mark skills `certified: true`.
 - Apply the I11 redaction function before any text reaches the LLM.
@@ -307,7 +308,7 @@ Each verified code citation gets advisory integrity signals (section 3.2), inclu
 |---|---|---|
 | GET | `/health` | Health check |
 | GET | `/roles` | Role list |
-| POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional), `target_role` → returns `job_id`; 26 MB request-body cap before multipart parsing |
+| POST | `/passport/create` | multipart: `github_username`, `resume` (PDF), `certificates[]` (optional PDF/PNG/JPEG), `target_role` → returns `job_id`; 26 MB request-body cap before multipart parsing |
 | GET | `/jobs/{id}` | Step status: Reading GitHub → Reading resume → Proposing skills → Verifying evidence → Matching role → Building growth plan → Done |
 | GET | `/passport/{id}` | Student-safe passport (`student_view`: no integrity signals, evidence records, good-answer notes, or stored resume/certificate mentions; every excluded citation listed with `citation_key`, links, neutral reason and its review-request status; `coverage` included) |
 | GET | `/passports` | All passports, student-safe |
@@ -350,7 +351,7 @@ GitHub username, resume drag-and-drop, optional certificates, role dropdown, "Ge
 Skill list + evidence panel with all integrity signals, and "Rejected and excluded claims" with full details and "View original" links for confirmed copies. Not shown to the candidate; the student passport (S2) shows no signals, only unsupported AI claims plus a one-line review summary.
 
 **S4. Placement Cell** (`/placement`)
-Role selector; student count; average requirements met; heatmap (students × required skills, coloured by level, grey = missing); recharts bar chart of % of students missing each skill; "Suggested workshop: <top gap>"; links to each passport and recruiter view.
+Evaluation-role selector (the role being assessed) and a separate preferred-role filter (the student's saved target role); student count; average requirements met; heatmap (students × required skills, coloured by level, grey = missing); bar chart of % of students missing each skill; "Suggested workshop: <top gap>"; links to each passport and recruiter view. Student passport links can carry the saved role preference into the Placement Cell filter.
 
 ### Design system
 White background; navy text `#1B2340`; accent orange `#F26B1D`; ladder colours from section 3.1; font Inter; rounded cards, generous spacing, consistent pills. Nav: "Skill Passport" logo + Create · Student · Recruiter · Placement Cell. No console errors; clean at 1440x900; loading and empty states everywhere.
@@ -497,3 +498,4 @@ If time is short before the Stage 1 deadline: steps 1–7 minus S4 are the minim
 - 2026-10-20: `VERIFIER_VERSION` is now `2026-10-20.1` (sorts after `2026-10-20` as text; `recheck_all.py` compares versions as strings). **Why:** the audit follow-up on `main` and this branch's per-file copy exclusion and passport-bound ownership both used `2026-10-20`, so `recheck_all.py --only-incomplete` would skip passports built earlier today and keep stale copy results and a stored ownership "ok" without a linked proof. After deploying, run it deliberately: each rebuild is a fresh GitHub read plus about 2 Gemini calls.
 - 2026-10-20: `VERIFIER_VERSION` is now `2026-10-20.2`. **Why:** PR #4 (retain historical skills on Re-check) also moved `main` to `2026-10-20.1`, so passports rebuilt under it would otherwise not be selected for the per-file copy exclusion and passport-bound ownership.
 - 2026-10-21: GitHub ingestion reads at most 12 dependency/configuration files per repository (small, shallow paths first), skips files over 256 KB, and reports omitted files in coverage. Optional authorship/history/CI and recency lookups treat transport failures as unknown, while rate limits still stop the job. Bumped the ingestion cache schema to 10 and `VERIFIER_VERSION` to `2026-10-21` because sampling can change available verification evidence. **Why:** bound per-passport API work on monorepos without hiding that some evidence was skipped, and avoid turning transient failures in advisory lookups into a full generation failure.
+- 2026-10-21: **Certificate images and navigation UX.** Text-based certificate PDFs continue to be parsed locally; scanned PDF pages and PNG/JPEG certificate images are OCRed with Google Cloud Vision using backend Application Default Credentials, with a 10-page OCR cap per certificate. The UI discloses when scanned certificate content is sent to Vision. Generation polling now lives above the route, persists the latest step, and shows a cross-page ready/status notice. Student and recruiter passport pages discard stale responses when the route id changes. Placement Cell separates the role used to evaluate everyone from a filter on the students' saved preferred role; student passports link through with their preference preselected. Also added a loading/retry state for cohort fetches, visible upload focus, and a not-found page. **Why:** support scanned credentials without confusing them with text PDFs, keep users informed while work continues, and make cohort filters reflect candidate preferences without silently changing evaluation criteria.

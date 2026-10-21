@@ -1,8 +1,7 @@
 import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { api, isMissingJobError, type OwnershipChallenge, type PassportJob, type Role } from "../api";
-import { nextJobPollDelay } from "../jobPolling";
+import { Link } from "react-router-dom";
+import { api, type OwnershipChallenge, type PassportJob, type Role } from "../api";
 import { sameGitHubUsername } from "../ownership";
 import { validatePassportForm } from "../passportForm";
 
@@ -19,8 +18,13 @@ const steps = [
   "Done",
 ];
 
-export default function CreatePassport() {
-  const navigate = useNavigate();
+export default function CreatePassport({ job, onJobChange, pollingPaused = false, generationError = "", onRetryPolling }: {
+  job: PassportJob | null;
+  onJobChange: (job: PassportJob) => void;
+  pollingPaused?: boolean;
+  generationError?: string;
+  onRetryPolling: () => void;
+}) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [roleError, setRoleError] = useState("");
   const [username, setUsername] = useState("");
@@ -28,12 +32,10 @@ export default function CreatePassport() {
   const [resume, setResume] = useState<File | null>(null);
   const [certificates, setCertificates] = useState<File[]>([]);
   const [demo, setDemo] = useState(false);
-  const [job, setJob] = useState<PassportJob | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [challenge, setChallenge] = useState<OwnershipChallenge | null>(null);
   const [gettingCode, setGettingCode] = useState(false);
-  const [pollingPaused, setPollingPaused] = useState(false);
   const [copied, setCopied] = useState(false);
   const usernameRef = useRef(username);
   const challengeRequestId = useRef(0);
@@ -87,67 +89,6 @@ export default function CreatePassport() {
     }).catch((reason: Error) => setRoleError(reason.message));
   }, []);
 
-  useEffect(() => {
-    const pendingJobId = api.pendingJobId();
-    if (pendingJobId) {
-      setJob({
-        job_id: pendingJobId,
-        status: "queued",
-        step: "Queued",
-        completed_steps: [],
-        error: null,
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!job || job.status === "done" || job.status === "failed" || pollingPaused) return;
-    let active = true;
-    let timer = 0;
-    let delay = 1500;
-    let consecutiveFailures = 0;
-    const poll = async () => {
-      try {
-        const next = await api.job(job.job_id);
-        if (!active) return;
-        consecutiveFailures = 0;
-        setError("");
-        setJob(next);
-        if (next.status === "done" && next.passport_id) {
-          navigate(`/passport/${next.passport_id}`);
-          return;
-        }
-        if (next.status === "failed") {
-          setError(next.error || "Passport generation failed.");
-          return;
-        }
-        delay = 1500;
-      } catch (reason) {
-        if (!active) return;
-        if (isMissingJobError(reason)) {
-          api.clearPendingJob(job.job_id);
-          setJob((current) => current?.job_id === job.job_id ? { ...current, status: "failed" } : current);
-          setError("This job is no longer available. Please generate the passport again.");
-          return;
-        }
-        consecutiveFailures += 1;
-        if (consecutiveFailures >= 8) {
-          setPollingPaused(true);
-          setError("Could not reach the server to check this job. Your job may still be running; retry the status check when your connection is back.");
-          return;
-        }
-        setError("Connection interrupted. Retrying passport status automatically…");
-        delay = nextJobPollDelay(delay);
-      }
-      timer = window.setTimeout(poll, delay);
-    };
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [job?.job_id, job?.status, navigate, pollingPaused]);
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -176,14 +117,13 @@ export default function CreatePassport() {
     try {
       const created = await api.createPassport(data);
       if (!demo) setChallenge(null); // each code works once
-      setJob({
+      onJobChange({
         job_id: created.job_id,
         status: "queued",
         step: "Queued",
         completed_steps: [],
         error: null,
       });
-      setPollingPaused(false);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Could not start passport generation.";
       // An expired, used or unknown code can't be retried; show the "Get verification code" button again.
@@ -227,8 +167,8 @@ export default function CreatePassport() {
             <small>PDF · Max 10 MB</small>
             <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
-          <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs · select multiple</span>
-            <input type="file" accept="application/pdf,.pdf" multiple disabled={certificates.length >= 5} onChange={(event) => {
+          <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs or images · select multiple</span>
+            <input type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={certificates.length >= 5} onChange={(event) => {
               const selected = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = "";
               const remaining = 5 - certificates.length;
@@ -238,6 +178,7 @@ export default function CreatePassport() {
                 : "");
             }} />
           </label>
+          <p className="privacy-note">Text PDFs are read locally. Scanned PDFs and certificate images are sent to Google Cloud Vision for text extraction.</p>
           {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
             {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
               <span>{certificate.name}</span>
@@ -265,19 +206,21 @@ export default function CreatePassport() {
               )}
             </div>
           )}
-          {error &&<div className="notice notice-error">{error}</div>}
-          <button className="button submit-button" type="submit" disabled={submitting || Boolean(job && job.status !== "failed")}>
+          {(error || generationError || (job?.status === "failed" ? job.error : "")) && <div className="notice notice-error" role="alert">{error || generationError || job?.error}</div>}
+          <button className="button submit-button" type="submit" disabled={submitting || Boolean(job && (job.status === "queued" || job.status === "running"))}>
             {submitting ? <LoaderCircle className="spin" size={17} /> : null}
             {submitting ? "Starting…" : "Generate Passport"} <ArrowRight size={17} />
           </button>
         </form>
         {job && (
           <section className="progress-box" aria-live="polite">
-            {job.status === "failed" ? (
+            {job.status === "done" && job.passport_id ? (
+              <div className="progress-title">Your passport was generated while you were away. <Link to={`/passport/${job.passport_id}`}>View passport</Link></div>
+            ) : job.status === "failed" ? (
               <div className="progress-title"><span aria-hidden="true">!</span> Passport generation stopped during {job.step}.</div>
             ) : <div className="progress-title"><LoaderCircle className={job.status === "running" && !pollingPaused ? "spin" : ""} size={17} /> {pollingPaused ? "Passport job status unavailable" : job.step === "Queued" ? "Preparing your evidence…" : job.step}</div>}
-            {pollingPaused && <button type="button" className="button button-light" onClick={() => { setError(""); setPollingPaused(false); }}>Retry status check</button>}
-            {job.status !== "failed" && (
+            {pollingPaused && <button type="button" className="button button-light" onClick={onRetryPolling}>Retry status check</button>}
+            {job.status !== "failed" && job.status !== "done" && (
             <ol className="step-tracker">
               {steps.map((step, index) => (
                 <li className={index <= activeIndex ? "step-done" : ""} key={step}>

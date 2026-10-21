@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
@@ -18,19 +18,28 @@ export default function RecruiterEvidence() {
   const [passport, setPassport] = useState<Passport | null>(null);
   const [selected, setSelected] = useState<PassportSkill | null>(null);
   const [error, setError] = useState("");
+  const loadVersion = useRef(0);
+  const activeId = useRef(id);
+  useLayoutEffect(() => { activeId.current = id; }, [id]);
 
   useEffect(() => {
+    const version = ++loadVersion.current;
+    setPassport(null);
+    setSelected(null);
+    setError("");
     api.reviewPassport(id)
       .then((data) => {
+        if (version !== loadVersion.current) return;
         setPassport(data);
         const requested = data.skills.find((skill) => skill.skill_id === searchParams.get("skill"));
         setSelected(requested ?? sortedSkills(data)[0] ?? null);
       })
-      .catch((reason: Error) => setError(reason.message));
+      .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+    return () => { loadVersion.current += 1; };
   }, [id, searchParams]);
 
-  if (error && !passport) return <div className="page-message notice-error">{error}</div>;
-  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence review…</div>;
+  if (error && (!passport || passport.id !== id)) return <div className="page-message notice-error">{error}</div>;
+  if (!passport || passport.id !== id) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence review…</div>;
 
   const verify = verifiability(passport);
   return (
@@ -69,7 +78,16 @@ export default function RecruiterEvidence() {
           </section>
           <RejectedClaims claims={passport.rejected_claims} audience="recruiter" passportId={passport.id}
             requests={passport.review_requests} labels={passport.check_labels}
-            onChanged={() => { api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message)); }} />
+            onChanged={() => {
+              if (passport.id !== activeId.current) return;
+              const version = ++loadVersion.current;
+              api.reviewPassport(id)
+                .then((data) => {
+                  if (version !== loadVersion.current) return;
+                  setPassport(data);
+                })
+                .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+            }} />
         </div>
         <aside className="evidence-column">
           {selected ? <EvidencePanel skill={selected} audience="recruiter" labels={passport.check_labels} /> :<section className="panel empty-evidence">Select a skill to inspect its evidence trail.</section>}

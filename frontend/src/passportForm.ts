@@ -15,10 +15,10 @@ export function validatePassportForm(input: {
   if (input.resume.size > 10 * 1024 * 1024) return "Your resume PDF must be 10 MB or smaller.";
   if (!input.role) return "Choose a target role.";
   if (input.certificates.length > 5) return "Upload no more than 5 certificates.";
-  if (input.certificates.some((file) => !isPdf(file))) return "All certificates must be PDF files.";
-  if (input.certificates.some((file) => file.size === 0)) return "An uploaded certificate PDF is empty. Choose a file with content or remove it.";
+  if (input.certificates.some((file) => !isSupportedCertificate(file))) return "Certificates must be PDFs, PNG images, or JPEG images.";
+  if (input.certificates.some((file) => file.size === 0)) return "An uploaded certificate is empty. Choose a file with content or remove it.";
   if (input.certificates.some((file) => file.size > 10 * 1024 * 1024)) {
-    return "Each certificate PDF must be 10 MB or smaller.";
+    return "Each certificate must be 10 MB or smaller.";
   }
   if (input.resume.size + input.certificates.reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024) {
     return "The resume and certificates must total 25 MB or less.";
@@ -28,4 +28,12 @@ export function validatePassportForm(input: {
 
 function isPdf(file: File): boolean {
   return file.type === "application/pdf" || (!file.type && file.name.toLowerCase().endsWith(".pdf"));
+}
+
+function isSupportedCertificate(file: File): boolean {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return isPdf(file)
+    || type === "image/png" || type === "image/jpeg"
+    || (!type && /\.(png|jpe?g)$/.test(name));
 }

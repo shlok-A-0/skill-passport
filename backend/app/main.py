@@ -82,6 +82,14 @@ MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = MAX_TOTAL_UPLOAD_BYTES + 1024 * 1024
 
 
+def _supported_certificate_bytes(content: bytes) -> bool:
+    return (
+        content.startswith(b"%PDF-")
+        or content.startswith(b"\x89PNG\r\n\x1a\n")
+        or content.startswith(b"\xff\xd8\xff")
+    )
+
+
 class RequestBodyLimitMiddleware:
     def __init__(self, app: ASGIApp, max_body_size: int) -> None:
         self.app = app
@@ -550,8 +558,6 @@ async def create_passport(
 
         cert_bytes = []
         for certificate in certificates or []:
-            if certificate.content_type != "application/pdf":
-                raise HTTPException(status_code=415, detail="Certificates must be PDF files.")
             content, total_bytes = await stream_and_validate_file(
                 certificate,
                 max_bytes=MAX_SINGLE_FILE_BYTES,
@@ -559,6 +565,11 @@ async def create_passport(
                 max_aggregate=MAX_TOTAL_UPLOAD_BYTES,
                 error_label="Each certificate",
             )
+            if not _supported_certificate_bytes(content):
+                raise HTTPException(
+                    status_code=415,
+                    detail="Certificates must be PDF, PNG, or JPEG files.",
+                )
             cert_bytes.append(content)
     except Exception as exc:
         fail_job(job_id, f"Upload rejected: {exc}")
