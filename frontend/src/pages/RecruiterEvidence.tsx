@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
@@ -18,19 +18,26 @@ export default function RecruiterEvidence() {
   const [passport, setPassport] = useState<Passport | null>(null);
   const [selected, setSelected] = useState<PassportSkill | null>(null);
   const [error, setError] = useState("");
+  const loadVersion = useRef(0);
 
   useEffect(() => {
+    const version = ++loadVersion.current;
+    setPassport(null);
+    setSelected(null);
+    setError("");
     api.reviewPassport(id)
       .then((data) => {
+        if (version !== loadVersion.current) return;
         setPassport(data);
         const requested = data.skills.find((skill) => skill.skill_id === searchParams.get("skill"));
         setSelected(requested ?? sortedSkills(data)[0] ?? null);
       })
-      .catch((reason: Error) => setError(reason.message));
+      .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+    return () => { loadVersion.current += 1; };
   }, [id, searchParams]);
 
-  if (error && !passport) return <div className="page-message notice-error">{error}</div>;
-  if (!passport) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence review…</div>;
+  if (error && (!passport || passport.id !== id)) return <div className="page-message notice-error">{error}</div>;
+  if (!passport || passport.id !== id) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence review…</div>;
 
   const verify = verifiability(passport);
   return (

@@ -319,9 +319,20 @@ export const api = {
     const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
     sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);
     sessionStorage.setItem("passport-pending-job-id", created.job_id);
+    api.rememberJob({ job_id: created.job_id, status: "queued", step: "Queued", completed_steps: [], error: null });
     return created;
   },
   pendingJobId: () => sessionStorage.getItem("passport-pending-job-id"),
+  savedJob: (): PassportJob | null => {
+    try {
+      const raw = sessionStorage.getItem("passport-last-job");
+      return raw ? JSON.parse(raw) as PassportJob : null;
+    } catch {
+      sessionStorage.removeItem("passport-last-job");
+      return null;
+    }
+  },
+  rememberJob: (job: PassportJob) => sessionStorage.setItem("passport-last-job", JSON.stringify(job)),
   clearPendingJob: (id: string) => {
     if (sessionStorage.getItem("passport-pending-job-id") === id) {
       sessionStorage.removeItem("passport-pending-job-id");
@@ -355,6 +366,7 @@ export const api = {
     const job = await request<PassportJob>(`/jobs/${id}`, {
       headers: { "X-Passport-Token": sessionStorage.getItem(`passport-token:${id}`) ?? "" },
     });
+    api.rememberJob(job);
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
     if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
     if (job.status === "done" || job.status === "failed") api.clearPendingRecheck(id);

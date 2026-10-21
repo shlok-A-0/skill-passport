@@ -41,6 +41,14 @@ nav { display: flex; align-items: center; gap: 4px; color: var(--muted); font-si
 nav a { padding: 8px 11px; border-radius: 7px; transition: background .16s ease, color .16s ease; }
 nav a.active, nav a:hover { color: var(--ink); background: #fbf3ed; }
 nav a.active { box-shadow: inset 0 -2px 0 var(--accent); }
+.generation-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px; padding: 9px 16px; color: var(--ink-soft); background: #fff7df; border-bottom: 1px solid #ead9a4; font-size: 12px; }
+.generation-notice a { color: var(--accent-strong); font-weight: 700; text-decoration: underline; }
+.generation-notice small { flex-basis: 100%; text-align: center; color: var(--muted); }
+.generation-complete { background: var(--success-soft); border-color: #b8dfc6; }
+.generation-failed { color: var(--danger); background: var(--danger-soft); border-color: #f2cbc6; }
+.placement-filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.cohort-page-note { margin: -4px 0 10px; font-size: 11px; }
+.page-message h1 { margin: 0 0 8px; }
 main { width: 100%; flex: 1; }
 footer { min-height: 54px; display: flex; gap: 12px; align-items: center; justify-content: center; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); background: var(--surface); }
 footer span { display: flex; gap: 5px; align-items: center; margin-left: 22px; }
@@ -86,6 +94,7 @@ h2 { margin: 6px 0 0; font: 700 18px/1.2 Manrope, sans-serif; letter-spacing: -.
 .create-form select:focus, .cert-upload input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(201,81,24,.12); }
 .upload-box { min-height: 116px; border: 1px dashed #cdbeb2; border-radius: 10px; display: flex !important; flex-direction: column; justify-content: center; align-items: center; gap: 6px !important; background: #fcfaf7; cursor: pointer; transition: border .16s ease, background .16s ease; }
 .upload-box:hover { border-color: var(--accent); background: #fffaf7; }
+.upload-box:focus-within { outline: 3px solid rgba(201,81,24,.28); outline-offset: 3px; border-color: var(--accent); }
 .upload-box input { width: 1px; height: 1px; overflow: hidden; opacity: 0; position: absolute; }
 .upload-icon { color: var(--accent); }
 .upload-box small { color: var(--subtle); font-weight: 500; }

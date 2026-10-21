@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
@@ -47,9 +47,16 @@ export default function RecruiterView() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const loadVersion = useRef(0);
 
   useEffect(() => {
-    api.reviewPassport(id).then(setPassport).catch((reason: Error) => setError(reason.message));
+    const version = ++loadVersion.current;
+    setPassport(null);
+    setError("");
+    api.reviewPassport(id)
+      .then((data) => { if (version === loadVersion.current) setPassport(data); })
+      .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+    return () => { loadVersion.current += 1; };
   }, [id]);
 
   async function copyLink() {
@@ -62,8 +69,8 @@ export default function RecruiterView() {
     }
   }
 
-  if (error && !passport) return <div className="page-message notice-error">{error}</div>;
-  if (!passport) return <div className="page-message">Loading recruiter summary…</div>;
+  if (error && (!passport || passport.id !== id)) return <div className="page-message notice-error">{error}</div>;
+  if (!passport || passport.id !== id) return <div className="page-message">Loading recruiter summary…</div>;
 
   // Strongest first: Demonstrated > Applied > Used, then the most evidence.
   const topSkills = passport.skills

@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, Users, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
@@ -24,31 +24,51 @@ export default function PlacementCell() {
   const [loadedPassportCount, setLoadedPassportCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [roleId, setRoleId] = useState("");
+  const [preferredRole, setPreferredRole] = useState("");
+  const [searchParams] = useSearchParams();
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [retryLoadMore, setRetryLoadMore] = useState(false);
+
+  async function loadInitial() {
+    setLoading(true);
+    setError("");
+    setRetryLoadMore(false);
+    try {
+      const [availableRoles, page] = await Promise.all([api.roles(), api.reviewPassports()]);
+      setRoles(availableRoles);
+      // One row per student (latest passport per username) for stats, heatmap, gaps and ranking.
+      setPassports(latestPerStudent(page.items));
+      setTotalPassports(page.total);
+      setLoadedPassportCount(page.items.length);
+      if (availableRoles.length) setRoleId(availableRoles[0].id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load cohort insights.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    Promise.all([api.roles(), api.reviewPassports()])
-      .then(([availableRoles, page]) => {
-        setRoles(availableRoles);
-        // One row per student (latest passport per username) for stats, heatmap, gaps and ranking.
-        setPassports(latestPerStudent(page.items));
-        setTotalPassports(page.total);
-        setLoadedPassportCount(page.items.length);
-        if (availableRoles.length) setRoleId(availableRoles[0].id);
-      })
-      .catch((reason: Error) => setError(reason.message));
+    void loadInitial();
   }, []);
+
+  useEffect(() => {
+    setPreferredRole(searchParams.get("preferredRole") ?? "");
+  }, [searchParams]);
 
   async function loadMore() {
     if (loadingMore) return;
     setLoadingMore(true);
     setError("");
+    setRetryLoadMore(false);
     try {
       const page = await api.reviewPassports(50, loadedPassportCount);
       setPassports((current) => latestPerStudent([...current, ...page.items]));
       setTotalPassports(page.total);
       setLoadedPassportCount((count) => count + page.items.length);
     } catch (reason) {
+      setRetryLoadMore(true);
       setError(reason instanceof Error ? reason.message : "Could not load more passports.");
     } finally {
       setLoadingMore(false);
@@ -56,12 +76,14 @@ export default function PlacementCell() {
   }
 
   const role = roles.find((item) => item.id === roleId);
+  const preferredRoleOptions = [...new Set([...roles.map((item) => item.name), ...passports.map((passport) => passport.target_role)])].sort();
+  const visiblePassports = preferredRole ? passports.filter((passport) => passport.target_role === preferredRole) : passports;
   const requirements = role?.requirements ?? [];
   const rows = useMemo(
-    () => passports.map((passport) => ({ passport, matched: requirementsMet(passport, requirements).met })),
-    [passports, requirements],
+    () => visiblePassports.map((passport) => ({ passport, matched: requirementsMet(passport, requirements).met })),
+    [visiblePassports, requirements],
   );
-  const ranked = useMemo(() => rankCandidates(passports, requirements), [passports, requirements]);
+  const ranked = useMemo(() => rankCandidates(visiblePassports, requirements), [visiblePassports, requirements]);
   const best = ranked[0];
   const avgMet = rows.length
     ? (rows.reduce((total, row) => total + row.matched, 0) / rows.length).toFixed(1)
@@ -79,7 +101,7 @@ export default function PlacementCell() {
     };
   }).sort((left, right) => right.percent - left.percent);
   const topGap = gaps.find((gap) => gap.percent > 0);
-  const demoPresent = passports.some((passport) => passport.is_demo);
+  const demoPresent = visiblePassports.some((passport) => passport.is_demo);
 
   const downloadCohortCsv = () => {
     if (!ranked.length) return;
@@ -133,12 +155,17 @@ export default function PlacementCell() {
     <div className="placement-page">
       <header className="placement-heading">
         <div><div className="eyebrow">PLACEMENT CELL · BATCH INSIGHTS</div><h1>Skills across your cohort</h1><p>Evidence ladders show where students have proof and where a shared workshop can help.</p></div>
-        <label className="role-select-label">TARGET ROLE<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <div className="placement-filters">
+          <label className="role-select-label">EVALUATE COHORT AGAINST<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="role-select-label">CANDIDATE PREFERRED ROLE<select value={preferredRole} onChange={(event) => setPreferredRole(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        </div>
       </header>
       {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
-      {error && <div className="notice notice-error">{error}</div>}
+      {error && <div className="notice notice-error" role="alert">{error}<button type="button" className="link-button" onClick={() => void (retryLoadMore ? loadMore() : loadInitial())}>Retry</button></div>}
+      {loading && <div className="page-message" role="status">Loading cohort insights…</div>}
+      {!loading && loadedPassportCount < totalPassports && <p className="muted cohort-page-note">Role filters and exports cover the {loadedPassportCount} loaded passports so far.</p>}
       <div className="placement-stats">
-        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>UNIQUE STUDENTS LOADED</small><strong>{passports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
+        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>STUDENTS IN VIEW</small><strong>{visiblePassports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
         <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>AVERAGE REQUIREMENTS MET</small><strong>{avgMet} <i>of {requirements.length} requirements</i></strong></div></section>
         <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>SUGGESTED WORKSHOP</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `For ${topGap.percent}% of this group, no evidence was found in the analysed files.` : "The highest shared evidence gap appears here."}</p></div></section>
       </div>
@@ -160,7 +187,7 @@ export default function PlacementCell() {
             <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
           </div>
         </div>
-        {!ranked.length ? <div className="empty-state">No passports yet. Generate student passports to rank candidates.</div> : (
+        {!loading && !error && !ranked.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to rank candidates."}</div> : ranked.length > 0 ? (
           <>
             {best && (
               <div className="best-candidate">
@@ -206,14 +233,14 @@ export default function PlacementCell() {
               </table>
             </div>
             <p className="ranking-note">Verifiability counts advisory authorship checks (line authorship, commit history, bulk uploads, matching code in earlier public sources, AI chat text left in files). A warning is a prompt to look, not a finding. Unverified resume claims never count towards requirements.</p>
-            {loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
           </>
-        )}
+        ) : null}
+        {!loading && loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
       </section>
       <div className="placement-grid">
         <section className="panel heatmap-panel">
           <div className="panel-heading"><div><div className="eyebrow">EVIDENCE BY STUDENT</div><h2>{role?.name ?? "Role"} requirements</h2></div><span className="muted">Select a row to open a passport</span></div>
-          {!rows.length ? <div className="empty-state">No passports yet. Generate student passports to populate the batch view.</div> : (
+          {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
               <table className="heatmap-table">
                 <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillLabel(req)}</th>)}</tr></thead>
@@ -229,7 +256,7 @@ export default function PlacementCell() {
                 ))}</tbody>
               </table>
             </div>
-          )}
+          ) : null}
           <div className="heatmap-legend">
             <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span>
           </div>
