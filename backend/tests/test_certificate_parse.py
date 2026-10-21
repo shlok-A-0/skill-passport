@@ -13,7 +13,9 @@ from app.services import resume_parse
 
 def _image_bytes(image_format: str = "png") -> bytes:
     pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 4, 4), 0)
-    pixmap.clear_with(220)
+    pixmap.clear_with(255)
+    for x in range(4):
+        pixmap.set_pixel(x, 2, (0, 0, 0))
     return pixmap.tobytes(image_format)
 
 
@@ -26,6 +28,11 @@ def _pdf(*page_types: str, width: float = 300, height: float = 200) -> bytes:
                 page.insert_text((20, 40), "Python AWS")
             elif page_type == "scan":
                 page.insert_image(page.rect, stream=image)
+            elif page_type == "vector":
+                # Draw a letter-shaped path rather than text or an embedded image.
+                page.draw_line((30, 90), (50, 30), width=4)
+                page.draw_line((50, 30), (70, 90), width=4)
+                page.draw_line((38, 65), (62, 65), width=4)
         return document.tobytes()
 
 
@@ -49,6 +56,16 @@ def test_scanned_pdf_ocr_only_sends_pages_with_embedded_images(monkeypatch) -> N
     assert {skill["skill_id"] for skill in skills} >= {"python", "aws"}
     assert len(received) == 1
     assert received[0].startswith(b"\xff\xd8\xff")
+
+
+def test_vector_only_certificate_page_is_sent_to_vision(monkeypatch) -> None:
+    received = []
+    monkeypatch.setattr(resume_parse, "_document_ocr", lambda image: received.append(image) or "Python AWS")
+
+    skills = resume_parse.parse_certificate(_pdf("vector"))
+
+    assert {skill["skill_id"] for skill in skills} >= {"python", "aws"}
+    assert len(received) == 1
 
 
 def test_text_pdf_with_blank_page_does_not_require_vision(monkeypatch) -> None:

@@ -29,7 +29,13 @@ export async function pollJobAttempt<TJob extends { status: string }, TPassport>
   }
 }
 
-export function shouldRememberGenerationJob(jobId: string, pendingRecheck: string | null): boolean {
+export function shouldRememberGenerationJob(
+  jobId: string,
+  pendingRecheck: string | null,
+  jobType: string | null = null,
+): boolean {
+  if (jobType === "recheck") return false;
+  if (jobType === "generation") return true;
   if (!pendingRecheck) return true;
   try {
     return (JSON.parse(pendingRecheck) as { job_id?: string }).job_id !== jobId;

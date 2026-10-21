@@ -14,6 +14,8 @@ MAX_PDF_PAGES = 50
 MAX_CERTIFICATE_OCR_PAGES = 10
 MAX_CERTIFICATE_OCR_PIXELS = 16_000_000
 MAX_CERTIFICATE_OCR_SIDE = 8192
+MAX_CERTIFICATE_BLANK_CHECK_PIXELS = 262_144
+MAX_CERTIFICATE_BLANK_CHECK_SIDE = 512
 
 
 class PdfPageLimitError(Exception):
@@ -210,10 +212,10 @@ def _extract_certificate_pdf_text(pdf_bytes: bytes) -> str:
 
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
-            # Blank pages have no image to OCR; don't require Vision credentials for them.
+            # Check rendered content: inline images and vectorized text may have no image XObjects.
             ocr_indexes = [
                 index for index, text in enumerate(pages)
-                if not text.strip() and document[index].get_images(full=True)
+                if not text.strip() and _certificate_page_has_visible_content(document[index])
             ]
             if len(ocr_indexes) > MAX_CERTIFICATE_OCR_PAGES:
                 raise ValueError(
@@ -233,24 +235,57 @@ def _extract_certificate_pdf_text(pdf_bytes: bytes) -> str:
 
 def _render_certificate_page(page) -> bytes:
     """Render a PDF page within a bounded pixel budget before allocating its pixmap."""
+    scale = _bounded_certificate_render_scale(
+        page,
+        target_scale=1.5,
+        max_pixels=MAX_CERTIFICATE_OCR_PIXELS,
+        max_side=MAX_CERTIFICATE_OCR_SIDE,
+    )
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    return pixmap.tobytes("jpeg", jpg_quality=85)
+
+
+def _certificate_page_has_visible_content(page) -> bool:
+    """Detect nonblank pages from a bounded thumbnail, including vector-only and inline-image art."""
+    scale = _bounded_certificate_render_scale(
+        page,
+        target_scale=1.0,
+        max_pixels=MAX_CERTIFICATE_BLANK_CHECK_PIXELS,
+        max_side=MAX_CERTIFICATE_BLANK_CHECK_SIDE,
+    )
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    samples = pixmap.samples
+    channels = pixmap.n
+    if len(samples) <= channels:
+        return False
+    background = samples[:channels]
+    return samples != background * (len(samples) // channels)
+
+
+def _bounded_certificate_render_scale(
+    page,
+    *,
+    target_scale: float,
+    max_pixels: int,
+    max_side: int,
+) -> float:
     width, height = float(page.rect.width), float(page.rect.height)
     if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
         raise ValueError("Certificate PDF contains a page with invalid dimensions.")
 
     scale = min(
-        1.5,
-        math.sqrt(MAX_CERTIFICATE_OCR_PIXELS) / math.sqrt(width) / math.sqrt(height),
-        MAX_CERTIFICATE_OCR_SIDE / width,
-        MAX_CERTIFICATE_OCR_SIDE / height,
+        target_scale,
+        math.sqrt(max_pixels) / math.sqrt(width) / math.sqrt(height),
+        max_side / width,
+        max_side / height,
     )
     if not math.isfinite(scale) or scale <= 0:
         raise ValueError("Certificate PDF page is too large to render safely.")
     pixel_width, pixel_height = math.ceil(width * scale), math.ceil(height * scale)
     while (
-        pixel_width * pixel_height > MAX_CERTIFICATE_OCR_PIXELS
-        or max(pixel_width, pixel_height) > MAX_CERTIFICATE_OCR_SIDE
+        pixel_width * pixel_height > max_pixels
+        or max(pixel_width, pixel_height) > max_side
     ):
         scale *= 0.99
         pixel_width, pixel_height = math.ceil(width * scale), math.ceil(height * scale)
-    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-    return pixmap.tobytes("jpeg", jpg_quality=85)
+    return scale

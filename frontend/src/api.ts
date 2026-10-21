@@ -320,6 +320,7 @@ export const api = {
   createPassport: async (data: FormData) => {
     const created = await request<{ job_id: string; access_token: string }>("/passport/create", { method: "POST", body: data });
     sessionStorage.setItem(`passport-token:${created.job_id}`, created.access_token);
+    sessionStorage.setItem(`passport-job-kind:${created.job_id}`, "generation");
     sessionStorage.setItem("passport-pending-job-id", created.job_id);
     api.rememberJob({ job_id: created.job_id, status: "queued", step: "Queued", completed_steps: [], error: null });
     return created;
@@ -330,7 +331,11 @@ export const api = {
       const raw = sessionStorage.getItem("passport-last-job");
       if (!raw) return null;
       const job = JSON.parse(raw) as PassportJob;
-      return shouldRememberGenerationJob(job.job_id, sessionStorage.getItem("passport-pending-recheck"))
+      return shouldRememberGenerationJob(
+        job.job_id,
+        sessionStorage.getItem("passport-pending-recheck"),
+        sessionStorage.getItem(`passport-job-kind:${job.job_id}`),
+      )
         ? job
         : null;
     } catch {
@@ -375,6 +380,7 @@ export const api = {
     const isGenerationJob = shouldRememberGenerationJob(
       id,
       sessionStorage.getItem("passport-pending-recheck"),
+      sessionStorage.getItem(`passport-job-kind:${id}`),
     );
     if (isGenerationJob) {
       api.rememberJob(job);
@@ -389,6 +395,7 @@ export const api = {
     if (job.status === "done" && job.passport_id) sessionStorage.setItem("passport-latest-id", job.passport_id);
     if (job.status === "done" || job.status === "failed") api.clearPendingJob(id);
     if (job.status === "done" || job.status === "failed") api.clearPendingRecheck(id);
+    if (job.status === "done" || job.status === "failed") sessionStorage.removeItem(`passport-job-kind:${id}`);
     return job;
   },
   passport: (id: string) => request<Passport>(`/passport/${id}`),
@@ -414,6 +421,7 @@ export const api = {
       { method: "POST", headers: { "X-Passport-Token": token } },
     );
     sessionStorage.setItem(`passport-token:${job.job_id}`, job.access_token);
+    sessionStorage.setItem(`passport-job-kind:${job.job_id}`, "recheck");
     sessionStorage.setItem("passport-pending-recheck", JSON.stringify({ job_id: job.job_id, passport_id: id }));
     return job;
   },
