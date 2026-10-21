@@ -21,7 +21,7 @@ test("passport form rejects empty resume and certificate files", () => {
   );
   assert.match(
     validatePassportForm({ ...base, certificates: [file("empty-certificate.pdf", 0)] }) ?? "",
-    /certificate PDF is empty/,
+    /certificate is empty/,
   );
 });
 
@@ -40,6 +40,9 @@ test("passport form rejects malformed usernames before submitting", () => {
 
 test("passport form rejects invalid and oversized certificate uploads", () => {
   const base = { username: "octocat", resume: file("resume.pdf"), role: "backend-intern" };
-  assert.match(validatePassportForm({ ...base, certificates: [file("notes.txt", 10, "text/plain")] }) ?? "", /certificates must be PDF/);
+  assert.match(
+    validatePassportForm({ ...base, certificates: [file("notes.txt", 10, "text/plain")] }) ?? "",
+    /Certificates must be PDFs, PNG images, or JPEG images/,
+  );
   assert.match(validatePassportForm({ ...base, certificates: [file("large.pdf", 11 * 1024 * 1024)] }) ?? "", /10 MB/);
 });
