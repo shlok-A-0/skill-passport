@@ -164,17 +164,25 @@ def parse_resume(pdf_bytes: bytes) -> dict[str, Any]:
     }
 
 
-def parse_certificate(pdf_bytes: bytes) -> list[dict[str, str]]:
+def extract_certificate_text(pdf_bytes: bytes) -> str:
+    """Text of a PDF (hosted OCR for scanned pages) or a PNG/JPEG image (hosted OCR).
+
+    Also used for project reports, which accept the same file types.
+    """
     if not pdf_bytes:
         raise ValueError("Certificate file is empty.")
     if pdf_bytes.startswith(b"%PDF-"):
-        return match_resume_skills(_extract_certificate_pdf_text(pdf_bytes))
+        return _extract_certificate_pdf_text(pdf_bytes)
     if not (pdf_bytes.startswith(b"\x89PNG\r\n\x1a\n") or pdf_bytes.startswith(b"\xff\xd8\xff")):
         raise ValueError("Certificate must be a PDF, PNG, or JPEG image.")
     text = _document_ocr(pdf_bytes)
     if not text.strip():
         raise ValueError("No readable text found in the certificate image.")
-    return match_resume_skills(text)
+    return text
+
+
+def parse_certificate(pdf_bytes: bytes) -> list[dict[str, str]]:
+    return match_resume_skills(extract_certificate_text(pdf_bytes))
 
 
 def _vision_client():

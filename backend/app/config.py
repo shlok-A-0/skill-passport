@@ -83,6 +83,8 @@ def _feature_flag(name: str) -> bool:
 
 # Target roles built from a pasted job description (POST /roles/from-description).
 ENABLE_CUSTOM_ROLES = _feature_flag("ENABLE_CUSTOM_ROLES")
+# Project reports and a portfolio URL as extra (claim-only) sources on /passport/create.
+ENABLE_REPORTS = _feature_flag("ENABLE_REPORTS")
 # Debug endpoints require explicit opt-in in every environment.
 ALLOW_DEBUG_ENDPOINTS = os.getenv("ALLOW_DEBUG_ENDPOINTS", "false").lower() in ("true", "1", "yes")
 CACHE_DIR = BASE_DIR / "cache"

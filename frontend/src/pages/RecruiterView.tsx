@@ -5,6 +5,7 @@ import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, 
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
+import ReportsPanel from "../components/ReportsPanel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
@@ -160,7 +161,7 @@ export default function RecruiterView() {
             {claimedSkills.length ? (
               <>
                 <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>These skills may be listed on the resume or certificates, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
+                <p>These skills may be listed on the resume, certificates or project reports, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
               </>
             ) : <p>No unverified claims in this passport.</p>}
           </section>
@@ -175,6 +176,7 @@ export default function RecruiterView() {
               </article>
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
           </details>
+          <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" />
         </aside>
       </div>
       <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>

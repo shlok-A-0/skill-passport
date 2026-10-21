@@ -169,7 +169,7 @@ export type Passport = {
   created_at: string;
   github_username: string;
   target_role: string;
-  sources: { repos: number; resume: boolean; certificates: number };
+  sources: { repos: number; resume: boolean; certificates: number; reports?: number };
   coverage?: Coverage;
   skills: PassportSkill[];
   rejected_claims: RejectedClaim[];
@@ -213,6 +213,9 @@ export type Passport = {
   identity?: IntegritySignal[];
   /** Present when the target role was built from a pasted job description. */
   custom_role?: { id: string; name: string; title: string; requirements: CustomRoleRequirement[] };
+  reports?: ProjectReport[];
+  /** Never fetched; ownership is only recognised for <username>.github.io. */
+  portfolio?: Portfolio;
 };
 
 /** A requirement extracted from a job description: quote checked against the text, level set by fixed rules. */
@@ -226,7 +229,25 @@ export type CustomRole = {
   created_at: string;
   note?: string | null;
 };
-export type Features = { custom_roles: boolean };
+export type Features = { custom_roles: boolean; reports: boolean };
+
+/** A skill a project report says was used, checked against code evidence. Never raises a level. */
+export type ReportClaim = {
+  skill_id: string;
+  name?: string;
+  quote: string;
+  status: "corroborated" | "not_evidenced";
+  evidence?: { type: Evidence["type"]; repo: string; file_path: string; start_line: number; end_line: number; url: string };
+};
+export type ProjectReport = {
+  filename: string;
+  claims: ReportClaim[];
+  dropped: { skill_id: string | null; quote: string | null; reason: string }[];
+  /** Student view: only links to the candidate's own repositories. */
+  repo_links: { owner: string; repo: string; url: string; status: "own" | "other_account" }[];
+  error?: string;
+};
+export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */
 export type OwnershipChallenge = {

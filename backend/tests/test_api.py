@@ -64,7 +64,7 @@ def test_create_job_persist_and_get_passport(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
     received_certificates = []
 
-    def fake_runner(job_id, username, role, resume, certificates, is_demo):
+    def fake_runner(job_id, username, role, resume, certificates, is_demo, **kwargs):
         received_certificates.extend(certificates)
         passport = fake_passport(job_id)
         passport["github_username"] = username
@@ -134,7 +134,7 @@ def test_create_requires_resume_and_valid_github_username(tmp_path, monkeypatch)
 def test_create_rejects_empty_resume_and_certificate_before_starting_jobs(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "test.sqlite")
     started = []
-    monkeypatch.setattr(main_module, "run_passport_job", lambda *args: started.append(args))
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: started.append(args))
     client = TestClient(main_module.app)
 
     empty_resume = client.post(
@@ -776,7 +776,7 @@ def test_certificate_upload_count_and_aggregate_size_limits(tmp_path, monkeypatc
         files=[("resume", big_resume), ("certificates", big_cert1), ("certificates", big_cert2)],
     )
     assert res_big.status_code == 413
-    assert "Total upload size across resume and certificates must be 25 MB or smaller" in res_big.json()["detail"]
+    assert "Total upload size across resume, certificates and reports must be 25 MB or smaller" in res_big.json()["detail"]
 
 
 def test_debug_endpoints_disabled_or_protected(tmp_path, monkeypatch) -> None:

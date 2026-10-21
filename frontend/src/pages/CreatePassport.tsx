@@ -12,6 +12,7 @@ const steps = [
   "Reading GitHub",
   "Reading resume",
   "Reading certificates",
+  "Reading reports",
   "Proposing skills",
   "Verifying evidence",
   "Matching role",
@@ -39,6 +40,9 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   const [gettingCode, setGettingCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [customRolesEnabled, setCustomRolesEnabled] = useState(false);
+  const [reportsEnabled, setReportsEnabled] = useState(false);
+  const [reports, setReports] = useState<File[]>([]);
+  const [portfolioUrl, setPortfolioUrl] = useState("");
   const [jdTitle, setJdTitle] = useState("");
   const [jdText, setJdText] = useState("");
   const [extracted, setExtracted] = useState<CustomRole | null>(null);
@@ -128,7 +132,13 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       if (items.length) setRole(items[0].id);
     }).catch((reason: Error) => setRoleError(reason.message));
     // Optional features stay hidden if this call fails.
-    api.features().then((features) => setCustomRolesEnabled(features.custom_roles)).catch(() => setCustomRolesEnabled(false));
+    api.features().then((features) => {
+      setCustomRolesEnabled(features.custom_roles);
+      setReportsEnabled(features.reports);
+    }).catch(() => {
+      setCustomRolesEnabled(false);
+      setReportsEnabled(false);
+    });
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -139,7 +149,11 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       return;
     }
     const targetRole = effectiveTargetRole(role, extracted?.id ?? null);
-    const validationError = validatePassportForm({ username, resume, role: targetRole, certificates });
+    const sentReports = reportsEnabled ? reports : [];
+    const sentPortfolio = reportsEnabled ? portfolioUrl.trim() : "";
+    const validationError = validatePassportForm({
+      username, resume, role: targetRole, certificates, reports: sentReports, portfolioUrl: sentPortfolio,
+    });
     if (validationError) {
       setError(validationError);
       return;
@@ -161,6 +175,8 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
     data.append("is_demo", String(demo));
     if (!demo && challenge) data.append("ownership_challenge_id", challenge.challenge_id);
     certificates.forEach((file) => data.append("certificates", file));
+    sentReports.forEach((file) => data.append("reports", file));
+    if (sentPortfolio) data.append("portfolio_url", sentPortfolio);
     try {
       const created = await api.createPassport(data);
       if (!demo) setChallenge(null); // each code works once
@@ -261,7 +277,31 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
                 : "");
             }} />
           </label>
-          <p className="privacy-note">Text PDFs are read locally. Scanned PDFs and certificate images are sent to Google Cloud Vision for text extraction.</p>
+          {reportsEnabled && (
+            <>
+              <label className="cert-upload">Project reports <span className="muted">optional · up to 3 PDFs or images · checked against your code, never raise a level</span>
+                <input type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={reports.length >= 3} onChange={(event) => {
+                  const selected = Array.from(event.currentTarget.files ?? []);
+                  event.currentTarget.value = "";
+                  const remaining = 3 - reports.length;
+                  setReports([...reports, ...selected.slice(0, remaining)]);
+                  setError(selected.length > remaining
+                    ? "Upload no more than 3 project reports. Extra selected files were not added."
+                    : "");
+                }} />
+              </label>
+              {reports.length > 0 && <ul className="certificate-list" aria-label="Selected project reports">
+                {reports.map((report, index) => <li key={`${report.name}-${report.lastModified}-${index}`}>
+                  <span>{report.name}</span>
+                  <button type="button" onClick={() => { setReports((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
+                </li>)}
+              </ul>}
+              <label className="cert-upload">Portfolio URL <span className="muted">optional · https only · never fetched</span>
+                <input type="url" value={portfolioUrl} maxLength={300} placeholder="https://your-username.github.io" onChange={(event) => { setPortfolioUrl(event.target.value); setError(""); }} />
+              </label>
+            </>
+          )}
+          <p className="privacy-note">Text PDFs are read locally. Scanned PDFs and certificate{reportsEnabled ? " or report" : ""} images are sent to Google Cloud Vision for text extraction.{reportsEnabled ? " Report text is sent to the AI (personal details removed) to suggest skill claims; it is not stored." : ""}</p>
           {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
             {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
               <span>{certificate.name}</span>
