@@ -237,7 +237,7 @@ def test_invalid_ai_output_falls_back_to_exact_matches_with_default_importance(m
     requirements = _by_skill(result)
     assert set(requirements) == {"python", "unit-testing", "postgresql"}
     assert requirements["python"]["importance"] == "must"  # "must ... strong" in the quote
-    assert result["note"]
+    assert result["mode"] == "exact_only" and result["note"] == jd_parse.EXACT_ONLY_NOTE
 
 
 def test_contact_details_are_removed_before_the_ai_call(monkeypatch) -> None:
@@ -299,9 +299,87 @@ def test_endpoint_errors_are_clear(tmp_path, monkeypatch) -> None:
     _gemini(monkeypatch, [])
     short = client.post("/roles/from-description", json={"title": "Intern", "description": "Python required."})
     assert short.status_code == 422 and "50-8000" in short.json()["detail"]
-    _gemini(monkeypatch, GeminiUnavailableError("GEMINI_API_KEY is not configured."))
-    down = client.post("/roles/from-description", json={"title": "Intern", "description": DESCRIPTION})
-    assert down.status_code == 503 and "unavailable" in down.json()["detail"]
+    assert client.post("/roles/from-description", json={"title": "Intern", "description": DESCRIPTION}).json()["mode"] == "ai"
+
+
+BULLETED = (
+    "Requirements:\n"
+    "- Strong Python experience\n"
+    "- FastAPI for REST services is required\n"
+    "- Solid SQL is essential\n"
+    "- Unit tests with pytest are a must\n"
+    "- Docker is a plus\n"
+    "- Familiarity with containerised deployments"
+)
+EXPECTED_EXACT_ONLY = {
+    "python": ("must", "Applied", "- Strong Python experience"),
+    "fastapi": ("must", "Applied", "- FastAPI for REST services is required"),
+    "sql": ("must", "Applied", "- Solid SQL is essential"),
+    "unit-testing": ("must", "Demonstrated", "- Unit tests with pytest are a must"),
+    "docker": ("nice", "Used", "- Docker is a plus"),
+}
+
+
+def _real_gemini_failing(tmp_path, monkeypatch, error: Exception) -> list[int]:
+    """The real propose_json_items + generate_json chain, with the Gemini SDK raising `error`."""
+    from app.services import gemini
+
+    calls: list[int] = []
+
+    class Models:
+        def generate_content(self, **_kwargs):
+            calls.append(1)
+            raise error
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemini.genai, "Client", lambda api_key: type("C", (), {"models": Models()})())
+    monkeypatch.setattr(gemini.time, "sleep", lambda _seconds: None)
+    return calls
+
+
+def _gemini_errors():
+    import httpx
+    from google.genai import errors
+
+    return [
+        errors.ServerError(503, {"error": {"code": 503, "message": "The model is overloaded.", "status": "UNAVAILABLE"}}),
+        httpx.ReadTimeout("timed out"),
+        errors.ClientError(429, {"error": {"code": 429, "message": "Quota exceeded.", "status": "RESOURCE_EXHAUSTED"}}),
+    ]
+
+
+@pytest.mark.parametrize("error", _gemini_errors(), ids=["503-overloaded", "timeout", "429-quota"])
+def test_unavailable_ai_falls_back_to_exact_matching(tmp_path, monkeypatch, error) -> None:
+    calls = _real_gemini_failing(tmp_path, monkeypatch, error)
+    result = jd_parse.extract_requirements("Backend Intern", BULLETED)
+    assert len(calls) > 1  # the existing retries ran before falling back
+    assert result["mode"] == "exact_only" and result["note"] == jd_parse.EXACT_ONLY_NOTE
+    assert {item["skill_id"]: (item["importance"], item["min_level"], item["quote"])
+            for item in result["requirements"]} == EXPECTED_EXACT_ONLY
+    assert all(item["source"] == "exact" for item in result["requirements"])
+
+
+@pytest.mark.parametrize("error", _gemini_errors()[:2], ids=["503-overloaded", "timeout"])
+def test_endpoint_returns_201_with_the_exact_only_flag(tmp_path, monkeypatch, error) -> None:
+    client = _client(tmp_path, monkeypatch)
+    _real_gemini_failing(tmp_path, monkeypatch, error)
+    response = client.post("/roles/from-description", json={"title": "Backend Intern", "description": BULLETED})
+    assert response.status_code == 201
+    role = response.json()
+    assert role["mode"] == "exact_only" and role["note"] == jd_parse.EXACT_ONLY_NOTE
+    assert {item["skill_id"] for item in role["requirements"]} == set(EXPECTED_EXACT_ONLY)
+    assert storage.get_custom_role(role["id"])["title"] == "Backend Intern"
+
+
+def test_exact_only_without_a_must_have_is_still_a_clear_error(tmp_path, monkeypatch) -> None:
+    import httpx
+
+    client = _client(tmp_path, monkeypatch)
+    _real_gemini_failing(tmp_path, monkeypatch, httpx.ReadTimeout("timed out"))
+    response = client.post("/roles/from-description", json={
+        "title": "Intern", "description": "- Docker is a plus\n- Postgres would be nice\n- Some Redis experience helps"})
+    assert response.status_code == 422 and "must-have" in response.json()["detail"]
 
 
 def test_endpoint_is_rate_limited(tmp_path, monkeypatch) -> None:

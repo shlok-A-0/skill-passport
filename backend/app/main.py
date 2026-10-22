@@ -40,7 +40,6 @@ from app.config import (
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
-from app.services.gemini import GeminiUnavailableError
 from app.services.github_ingest import GitHubIngestError, validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
 from app.services.jd_parse import (
@@ -466,7 +465,8 @@ class JobDescriptionBody(BaseModel):
 @app.post("/roles/from-description", status_code=201)
 def role_from_description(body: JobDescriptionBody, request: Request) -> dict:
     """A target role from a pasted job description. The AI proposes requirements; code matches
-    skill names, sets minimum levels by fixed rules and checks every quote against the text."""
+    skill names, sets minimum levels by fixed rules and checks every quote against the text.
+    If the AI is unavailable the role comes from exact matching only (`mode: "exact_only"`)."""
     if not config.ENABLE_CUSTOM_ROLES:
         raise HTTPException(status_code=404, detail="Not Found")
     check_rate_limit(request, "role_from_description", max_requests=10, window_seconds=600)
@@ -474,12 +474,6 @@ def role_from_description(body: JobDescriptionBody, request: Request) -> dict:
         role = build_custom_role(body.title, body.description)
     except JobDescriptionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except GeminiUnavailableError as exc:
-        logging.getLogger(__name__).warning("Job description extraction unavailable: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail="Requirement extraction is unavailable right now (the AI service could not be reached). Please try again later or choose a listed role.",
-        ) from exc
     save_custom_role(role)
     return {**role, "name": role["title"], "custom": True}
 

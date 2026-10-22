@@ -21,6 +21,13 @@ export function jobDescriptionInputError(title: string, description: string): st
   return null;
 }
 
+export const EXACT_ONLY_NOTE = "AI suggestions unavailable right now; showing requirements found by exact matching.";
+
+/** The muted note under extracted requirements: only when the AI was unavailable. */
+export function extractionNote(role: { mode?: string }): string | null {
+  return role.mode === "exact_only" ? EXACT_ONLY_NOTE : null;
+}
+
 /** "N phrases could not be mapped", or null when nothing was dropped. */
 export function droppedSummary(count: number): string | null {
   if (count <= 0) return null;

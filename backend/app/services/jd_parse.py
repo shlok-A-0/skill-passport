@@ -5,6 +5,7 @@ exact name. Code matches skill names and aliases, sets every minimum level by fi
 checks every quote against the description. The description itself is never stored.
 """
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from typing import Any
 
 from app.services.claim_validation import validate_proposals
 from app.services.framework import get_skills
-from app.services.gemini import GeminiOutputError, propose_json_items
+from app.services.gemini import GeminiOutputError, GeminiUnavailableError, propose_json_items
 from app.services.resume_parse import find_skill_mentions
 from app.services.verifier import LEVEL_ORDER
 
@@ -22,6 +23,8 @@ DESCRIPTION_MAX_CHARS = 8000
 MAX_REQUIREMENTS = 12
 QUOTE_CONTEXT_CHARS = 60
 CUSTOM_ROLE_PREFIX = "custom-"
+EXACT_ONLY_NOTE = "AI suggestions unavailable right now; showing requirements found by exact matching."
+logger = logging.getLogger(__name__)
 IMPORTANCE_WORDS = re.compile(r"\b(?:required|must|essential|strong)\b", re.IGNORECASE)
 TESTING_WORDS = re.compile(r"\b(?:tests?|tested|testing|unit tests?|tdd|pytest|jest)\b", re.IGNORECASE)
 # A quote stays inside its sentence: ; ! ? always end one, "." only before whitespace or the
@@ -120,8 +123,10 @@ def validate_input(title: str, description: str) -> tuple[str, str]:
 def extract_requirements(title: str, description: str) -> dict[str, Any]:
     """Validated requirements and the phrases that could not be mapped.
 
-    Raises JobDescriptionError for bad input or no must-have requirement, and
-    GeminiUnavailableError when Gemini can't be reached.
+    When Gemini can't help (unavailable after its retries, or invalid JSON after one retry), the
+    result comes from exact matching only (`mode: "exact_only"`) with the same keyword importance
+    rule, level rules, validation, dedupe and cap. Raises JobDescriptionError for bad input or
+    when there is no must-have requirement.
     """
     title, description = validate_input(title, description)
     text = _redact_contacts(description)
@@ -129,12 +134,13 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
         item["skill_id"]: _quote_around(item["line"], item["span"])
         for item in find_skill_mentions(text)
     }
-    note = None
+    mode, note = "ai", None
     try:
         proposed = propose_json_items(_prompt(text, sorted(exact)), "requirements", "jd")
-    except GeminiOutputError:
+    except (GeminiUnavailableError, GeminiOutputError) as exc:
+        logger.warning("Job description: AI suggestions unavailable (%s); using exact matches only", exc)
         proposed = []
-        note = "AI suggestions were unusable this time, so only skills named exactly were matched."
+        mode, note = "exact_only", EXACT_ONLY_NOTE
 
     # Gemini's importance for skills found by exact name; the exact quote always wins.
     ai_importance: dict[str, str] = {}
@@ -188,7 +194,7 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
             "No must-have requirement was found. Say which skills are required "
             "(for example \"Python is required\") and try again."
         )
-    return {"title": title, "requirements": requirements, "dropped": dropped, "note": note}
+    return {"title": title, "requirements": requirements, "dropped": dropped, "mode": mode, "note": note}
 
 
 def build_custom_role(title: str, description: str) -> dict[str, Any]:
@@ -199,6 +205,7 @@ def build_custom_role(title: str, description: str) -> dict[str, Any]:
         "requirements": extracted["requirements"],
         "dropped": extracted["dropped"],
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "mode": extracted["mode"],
         "note": extracted["note"],
     }
 

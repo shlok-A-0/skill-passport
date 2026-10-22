@@ -2,7 +2,7 @@ import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCi
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, skillLabel, type CustomRole, type OwnershipChallenge, type PassportJob, type Role } from "../api";
-import { droppedSummary, effectiveTargetRole, JOB_DESCRIPTION_OPTION, jobDescriptionInputError } from "../customRole";
+import { droppedSummary, effectiveTargetRole, extractionNote, JOB_DESCRIPTION_OPTION, jobDescriptionInputError } from "../customRole";
 import { sameGitHubUsername } from "../ownership";
 import { validatePassportForm } from "../passportForm";
 
@@ -255,7 +255,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
                       <ul>{extracted.dropped.map((item, index) => <li key={index}>{item.quote ? `“${item.quote}”` : item.skill_id ?? "Unnamed"}: {item.reason}</li>)}</ul>
                     </details>
                   )}
-                  {extracted.note && <p className="muted">{extracted.note}</p>}
+                  {extractionNote(extracted) && <p className="muted">{extractionNote(extracted)}</p>}
                 </div>
               )}
             </div>

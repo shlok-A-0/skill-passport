@@ -227,6 +227,8 @@ export type CustomRole = {
   requirements: CustomRoleRequirement[];
   dropped: { skill_id: string | null; quote: string | null; reason: string }[];
   created_at: string;
+  /** "exact_only" when the AI was unavailable and only exact skill-name matches were used. */
+  mode?: "ai" | "exact_only";
   note?: string | null;
 };
 export type Features = { custom_roles: boolean; reports: boolean };
