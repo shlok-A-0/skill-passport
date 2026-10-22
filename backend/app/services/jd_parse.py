@@ -24,6 +24,9 @@ QUOTE_CONTEXT_CHARS = 60
 CUSTOM_ROLE_PREFIX = "custom-"
 IMPORTANCE_WORDS = re.compile(r"\b(?:required|must|essential|strong)\b", re.IGNORECASE)
 TESTING_WORDS = re.compile(r"\b(?:tests?|tested|testing|unit tests?|tdd|pytest|jest)\b", re.IGNORECASE)
+# A quote stays inside its sentence: ; ! ? always end one, "." only before whitespace or the
+# end (so "Node.js" and "Python 3.11" are not cut). Line breaks end it too (one bullet each).
+SENTENCE_END = re.compile(r"[;!?]|\.(?=\s|$)")
 # Recruiter contact details are not needed to read requirements (I11 applies to every LLM call).
 CONTACT_PATTERNS = (
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
@@ -58,13 +61,29 @@ def _redact_contacts(text: str) -> str:
 
 
 def _quote_around(line: str, span: tuple[int, int]) -> str:
-    """The matched words plus a little context, cut at word boundaries."""
-    start = max(0, span[0] - QUOTE_CONTEXT_CHARS)
-    end = min(len(line), span[1] + QUOTE_CONTEXT_CHARS)
-    while 0 < start < span[0] and not line[start - 1].isspace():
-        start += 1
-    while span[1] < end < len(line) and not line[end].isspace():
-        end -= 1
+    """The matched words plus a little context from the same sentence and line.
+
+    The quote decides the minimum level (a testing word makes a must-have Demonstrated), so it
+    must not borrow words from a neighbouring sentence or bullet.
+    """
+    start = line.rfind("\n", 0, span[0]) + 1
+    end = line.find("\n", span[1])
+    if end == -1:
+        end = len(line)
+    for boundary in SENTENCE_END.finditer(line, start, span[0]):
+        start = boundary.end()
+    boundary = SENTENCE_END.search(line, span[1], end)
+    if boundary:
+        end = boundary.end()
+    # Long sentences: keep up to QUOTE_CONTEXT_CHARS each side, cut at word boundaries.
+    if span[0] - start > QUOTE_CONTEXT_CHARS:
+        start = span[0] - QUOTE_CONTEXT_CHARS
+        while start < span[0] and not line[start - 1].isspace():
+            start += 1
+    if end - span[1] > QUOTE_CONTEXT_CHARS:
+        end = span[1] + QUOTE_CONTEXT_CHARS
+        while end > span[1] and not line[end].isspace():
+            end -= 1
     return line[start:end].strip()
 
 

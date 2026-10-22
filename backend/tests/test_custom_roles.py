@@ -120,6 +120,58 @@ def test_exact_quote_wins_and_ai_sets_importance(monkeypatch) -> None:
     assert (testing["importance"], testing["min_level"]) == ("must", "Demonstrated")
 
 
+MUST_ALL = [
+    {"skill_id": skill_id, "importance": "must", "quote": "x"}  # quotes unused: exact matches win
+    for skill_id in ("python", "fastapi", "sql", "rest-api", "unit-testing")
+]
+
+
+def test_one_line_quotes_stop_at_sentence_ends_so_testing_words_do_not_leak(monkeypatch) -> None:
+    _gemini(monkeypatch, MUST_ALL)
+    description = (
+        "You must have strong Python skills and experience building REST APIs with FastAPI. "
+        "Solid SQL is required; write unit tests with pytest! Docker is a plus?"
+    )
+    requirements = _by_skill(jd_parse.extract_requirements("Backend Intern", description))
+    # Ends at its own sentence; the start is trimmed by the 60-character context limit.
+    assert requirements["fastapi"]["quote"] == "strong Python skills and experience building REST APIs with FastAPI."
+    assert requirements["sql"]["quote"] == "Solid SQL is required;"
+    for skill_id in ("python", "fastapi", "sql"):
+        assert "test" not in requirements[skill_id]["quote"].lower(), skill_id
+        assert requirements[skill_id]["min_level"] == "Applied", skill_id
+    assert requirements["unit-testing"]["quote"] == "write unit tests with pytest!"
+    assert requirements["unit-testing"]["min_level"] == "Demonstrated"
+
+
+def test_bulleted_quotes_stay_on_their_own_line(monkeypatch) -> None:
+    _gemini(monkeypatch, MUST_ALL)
+    description = (
+        "Requirements:\n"
+        "- Strong Python and FastAPI experience (required)\n"
+        "- Solid SQL is required\n"
+        "- Unit tests with pytest are required\n"
+        "- Docker is a plus"
+    )
+    requirements = _by_skill(jd_parse.extract_requirements("Backend Intern", description))
+    assert requirements["fastapi"]["quote"] == "- Strong Python and FastAPI experience (required)"
+    assert requirements["sql"]["quote"] == "- Solid SQL is required"
+    assert requirements["fastapi"]["min_level"] == "Applied"
+    assert requirements["sql"]["min_level"] == "Applied"
+    assert requirements["unit-testing"]["min_level"] == "Demonstrated"
+    assert all("\n" not in item["quote"] for item in requirements.values())
+
+
+def test_quotes_are_not_cut_inside_names_or_version_numbers() -> None:
+    line = "We use Node.js 20 and Python 3.11 daily. Kubernetes is a plus."
+    node = line.index("Node.js")
+    assert jd_parse._quote_around(line, (node, node + len("Node.js"))) == "We use Node.js 20 and Python 3.11 daily."
+    long_line = "word " * 30 + "Python" + " more" * 30
+    python = long_line.index("Python")
+    quote = jd_parse._quote_around(long_line, (python, python + 6))
+    assert "Python" in quote and len(quote) <= 6 + 2 * jd_parse.QUOTE_CONTEXT_CHARS
+    assert not quote.startswith("ord") and not quote.endswith("mor")  # cut at word boundaries
+
+
 def test_min_level_rules_are_fixed_code() -> None:
     assert jd_parse.min_level_for("nice", "unit tests with pytest") == "Used"
     assert jd_parse.min_level_for("must", "Python services") == "Applied"
