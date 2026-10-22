@@ -108,7 +108,7 @@ def test_unknown_skill_id_is_dropped(monkeypatch) -> None:
             "reason": "Not a skill in the skill framework."} in result["dropped"]
 
 
-def test_exact_quote_wins_and_ai_sets_importance(monkeypatch) -> None:
+def test_exact_matches_take_quote_and_importance_from_the_rule_not_the_ai(monkeypatch) -> None:
     _gemini(monkeypatch, GEMINI_ITEMS)
     requirements = _by_skill(jd_parse.extract_requirements("Backend Engineer Intern", DESCRIPTION))
     python = requirements["python"]
@@ -116,8 +116,9 @@ def test_exact_quote_wins_and_ai_sets_importance(monkeypatch) -> None:
     assert python["quote"] != "strong Python experience"  # the deterministic quote is kept
     assert "Python" in python["quote"]
     assert (python["importance"], python["min_level"]) == ("must", "Applied")
+    # Gemini said "must", but the line has no must-word and no section heading: the rule says nice.
     testing = requirements["unit-testing"]
-    assert (testing["importance"], testing["min_level"]) == ("must", "Demonstrated")
+    assert (testing["importance"], testing["min_level"], testing["source"]) == ("nice", "Used", "exact")
 
 
 MUST_ALL = [
@@ -130,7 +131,7 @@ def test_one_line_quotes_stop_at_sentence_ends_so_testing_words_do_not_leak(monk
     _gemini(monkeypatch, MUST_ALL)
     description = (
         "You must have strong Python skills and experience building REST APIs with FastAPI. "
-        "Solid SQL is required; write unit tests with pytest! Docker is a plus?"
+        "Solid SQL is required; unit tests with pytest are a must! Docker is a plus?"
     )
     requirements = _by_skill(jd_parse.extract_requirements("Backend Intern", description))
     # Ends at its own sentence; the start is trimmed by the 60-character context limit.
@@ -139,7 +140,7 @@ def test_one_line_quotes_stop_at_sentence_ends_so_testing_words_do_not_leak(monk
     for skill_id in ("python", "fastapi", "sql"):
         assert "test" not in requirements[skill_id]["quote"].lower(), skill_id
         assert requirements[skill_id]["min_level"] == "Applied", skill_id
-    assert requirements["unit-testing"]["quote"] == "write unit tests with pytest!"
+    assert requirements["unit-testing"]["quote"] == "unit tests with pytest are a must!"
     assert requirements["unit-testing"]["min_level"] == "Demonstrated"
 
 
@@ -257,15 +258,15 @@ def test_gemini_helper_needs_a_key_retries_invalid_json_once_and_caches(tmp_path
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemini.genai, "Client", lambda api_key: object())
     answers = ["not json", '{"requirements": [{"skill_id": "python"}]}']
-    monkeypatch.setattr(gemini, "generate_json", lambda client, contents: answers.pop(0))
+    monkeypatch.setattr(gemini, "generate_json", lambda client, contents, model=None: answers.pop(0))
     assert gemini.propose_json_items("prompt", "requirements", "jd") == [{"skill_id": "python"}]
     assert gemini.propose_json_items("prompt", "requirements", "jd") == [{"skill_id": "python"}]  # cached
 
-    monkeypatch.setattr(gemini, "generate_json", lambda client, contents: "[]")
+    monkeypatch.setattr(gemini, "generate_json", lambda client, contents, model=None: "[]")
     with pytest.raises(GeminiOutputError):
         gemini.propose_json_items("other prompt", "requirements", "jd")
 
-    def offline(client, contents):
+    def offline(client, contents, model=None):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(gemini, "generate_json", offline)
@@ -457,12 +458,58 @@ def test_plural_aliases_match_in_job_descriptions_only(monkeypatch) -> None:
     assert "react" not in jd_parse.strongest_exact_matches("The service reacts quickly.\nPython is required.")
 
 
-def test_ai_path_still_quotes_the_first_matching_line(monkeypatch) -> None:
-    _gemini(monkeypatch, [{"skill_id": "sql", "importance": "must", "quote": "x"}])
-    result = jd_parse.extract_requirements("Backend Engineering Intern", NORTHWIND)
-    sql = _by_skill(result)["sql"]
-    assert result["mode"] == "ai"
-    assert sql["quote"] == "- Write and optimise SQL queries against our PostgreSQL databases."
+def test_ai_mode_cannot_override_exact_matches_and_agrees_with_exact_only(monkeypatch) -> None:
+    # Gemini says every named skill is a must-have and adds one paraphrase.
+    _gemini(monkeypatch, [
+        {"skill_id": "docker", "importance": "must", "quote": "Package services with Docker"},
+        {"skill_id": "cicd", "importance": "must", "quote": "GitHub Actions pipelines green"},
+        {"skill_id": "kubernetes", "importance": "must", "quote": "Exposure to Kubernetes"},
+        {"skill_id": "sql", "importance": "nice", "quote": "Write and optimise SQL queries"},
+        {"skill_id": "linux-shell", "importance": "nice", "quote": "maintain services that expose endpoints"},
+    ])
+    ai = jd_parse.extract_requirements("Backend Engineering Intern", NORTHWIND)
+    assert ai["mode"] == "ai"
+    table = {item["skill_id"]: (item["importance"], item["min_level"], item["quote"], item["source"])
+             for item in ai["requirements"]}
+    assert table["docker"][:2] == ("nice", "Used") and table["docker"][2] == "- Familiarity with Docker."
+    assert table["cicd"][:2] == ("nice", "Used")
+    assert table["kubernetes"][:2] == ("nice", "Used")
+    assert table["sql"][:3] == ("must", "Applied", "- Solid SQL knowledge is required, including PostgreSQL.")
+    assert table["rest-api"][:2] == ("must", "Applied")
+    assert table["linux-shell"] == ("nice", "Used", "maintain services that expose endpoints", "ai")  # paraphrase kept
+
+    exact_only = _exact_only(monkeypatch, "Backend Engineering Intern", NORTHWIND)
+    exact = {item["skill_id"]: (item["importance"], item["min_level"], item["quote"]) for item in exact_only["requirements"]}
+    assert {skill_id: value[:3] for skill_id, value in table.items() if value[3] == "exact"} == exact
+
+
+def test_ai_quotes_are_cut_to_one_sentence_and_line(monkeypatch) -> None:
+    text = "Requirements\n- Strong Python is required.\n- You will containerise services. Tests are optional\n- Ship often"
+    _gemini(monkeypatch, [{"skill_id": "docker", "importance": "must", "quote": "You will containerise services. Tests are optional"}])
+    docker = _by_skill(jd_parse.extract_requirements("Intern", text))["docker"]
+    assert docker["quote"] == "You will containerise services."
+    assert docker["min_level"] == "Applied"  # "Tests" in the next sentence doesn't make it Demonstrated
+
+
+def test_each_task_uses_its_own_model(tmp_path, monkeypatch) -> None:
+    from app.services import gemini
+
+    used: list[str] = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            used.append(kwargs["model"])
+            return type("R", (), {"text": '{"requirements": []}'})()
+
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "GEMINI_JD_MODEL", "jd-model")
+    monkeypatch.setattr(gemini, "GEMINI_MODEL", "passport-model")
+    monkeypatch.setattr(gemini.genai, "Client", lambda api_key: type("C", (), {"models": Models()})())
+    gemini.propose_json_items("prompt", "requirements", "jd")
+    gemini.generate_json(gemini.genai.Client(api_key="x"), "prompt")
+    assert used == ["jd-model", "passport-model"]
+    assert config.GEMINI_JD_MODEL and len(list(tmp_path.glob("jd-*.json"))) == 1
 
 
 def test_exact_only_results_are_never_cached(tmp_path, monkeypatch) -> None:
@@ -542,7 +589,8 @@ def test_match_role_uses_the_custom_requirements(tmp_path, monkeypatch) -> None:
     statuses = {item["skill_id"]: (item["status"], item["min_level"]) for item in result["requirements"]}
     assert result["role_id"] == role["id"] and result["role_name"] == "Backend Engineer Intern"
     assert statuses["python"] == ("met", "Applied")
-    assert statuses["unit-testing"] == ("partial", "Demonstrated")
+    # "Write unit tests with pytest..." has no must-word or heading, so the rule makes it nice/Used.
+    assert statuses["unit-testing"] == ("met", "Used")
     assert statuses["docker"] == ("missing", "Used")  # Claimed never satisfies a requirement
 
 

@@ -28,14 +28,14 @@ NETWORK_RETRY_DELAYS_SECONDS = (3, 8)
 NETWORK_ERRORS = (httpx.TransportError, ConnectionError)
 
 
-def generate_json(client: genai.Client, contents: str) -> str:
+def generate_json(client: genai.Client, contents: str, model: str | None = None) -> str:
     """One Gemini JSON call, retried with back-off when the model is busy (503), rate-limited (429),
-    or the connection fails (up to 2 retries)."""
+    or the connection fails (up to 2 retries). `model` defaults to GEMINI_MODEL (passport build)."""
     busy_retries = network_retries = 0
     while True:
         try:
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model or GEMINI_MODEL,
                 contents=contents,
                 # temperature=0: a re-check should not change claims or levels by chance.
                 config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
@@ -66,7 +66,8 @@ def _json_list(text: str, key: str) -> list[Any]:
 
 
 def propose_json_items(prompt: str, key: str, cache_prefix: str) -> list[Any]:
-    """One Gemini call returning the `key` array of a JSON object, cached by prompt.
+    """One Gemini call on GEMINI_JD_MODEL returning the `key` array of a JSON object, cached by
+    model and prompt (job-description requirements and project-report claims).
 
     Items are untrusted proposals: callers validate every one deterministically. Retries once on
     invalid JSON (GeminiOutputError after that); GeminiUnavailableError when Gemini isn't
@@ -74,7 +75,8 @@ def propose_json_items(prompt: str, key: str, cache_prefix: str) -> list[Any]:
     """
     if not config.GEMINI_API_KEY:
         raise GeminiUnavailableError("GEMINI_API_KEY is not configured.")
-    cache_key = hashlib.sha256(f"{GEMINI_MODEL}\0{prompt}".encode("utf-8")).hexdigest()
+    model = config.GEMINI_JD_MODEL
+    cache_key = hashlib.sha256(f"{model}\0{prompt}".encode("utf-8")).hexdigest()
     cache_path = config.CACHE_DIR / f"{cache_prefix}-{cache_key}.json"
     if cache_path.exists():
         try:
@@ -85,7 +87,7 @@ def propose_json_items(prompt: str, key: str, cache_prefix: str) -> list[Any]:
     last_error: Exception | None = None
     for attempt in range(2):
         try:
-            text = generate_json(genai.Client(api_key=config.GEMINI_API_KEY), contents)
+            text = generate_json(genai.Client(api_key=config.GEMINI_API_KEY), contents, model=model)
         except Exception as exc:
             raise GeminiUnavailableError(f"Gemini call failed: {exc.__class__.__name__}") from exc
         try:

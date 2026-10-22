@@ -1,8 +1,9 @@
 """Custom target roles from a pasted job description.
 
-Gemini proposes requirements (skill id, importance, quote) and the importance of skills found by
-exact name. Code matches skill names and aliases, sets every minimum level by fixed rules, and
-checks every quote against the description. The description itself is never stored.
+Code matches skill names and aliases and decides their quote, importance and minimum level by
+fixed rules. Gemini only proposes skills described in other words (skill id, importance, quote);
+every quote is checked against the description and every minimum level is set by fixed rules.
+The description itself is never stored.
 """
 import json
 import logging
@@ -14,7 +15,7 @@ from typing import Any
 from app.services.claim_validation import validate_proposals
 from app.services.framework import get_skills
 from app.services.gemini import GeminiOutputError, GeminiUnavailableError, propose_json_items
-from app.services.resume_parse import COMMON_WORDS, find_skill_mentions, skill_terms, term_span
+from app.services.resume_parse import COMMON_WORDS, skill_terms, term_span
 from app.services.verifier import LEVEL_ORDER
 
 TITLE_MAX_CHARS = 120
@@ -188,6 +189,14 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
     return {skill_id: (quote, importance) for skill_id, (_, quote, importance) in best.items()}
 
 
+def _first_sentence(quote: str) -> str:
+    """An AI quote cut to its first sentence and line, so a neighbouring sentence can't change
+    the minimum level (it stays a substring of the text, so the quote check still applies)."""
+    first = quote.strip().splitlines()[0] if quote.strip() else ""
+    boundary = SENTENCE_END.search(first)
+    return first[: boundary.end()].strip() if boundary else first.strip()
+
+
 def _prompt(text: str, exact_ids: list[str]) -> str:
     skills = [{"id": skill["id"], "name": skill["name"]} for skill in get_skills()]
     return (
@@ -195,10 +204,10 @@ def _prompt(text: str, exact_ids: list[str]) -> str:
         '{"requirements":[{"skill_id":"...","importance":"must"|"nice","quote":"..."}]}. '
         "Use only the allowed skill ids. importance is \"must\" when the description presents the "
         "skill as required and \"nice\" when it is preferred, a plus or a bonus. quote is a short "
-        "phrase copied exactly from the description that shows the requirement. Include skills "
-        "described in other words (for example \"containerised deployments\" for docker), and "
-        "give an entry for each skill already found by name so its importance is known. Never "
-        "list a skill the description does not ask for. You do not set minimum levels.\n"
+        "phrase copied exactly from one sentence of the description that shows the requirement. "
+        "List only skills described in other words (for example \"containerised deployments\" "
+        "for docker); skip the skills already found by name. Never list a skill the description "
+        "does not ask for. You do not set minimum levels.\n"
         f"Allowed skills: {json.dumps(skills)}\n"
         f"Skills already found by name: {json.dumps(exact_ids)}\n"
         f"Job description:\n{text}"
@@ -221,18 +230,17 @@ def validate_input(title: str, description: str) -> tuple[str, str]:
 def extract_requirements(title: str, description: str) -> dict[str, Any]:
     """Validated requirements and the phrases that could not be mapped.
 
-    When Gemini can't help (unavailable after its retries, or invalid JSON after one retry), the
-    result comes from exact matching only (`mode: "exact_only"`): the strongest sentence naming
-    each skill (`strongest_exact_matches`), the same level rules, validation, dedupe and cap.
-    Nothing from that path is cached. Raises JobDescriptionError for bad input or when there is
-    no must-have requirement.
+    Skills named in the text (`strongest_exact_matches`: the strongest sentence per skill, with
+    simple plurals) take their quote, importance and minimum level only from fixed rules; Gemini
+    cannot change them. Gemini adds only skills not named exactly (paraphrases), each validated
+    (known id, quote in the text, cut to one sentence and line), with Gemini's importance and the
+    fixed level rules. When Gemini can't help (unavailable after its retries, or invalid JSON
+    after one retry) the exact matches alone are returned (`mode: "exact_only"`); nothing from
+    that path is cached. Raises JobDescriptionError for bad input or no must-have requirement.
     """
     title, description = validate_input(title, description)
     text = _redact_contacts(description)
-    exact = {
-        item["skill_id"]: _quote_around(item["line"], item["span"])
-        for item in find_skill_mentions(text)
-    }
+    exact = strongest_exact_matches(text)
     mode, note = "ai", None
     try:
         proposed = propose_json_items(_prompt(text, sorted(exact)), "requirements", "jd")
@@ -241,29 +249,22 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
         proposed = []
         mode, note = "exact_only", EXACT_ONLY_NOTE
 
-    candidates: list[Any]
-    if mode == "exact_only":
-        candidates = [
-            {"skill_id": skill_id, "quote": quote, "importance": importance, "source": "exact"}
-            for skill_id, (quote, importance) in strongest_exact_matches(text).items()
-        ]
-    else:
-        # Gemini's importance for skills found by exact name; the exact quote always wins.
-        ai_importance: dict[str, str] = {}
-        for item in proposed:
-            if isinstance(item, dict) and item.get("skill_id") in exact and item.get("importance") in ("must", "nice"):
-                if ai_importance.get(item["skill_id"]) != "must":
-                    ai_importance[item["skill_id"]] = item["importance"]
-        candidates = [
-            {"skill_id": skill_id, "quote": quote, "importance": ai_importance.get(skill_id), "source": "exact"}
-            for skill_id, quote in exact.items()
-        ]
-        candidates += [
-            {"skill_id": item.get("skill_id"), "quote": item.get("quote"), "importance": item.get("importance"), "source": "ai"}
-            if isinstance(item, dict) else item
-            for item in proposed
-            if not (isinstance(item, dict) and item.get("skill_id") in exact)
-        ]
+    candidates: list[Any] = [
+        {"skill_id": skill_id, "quote": quote, "importance": importance, "source": "exact"}
+        for skill_id, (quote, importance) in exact.items()
+    ]
+    # Gemini only adds paraphrased skills; anything it says about an exact match is ignored.
+    candidates += [
+        {
+            "skill_id": item.get("skill_id"),
+            "quote": _first_sentence(item["quote"]) if isinstance(item.get("quote"), str) else item.get("quote"),
+            "importance": item.get("importance"),
+            "source": "ai",
+        }
+        if isinstance(item, dict) else item
+        for item in proposed
+        if not (isinstance(item, dict) and item.get("skill_id") in exact)
+    ]
     for item in candidates:
         if not isinstance(item, dict):
             continue
