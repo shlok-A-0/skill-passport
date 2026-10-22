@@ -372,6 +372,118 @@ def test_endpoint_returns_201_with_the_exact_only_flag(tmp_path, monkeypatch, er
     assert storage.get_custom_role(role["id"])["title"] == "Backend Intern"
 
 
+NORTHWIND = """About the role
+Northwind Labs is hiring a Backend Engineering Intern to join our platform team for six months. You will build and maintain services that expose endpoints for our web and mobile apps.
+
+What you will do
+- Build REST APIs with FastAPI for our internal tools.
+- Write and optimise SQL queries against our PostgreSQL databases.
+- Keep our services reliable: all code is tested, and you will write unit tests with pytest.
+- Package services with Docker and keep our GitHub Actions pipelines green.
+
+Requirements
+- Strong Python skills are required.
+- Solid SQL knowledge is required, including PostgreSQL.
+- Experience deploying applications on AWS is required.
+- You must be comfortable working with Git and code reviews.
+
+Nice to have
+- Familiarity with Docker.
+- Experience with CI pipelines such as GitHub Actions.
+- Exposure to Kubernetes is a bonus.
+
+What we offer
+Mentorship from senior engineers, a real production codebase, and a stipend."""
+
+
+def _exact_only(monkeypatch, title: str, text: str) -> dict:
+    _gemini(monkeypatch, GeminiUnavailableError("Gemini call failed: ServerError"))
+    return jd_parse.extract_requirements(title, text)
+
+
+def test_northwind_exact_only_uses_the_strongest_line_per_skill(monkeypatch) -> None:
+    result = _exact_only(monkeypatch, "Backend Engineering Intern", NORTHWIND)
+    assert result["mode"] == "exact_only"
+    table = {item["skill_id"]: (item["importance"], item["min_level"]) for item in result["requirements"]}
+    assert table == {
+        "python": ("must", "Applied"),
+        "sql": ("must", "Applied"),
+        "postgresql": ("must", "Applied"),
+        "aws": ("must", "Applied"),
+        "fastapi": ("must", "Applied"),
+        "rest-api": ("must", "Applied"),
+        "git": ("must", "Applied"),
+        "unit-testing": ("must", "Demonstrated"),
+        "docker": ("nice", "Used"),
+        "cicd": ("nice", "Used"),
+        "kubernetes": ("nice", "Used"),
+    }
+    quotes = {item["skill_id"]: item["quote"] for item in result["requirements"]}
+    assert quotes["sql"] == "- Solid SQL knowledge is required, including PostgreSQL."  # not the duty line
+    assert quotes["docker"] == "- Familiarity with Docker."
+    assert quotes["cicd"] == "- Experience with CI pipelines such as GitHub Actions."
+    assert quotes["rest-api"] == "- Build REST APIs with FastAPI for our internal tools."
+    assert result["dropped"] == []
+
+
+def test_nice_words_in_the_line_beat_the_section(monkeypatch) -> None:
+    text = "Requirements\n- Familiarity with Docker\n- Python is required\n- Exposure to AWS\n- Git"
+    table = {item["skill_id"]: (item["importance"], item["quote"])
+             for item in _exact_only(monkeypatch, "Intern", text)["requirements"]}
+    assert table["docker"] == ("nice", "- Familiarity with Docker")
+    assert table["aws"] == ("nice", "- Exposure to AWS")
+    assert table["git"] == ("must", "- Git")  # the section alone makes it must
+    assert table["python"] == ("must", "- Python is required")
+
+
+def test_headings_are_recognised_and_other_headings_reset_the_section() -> None:
+    assert jd_parse._heading_section("Requirements:") == "requirements"
+    assert jd_parse._heading_section("What you'll do") == "responsibilities"
+    assert jd_parse._heading_section("Preferred qualifications") == "nice"
+    assert jd_parse._heading_section("About the role") is None
+    assert jd_parse._heading_section("- Strong Python skills are required.") is False
+    matches = jd_parse.strongest_exact_matches("Requirements\n- Docker\nAbout us\n- Redis")
+    assert matches["docker"][1] == "must" and matches["redis"][1] == "nice"
+
+
+def test_plural_aliases_match_in_job_descriptions_only(monkeypatch) -> None:
+    from app.services.resume_parse import match_resume_skills
+
+    text = "Requirements\n- You will design RESTful APIs and REST APIs.\n- Strong Python is required."
+    skills = {item["skill_id"] for item in _exact_only(monkeypatch, "Intern", text)["requirements"]}
+    assert "rest-api" in skills
+    assert "rest-api" not in {item["skill_id"] for item in match_resume_skills("Built REST APIs in Python.")}
+    # Everyday-word skills don't get plurals: "reacts" is ordinary English.
+    assert "react" not in jd_parse.strongest_exact_matches("The service reacts quickly.\nPython is required.")
+
+
+def test_ai_path_still_quotes_the_first_matching_line(monkeypatch) -> None:
+    _gemini(monkeypatch, [{"skill_id": "sql", "importance": "must", "quote": "x"}])
+    result = jd_parse.extract_requirements("Backend Engineering Intern", NORTHWIND)
+    sql = _by_skill(result)["sql"]
+    assert result["mode"] == "ai"
+    assert sql["quote"] == "- Write and optimise SQL queries against our PostgreSQL databases."
+
+
+def test_exact_only_results_are_never_cached(tmp_path, monkeypatch) -> None:
+    from app.services import gemini
+
+    calls = _real_gemini_failing(tmp_path, monkeypatch, gemini.httpx.ReadTimeout("timed out"))
+    first = jd_parse.extract_requirements("Backend Engineering Intern", NORTHWIND)
+    assert first["mode"] == "exact_only" and calls
+    assert list(tmp_path.glob("jd-*.json")) == []  # nothing written for the fallback
+
+    class Working:
+        def generate_content(self, **_kwargs):
+            calls.append(2)
+            return type("R", (), {"text": '{"requirements": [{"skill_id": "python", "importance": "must", "quote": "Strong Python skills are required."}]}'})()
+
+    monkeypatch.setattr(gemini.genai, "Client", lambda api_key: type("C", (), {"models": Working()})())
+    second = jd_parse.extract_requirements("Backend Engineering Intern", NORTHWIND)
+    assert second["mode"] == "ai" and calls[-1] == 2  # Gemini was asked again, not a reused fallback
+    assert len(list(tmp_path.glob("jd-*.json"))) == 1  # only the successful AI answer is cached
+
+
 def test_exact_only_without_a_must_have_is_still_a_clear_error(tmp_path, monkeypatch) -> None:
     import httpx
 

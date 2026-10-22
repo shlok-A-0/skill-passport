@@ -14,7 +14,7 @@ from typing import Any
 from app.services.claim_validation import validate_proposals
 from app.services.framework import get_skills
 from app.services.gemini import GeminiOutputError, GeminiUnavailableError, propose_json_items
-from app.services.resume_parse import find_skill_mentions
+from app.services.resume_parse import COMMON_WORDS, find_skill_mentions, skill_terms, term_span
 from app.services.verifier import LEVEL_ORDER
 
 TITLE_MAX_CHARS = 120
@@ -30,6 +30,23 @@ TESTING_WORDS = re.compile(r"\b(?:tests?|tested|testing|unit tests?|tdd|pytest|j
 # A quote stays inside its sentence: ; ! ? always end one, "." only before whitespace or the
 # end (so "Node.js" and "Python 3.11" are not cut). Line breaks end it too (one bullet each).
 SENTENCE_END = re.compile(r"[;!?]|\.(?=\s|$)")
+# Exact-only fallback: words in a line that mark it nice-to-have, and section headings.
+NICE_WORDS = re.compile(
+    r"\b(?:nice[ -]to[ -]have|plus|bonus|preferred|familiarity|exposure)\b", re.IGNORECASE
+)
+HEADING_SECTIONS = (  # checked in this order: "Preferred qualifications" is nice, not requirements
+    ("nice", ("nice to have", "nice-to-have", "bonus", "preferred")),
+    ("requirements", (
+        "requirements", "must have", "must-have", "must haves", "must-haves", "qualifications",
+        "minimum qualifications", "what you need", "what you'll need", "what you will need",
+    )),
+    ("responsibilities", (
+        "what you will do", "what you'll do", "responsibilities", "key responsibilities", "you will",
+    )),
+)
+# Lower is stronger. An explicit nice-to-have signal outranks a responsibilities line, so a
+# skill listed under "Nice to have" stays nice even if a duty also mentions it.
+LINE_RANK = {"must_words": 0, "requirements": 1, "nice": 2, "responsibilities": 3, "other": 4}
 # Recruiter contact details are not needed to read requirements (I11 applies to every LLM call).
 CONTACT_PATTERNS = (
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
@@ -90,6 +107,87 @@ def _quote_around(line: str, span: tuple[int, int]) -> str:
     return line[start:end].strip()
 
 
+def _heading_section(line: str) -> str | None | bool:
+    """The section a heading line starts ("nice", "requirements", "responsibilities"), None for
+    any other heading (e.g. "About the role"), or False when the line is not a heading."""
+    stripped = line.strip()
+    if (
+        not stripped or stripped[0] in "-*•·–" or len(stripped) > 60
+        or stripped.endswith((".", ";", "!", "?")) or len(stripped.rstrip(":").split()) > 6
+    ):
+        return False
+    key = " ".join(stripped.rstrip(":").replace("’", "'").lower().split())
+    for section, phrases in HEADING_SECTIONS:
+        if any(key == phrase or key.startswith(phrase + " ") for phrase in phrases):
+            return section
+    return None
+
+
+def _line_signal(quote: str, section: str | None) -> tuple[int, str]:
+    """(rank, importance) for one mention. Nice-words in the line beat both must-words and the
+    section ("Familiarity with Docker" under Requirements is nice)."""
+    if NICE_WORDS.search(quote):
+        return LINE_RANK["nice"], "nice"
+    if IMPORTANCE_WORDS.search(quote):
+        return LINE_RANK["must_words"], "must"
+    if section == "requirements":
+        return LINE_RANK["requirements"], "must"
+    if section == "nice":
+        return LINE_RANK["nice"], "nice"
+    if section == "responsibilities":
+        return LINE_RANK["responsibilities"], "must"
+    return LINE_RANK["other"], "nice"
+
+
+def _sentence_spans(line: str):
+    start = 0
+    for boundary in SENTENCE_END.finditer(line):
+        yield start, boundary.end()
+        start = boundary.end()
+    if start < len(line):
+        yield start, len(line)
+
+
+def _jd_term_span(term: str, sentence: str) -> tuple[int, int] | None:
+    """Like the resume matcher, plus a simple plural ("REST APIs" for "rest api"). Not for
+    everyday-word skills, where "reacts" or "shells" would be ordinary English."""
+    span = term_span(term, sentence)
+    if span is not None or term.lower() in COMMON_WORDS:
+        return span
+    for plural in (term + "s", term + "es"):
+        span = term_span(plural, sentence)
+        if span is not None:
+            return span
+    return None
+
+
+def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
+    """Exact-only fallback: for each skill named in the text, the strongest sentence naming it.
+
+    Every sentence of every line is considered; the section comes from the last heading seen.
+    Returns {skill_id: (quote, importance)}; ties keep the first sentence.
+    """
+    best: dict[str, tuple[int, str, str]] = {}
+    section: str | None = None
+    for line in text.splitlines():
+        heading = _heading_section(line)
+        if heading is not False:
+            section = heading
+        for start, end in _sentence_spans(line):
+            sentence = line[start:end]
+            for skill in get_skills():
+                for term in skill_terms(skill):
+                    span = _jd_term_span(term, sentence)
+                    if span is None:
+                        continue
+                    quote = _quote_around(line, (start + span[0], start + span[1]))
+                    rank, importance = _line_signal(quote, section)
+                    if skill["id"] not in best or rank < best[skill["id"]][0]:
+                        best[skill["id"]] = (rank, quote, importance)
+                    break
+    return {skill_id: (quote, importance) for skill_id, (_, quote, importance) in best.items()}
+
+
 def _prompt(text: str, exact_ids: list[str]) -> str:
     skills = [{"id": skill["id"], "name": skill["name"]} for skill in get_skills()]
     return (
@@ -124,9 +222,10 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
     """Validated requirements and the phrases that could not be mapped.
 
     When Gemini can't help (unavailable after its retries, or invalid JSON after one retry), the
-    result comes from exact matching only (`mode: "exact_only"`) with the same keyword importance
-    rule, level rules, validation, dedupe and cap. Raises JobDescriptionError for bad input or
-    when there is no must-have requirement.
+    result comes from exact matching only (`mode: "exact_only"`): the strongest sentence naming
+    each skill (`strongest_exact_matches`), the same level rules, validation, dedupe and cap.
+    Nothing from that path is cached. Raises JobDescriptionError for bad input or when there is
+    no must-have requirement.
     """
     title, description = validate_input(title, description)
     text = _redact_contacts(description)
@@ -142,22 +241,29 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
         proposed = []
         mode, note = "exact_only", EXACT_ONLY_NOTE
 
-    # Gemini's importance for skills found by exact name; the exact quote always wins.
-    ai_importance: dict[str, str] = {}
-    for item in proposed:
-        if isinstance(item, dict) and item.get("skill_id") in exact and item.get("importance") in ("must", "nice"):
-            if ai_importance.get(item["skill_id"]) != "must":
-                ai_importance[item["skill_id"]] = item["importance"]
-    candidates: list[Any] = [
-        {"skill_id": skill_id, "quote": quote, "importance": ai_importance.get(skill_id), "source": "exact"}
-        for skill_id, quote in exact.items()
-    ]
-    candidates += [
-        {"skill_id": item.get("skill_id"), "quote": item.get("quote"), "importance": item.get("importance"), "source": "ai"}
-        if isinstance(item, dict) else item
-        for item in proposed
-        if not (isinstance(item, dict) and item.get("skill_id") in exact)
-    ]
+    candidates: list[Any]
+    if mode == "exact_only":
+        candidates = [
+            {"skill_id": skill_id, "quote": quote, "importance": importance, "source": "exact"}
+            for skill_id, (quote, importance) in strongest_exact_matches(text).items()
+        ]
+    else:
+        # Gemini's importance for skills found by exact name; the exact quote always wins.
+        ai_importance: dict[str, str] = {}
+        for item in proposed:
+            if isinstance(item, dict) and item.get("skill_id") in exact and item.get("importance") in ("must", "nice"):
+                if ai_importance.get(item["skill_id"]) != "must":
+                    ai_importance[item["skill_id"]] = item["importance"]
+        candidates = [
+            {"skill_id": skill_id, "quote": quote, "importance": ai_importance.get(skill_id), "source": "exact"}
+            for skill_id, quote in exact.items()
+        ]
+        candidates += [
+            {"skill_id": item.get("skill_id"), "quote": item.get("quote"), "importance": item.get("importance"), "source": "ai"}
+            if isinstance(item, dict) else item
+            for item in proposed
+            if not (isinstance(item, dict) and item.get("skill_id") in exact)
+        ]
     for item in candidates:
         if not isinstance(item, dict):
             continue

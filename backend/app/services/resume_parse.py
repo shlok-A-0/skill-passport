@@ -105,8 +105,8 @@ def extract_resume_text(pdf_bytes: bytes) -> str:
 COMMON_WORDS = {"go", "react", "express", "torch", "shell"}
 
 
-def _term_span(term: str, line: str) -> tuple[int, int] | None:
-    """Where `term` occurs in `line` as a skill mention, or None."""
+def term_span(term: str, line: str) -> tuple[int, int] | None:
+    """Where `term` occurs in `line` as a skill mention, or None. Also used by jd_parse."""
     pattern = rf"(?<!\w){re.escape(term)}(?!\w)"
     if term.lower() not in COMMON_WORDS:
         match = re.search(pattern, line, flags=re.IGNORECASE)
@@ -123,20 +123,26 @@ def _term_span(term: str, line: str) -> tuple[int, int] | None:
 
 
 def _term_in_line(term: str, line: str) -> bool:
-    return _term_span(term, line) is not None
+    return term_span(term, line) is not None
+
+
+def skill_terms(skill: dict[str, Any]) -> list[str]:
+    """A skill's name and aliases as matched in text ("torch" alone is not PyTorch)."""
+    terms = [skill["name"], *skill.get("aliases", [])]
+    if skill["id"] == "pytorch":
+        terms = [term for term in terms if term.lower() != "torch"]
+    return terms
 
 
 def find_skill_mentions(text: str) -> list[dict[str, Any]]:
     """The first line mentioning each framework skill, with the matched span in that line."""
     found: list[dict[str, Any]] = []
     for skill in get_skills():
-        terms = [skill["name"], *skill.get("aliases", [])]
-        if skill["id"] == "pytorch":
-            terms = [term for term in terms if term.lower() != "torch"]
+        terms = skill_terms(skill)
         hit = None
         for line in text.splitlines():
             for term in terms:
-                span = _term_span(term, line)
+                span = term_span(term, line)
                 if span is not None:
                     hit = {"skill_id": skill["id"], "name": skill["name"], "line": line, "span": span}
                     break
