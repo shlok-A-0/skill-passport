@@ -665,4 +665,4 @@ def test_non_string_ai_skill_id_is_dropped_without_crashing(monkeypatch, bad_ski
     ])
     result = jd_parse.extract_requirements("Backend Engineer Intern", DESCRIPTION)
     assert "python" in _by_skill(result)
-    assert any(item["reason"] == "Not a valid proposal." for item in result["dropped"])
+    assert any(item["reason"] == "Not a skill in the skill framework." for item in result["dropped"])
