@@ -70,6 +70,17 @@ def test_sql_in_a_bare_string_that_is_not_a_call_argument_fails() -> None:
     assert not _found("sql", source, 1, 4)
 
 
+def test_sql_returned_by_a_callback_is_not_a_call_argument() -> None:
+    # The lambda is passed to register(); its return string is not.
+    source = 'def setup(register):\n    register(lambda: "SELECT * FROM users")\n'
+    assert not _found("sql", source, 1, 2)
+
+
+def test_sql_passed_to_a_call_inside_a_callback_passes() -> None:
+    source = 'def setup(register, cursor):\n    register(lambda: cursor.execute("SELECT * FROM users"))\n'
+    assert _found("sql", source, 1, 2)
+
+
 @pytest.mark.parametrize(("skill_id", "call", "comment"), [
     ("postgresql", 'conn = psycopg2.connect("postgresql://app@db/expenses")', "# postgresql://app@db/expenses"),
     ("mysql", 'engine = make("mysql://root@localhost/shop")', "# mysql://root@localhost/shop"),

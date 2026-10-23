@@ -11,11 +11,17 @@ def _signature_in_text(signature: str, text: str) -> bool:
 
 def _call_argument_strings(call: ast.Call):
     """String literals passed to a call, including nested calls and concatenations:
-    execute(text("SELECT ...")), read_sql("SELECT " + table), connect(f"postgresql://{host}")."""
-    for argument in [*call.args, *(keyword.value for keyword in call.keywords)]:
-        for child in ast.walk(argument):
-            if isinstance(child, ast.Constant) and isinstance(child.value, str):
-                yield child
+    execute(text("SELECT ...")), read_sql("SELECT " + table), connect(f"postgresql://{host}").
+    A lambda's body is not passed to the call (register(lambda: "SELECT ...") is not evidence);
+    calls inside it are checked on their own."""
+    pending: list[ast.AST] = [*call.args, *(keyword.value for keyword in call.keywords)]
+    while pending:
+        child = pending.pop()
+        if isinstance(child, ast.Lambda):
+            continue
+        if isinstance(child, ast.Constant) and isinstance(child.value, str):
+            yield child
+        pending.extend(ast.iter_child_nodes(child))
 
 
 def python_ast_has_signature(
