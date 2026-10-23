@@ -655,7 +655,7 @@ def test_skill_mention_inside_heading_does_not_preserve_requirements_section() -
 
 def test_plain_skill_lines_keep_requirements_section_when_ai_unavailable(monkeypatch) -> None:
     _gemini(monkeypatch, GeminiUnavailableError("offline"))
-    description = "Requirements:\nPython\nSQL\nDocker\n" + ("Build reliable services. " * 3)
+    description = "Requirements:\nPython\nSQL,\nDocker\n" + ("Build reliable services. " * 3)
     result = jd_parse.extract_requirements("Backend Engineer", description)
     requirements = _by_skill(result)
     assert result["mode"] == "exact_only"
