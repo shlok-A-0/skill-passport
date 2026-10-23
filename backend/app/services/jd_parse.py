@@ -213,7 +213,7 @@ def _is_skill_list_line(line: str) -> bool:
     for item in items:
         item = TRAILING_VERSION.sub("", item.strip())
         if not item or not any(
-            (span := _jd_term_span(term, item)) == (0, len(item))
+            _jd_term_span(term, item) == (0, len(item))
             for skill in get_skills()
             for term in skill_terms(skill)
         ):

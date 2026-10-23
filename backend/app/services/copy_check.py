@@ -17,7 +17,7 @@ from urllib.parse import quote
 import httpx
 
 from app.config import CACHE_DIR, GITHUB_TOKEN
-from app.services.github_ingest import oldest_commit_date
+from app.services.github_ingest import GitHubRateLimitError, oldest_commit_date
 from app.services.json_cache import write_json_cache
 
 API_ROOT = "https://api.github.com"
@@ -99,9 +99,16 @@ def _file_contains(client: httpx.Client, full_name: str, path: str, line: str) -
 
 
 def _file_first_seen(client: httpx.Client, full_name: str, path: str) -> str | None:
-    """When the matching file first appeared in the other repository (its oldest commit)."""
+    """When the matching file first appeared in the other repository (its oldest commit).
+
+    None (unknown, never an exclusion) on a rate limit too: this check is advisory, so unlike
+    ingestion it must not fail the passport.
+    """
     owner, _, repo = full_name.partition("/")
-    return oldest_commit_date(client, owner, repo, path)
+    try:
+        return oldest_commit_date(client, owner, repo, path)
+    except GitHubRateLimitError:
+        return None
 
 
 def _parse_date(value: str | None) -> datetime | None:

@@ -1,6 +1,5 @@
 import ast
 import re
-from typing import Any
 
 
 def _signature_in_text(signature: str, text: str) -> bool:

@@ -39,6 +39,26 @@ def test_unknown_skill_id_is_dropped_not_fatal(monkeypatch, tmp_path) -> None:
     assert len(sent) == 1  # no retry needed
 
 
+def test_malformed_claim_is_dropped_not_fatal(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(claim_proposer, "CACHE_DIR", tmp_path)
+    bad_lines = {**_claim("flask"), "start_line": 0}
+    long_explanation = {**_claim("python"), "explanation": "x" * 501}
+    extra_field = {**_claim("docker"), "confidence": 0.9}
+    reply = json.dumps({"claims": [bad_lines, long_explanation, extra_field, _claim("sql")]})
+    sent = _fake_gemini(monkeypatch, claim_proposer, [reply])
+    claims = claim_proposer.propose_claims({"repos": []}, [])
+    assert [item["skill_id"] for item in claims] == ["sql"]
+    assert len(sent) == 1  # no retry needed
+
+
+def test_reply_without_a_claims_array_is_still_retried(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(claim_proposer, "CACHE_DIR", tmp_path)
+    sent = _fake_gemini(monkeypatch, claim_proposer, ['{"items": []}', json.dumps({"claims": [_claim("flask")]})])
+    claims = claim_proposer.propose_claims({"repos": []}, [])
+    assert [item["skill_id"] for item in claims] == ["flask"]
+    assert len(sent) == 2
+
+
 def test_five_citations_for_one_skill_are_trimmed_to_three() -> None:
     reply = json.dumps({"claims": [_claim("python", start) for start in range(1, 6)]})
     proposal = claim_proposer._lenient_proposal(reply)

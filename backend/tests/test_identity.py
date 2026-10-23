@@ -286,6 +286,22 @@ def test_create_needs_an_ownership_proof_for_real_passports(monkeypatch) -> None
     assert ownership_signal(job_id, "janedoe", is_demo=False)["status"] == "ok"
 
 
+def test_unexpected_ownership_check_failure_releases_the_job(monkeypatch) -> None:
+    monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", True)
+    started = []
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: started.append(args))
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(main_module, "verify_challenge", broken)
+    response = _create(TestClient(main_module.app, raise_server_exceptions=False), ownership_challenge_id="any")
+    assert response.status_code == 500
+    assert started == []
+    # Not stuck "in progress" (409) until the 2-minute lease expires.
+    assert not storage.has_active_job_for_target("janedoe")
+
+
 def test_demo_passports_skip_the_ownership_proof(monkeypatch) -> None:
     monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", True)
     monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: None)

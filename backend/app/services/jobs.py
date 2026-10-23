@@ -19,6 +19,7 @@ JOB_STEPS = [
     "Reading GitHub",
     "Reading resume",
     "Reading certificates",
+    "Reading reports",
     "Proposing skills",
     "Verifying evidence",
     "Matching role",

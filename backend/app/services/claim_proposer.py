@@ -41,16 +41,23 @@ def parse_proposal(text: str) -> ClaimProposal:
 
 
 def _lenient_proposal(text: str) -> ClaimProposal:
-    """Schema errors still fail, but an unknown skill id or a 4th citation is dropped, not fatal.
+    """Invalid JSON or a missing claims array still fails, but a malformed claim, an unknown
+    skill id or a 4th citation is dropped, not fatal.
 
     Dropped claims never reach the verifier, so nothing unverified can slip through.
     """
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
-    proposal = ClaimProposal.model_validate_json(cleaned)
+    data = json.loads(cleaned)
+    if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
+        raise ValueError('Expected a JSON object with a "claims" array.')
     allowed_ids = {skill["id"] for skill in get_skills()}
     counts: dict[str, int] = {}
     kept = []
-    for claim in proposal.claims:
+    for raw in data["claims"]:
+        try:
+            claim = ProposedClaim.model_validate(raw)
+        except ValidationError:
+            continue  # e.g. line 0 or an over-long explanation: one bad claim can't fail the job
         if claim.skill_id not in allowed_ids:
             continue
         counts[claim.skill_id] = counts.get(claim.skill_id, 0) + 1
