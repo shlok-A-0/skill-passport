@@ -643,3 +643,26 @@ def test_flag_off_hides_the_feature(tmp_path, monkeypatch) -> None:
         files={"resume": ("resume.pdf", b"%PDF-1.4 resume", "application/pdf")},
     )
     assert create.status_code == 422
+
+
+
+def test_plain_skill_lines_keep_requirements_section_when_ai_unavailable(monkeypatch) -> None:
+    _gemini(monkeypatch, GeminiUnavailableError("offline"))
+    description = "Requirements:\nPython\nSQL\nDocker\n" + ("Build reliable services. " * 3)
+    result = jd_parse.extract_requirements("Backend Engineer", description)
+    requirements = _by_skill(result)
+    assert result["mode"] == "exact_only"
+    assert requirements["python"]["importance"] == "must"
+    assert requirements["sql"]["importance"] == "must"
+    assert requirements["docker"]["importance"] == "must"
+
+
+@pytest.mark.parametrize("bad_skill_id", [["python"], {"name": "python"}])
+def test_non_string_ai_skill_id_is_dropped_without_crashing(monkeypatch, bad_skill_id) -> None:
+    _gemini(monkeypatch, [
+        {"skill_id": bad_skill_id, "importance": "must", "quote": "Kubernetes clusters"},
+        {"skill_id": "python", "importance": "must", "quote": "strong Python experience"},
+    ])
+    result = jd_parse.extract_requirements("Backend Engineer Intern", DESCRIPTION)
+    assert "python" in _by_skill(result)
+    assert any(item["reason"] == "Not a valid proposal." for item in result["dropped"])
