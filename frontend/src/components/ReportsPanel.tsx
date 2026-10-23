@@ -32,8 +32,8 @@ export default function ReportsPanel({ reports = [], portfolio, audience }: {
                   <span className="report-claim-skill">{skillLabel(claim)}</span>
                   {claim.status === "corroborated"
                     ? (claim.evidence?.url
-                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by code" : "Corroborated by your code"} <ExternalLink size={10} /></a>
-                      : <span className="flag-ok"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by code" : "Corroborated by your code"}</span>)
+                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by counted evidence" : "Corroborated by counted evidence"} <ExternalLink size={10} /></a>
+                      : <span className="flag-ok"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by counted evidence" : "Corroborated by counted evidence"}</span>)
                     : <span className="muted">{recruiter ? "Not evidenced in code" : "Not yet evidenced in code"}</span>}
                   <small className="muted">“{claim.quote}”</small>
                 </li>
