@@ -141,7 +141,7 @@ def test_one_line_quotes_stop_at_sentence_ends_so_testing_words_do_not_leak(monk
         assert "test" not in requirements[skill_id]["quote"].lower(), skill_id
         assert requirements[skill_id]["min_level"] == "Applied", skill_id
     assert requirements["unit-testing"]["quote"] == "unit tests with pytest are a must!"
-    assert requirements["unit-testing"]["min_level"] == "Demonstrated"
+    assert requirements["unit-testing"]["min_level"] == "Applied"  # capped: Unit Testing can reach Applied at most
 
 
 def test_bulleted_quotes_stay_on_their_own_line(monkeypatch) -> None:
@@ -158,7 +158,7 @@ def test_bulleted_quotes_stay_on_their_own_line(monkeypatch) -> None:
     assert requirements["sql"]["quote"] == "- Solid SQL is required"
     assert requirements["fastapi"]["min_level"] == "Applied"
     assert requirements["sql"]["min_level"] == "Applied"
-    assert requirements["unit-testing"]["min_level"] == "Demonstrated"
+    assert requirements["unit-testing"]["min_level"] == "Applied"  # capped: Unit Testing can reach Applied at most
     assert all("\n" not in item["quote"] for item in requirements.values())
 
 
@@ -316,7 +316,7 @@ EXPECTED_EXACT_ONLY = {
     "python": ("must", "Applied", "- Strong Python experience"),
     "fastapi": ("must", "Applied", "- FastAPI for REST services is required"),
     "sql": ("must", "Applied", "- Solid SQL is essential"),
-    "unit-testing": ("must", "Demonstrated", "- Unit tests with pytest are a must"),
+    "unit-testing": ("must", "Applied", "- Unit tests with pytest are a must"),  # capped at Applied
     "docker": ("nice", "Used", "- Docker is a plus"),
 }
 
@@ -414,7 +414,7 @@ def test_northwind_exact_only_uses_the_strongest_line_per_skill(monkeypatch) -> 
         "fastapi": ("must", "Applied"),
         "rest-api": ("must", "Applied"),
         "git": ("must", "Applied"),
-        "unit-testing": ("must", "Demonstrated"),
+        "unit-testing": ("must", "Applied"),  # capped at Applied
         "docker": ("nice", "Used"),
         "cicd": ("nice", "Used"),
         "kubernetes": ("nice", "Used"),

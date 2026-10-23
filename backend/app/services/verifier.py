@@ -17,6 +17,18 @@ from app.services.framework import skill_map
 from app.services.github_ingest import CI_DIRS, CI_FILES, DOCKER_FILES, is_test_path, module_stem
 
 LEVEL_ORDER = {"Claimed": 0, "Used": 1, "Applied": 2, "Demonstrated": 3}
+# The highest level a skill can reach under the ladder rules, where that is below Demonstrated.
+# Unit Testing's code evidence is a test file itself, so Demonstrated would need another test
+# targeting that test file; requirements above this level could never be met.
+MAX_REACHABLE_LEVEL = {"unit-testing": "Applied"}
+
+
+def reachable_min_level(skill_id: str, min_level: str) -> str:
+    """A required level, capped at the highest level the skill can reach."""
+    cap = MAX_REACHABLE_LEVEL.get(skill_id)
+    if cap and LEVEL_ORDER[min_level] > LEVEL_ORDER[cap]:
+        return cap
+    return min_level
 # Levels describe evidence of use, never ability. "Claimed" is shown as "Unverified".
 LEVEL_DESCRIPTIONS = {
     "Claimed": "Mentioned on the resume or a certificate; no evidence in the analysed files.",
@@ -338,6 +350,13 @@ def _signature_pattern(signature: str) -> re.Pattern[str]:
     return re.compile(escaped, re.IGNORECASE)
 
 
+# Skills whose Python evidence naturally lives in a string passed to a call: SQL in
+# text("SELECT ...")/cursor.execute(...), connection URLs in connect("postgresql://..."), Docker CLI
+# commands in subprocess.run("docker build ..."). Only these accept a signature inside a call's
+# string argument; comments and docstrings never count.
+STRING_SIGNATURE_SKILLS = {"sql", "postgresql", "mysql", "mongodb", "redis", "docker"}
+
+
 def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: int, end: int) -> bool:
     extension = PurePosixPath(path).suffix.lower()
     extensions = {item.lower() for item in skill.get("file_extensions", [])}
@@ -352,7 +371,10 @@ def _signature_found(skill: dict[str, Any], path: str, lines: list[str], start: 
         # Syntax-aware AST check for Python: verifies the citation binds to a real syntax node
         # rather than being inside a comment or string literal.
         full_content = "\n".join(lines)
-        ast_result = python_ast_has_signature(full_content, start, end, signatures)
+        ast_result = python_ast_has_signature(
+            full_content, start, end, signatures,
+            string_arguments=skill.get("id") in STRING_SIGNATURE_SKILLS,
+        )
         # Safe behaviour: invalid Python syntax or AST parsing failure strictly rejects signature
         return bool(ast_result)
     window = "\n".join(lines[max(0, start - 1 - 5): min(len(lines), end + 5)])
