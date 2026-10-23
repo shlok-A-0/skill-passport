@@ -18,6 +18,12 @@ from app.services.github_ingest import (
 )
 from app.services.growth_and_kit import generate_growth_and_kit
 from app.services.identity import identity_signals
+from app.services.report_parse import (
+    add_report_mentions,
+    parse_report,
+    portfolio_status,
+    report_results,
+)
 from app.services.jobs import (
     complete_passport_job,
     fail_job,
@@ -73,6 +79,19 @@ def _public_job_error(job_id: str, exc: Exception) -> str:
         return "Hosted OCR could not read an uploaded certificate. Try a clearer image or PDF, or contact the site administrator."
     if step == "Reading certificates":
         return "An uploaded certificate couldn’t be processed. Check the file and try again."
+    if step == "Reading reports" and isinstance(exc, ValueError):
+        message = str(exc).lower()
+        if "empty" in message:
+            return "An uploaded project report is empty. Upload a readable PDF or image, or remove it and try again."
+        if "no readable text" in message:
+            return "We couldn’t read text in an uploaded project report. Try a clearer image or PDF, or remove it and try again."
+        return "We couldn’t read an uploaded project report. Check that it is a PDF, PNG, or JPEG and try again."
+    if step == "Reading reports" and isinstance(exc, RuntimeError):
+        if "not configured" in str(exc).lower():
+            return "Scanned report reading is not configured on this server. Please contact the site administrator."
+        return "Hosted OCR could not read an uploaded project report. Try a clearer image or PDF, or contact the site administrator."
+    if step == "Reading reports":
+        return "An uploaded project report couldn’t be processed. Check the file and try again."
     return (
         f"Something went wrong during {step}. Please try again. "
         "If it happens again, check the backend terminal for details."
@@ -118,7 +137,7 @@ def _preserve_missing_skills(
 
 def build_passport(
     github_username: str,
-    target_role: str,
+    target_role: str | dict[str, Any],
     resume_bytes: bytes,
     certificate_bytes: list[bytes] | None = None,
     is_demo: bool = False,
@@ -127,6 +146,8 @@ def build_passport(
     force_refresh: bool = False,
     resume_skill_mentions: list[dict[str, str]] | None = None,
     certificate_skill_mentions: list[dict[str, str]] | None = None,
+    report_files: list[tuple[str, bytes]] | None = None,
+    portfolio_url: str | None = None,
 ) -> dict[str, Any]:
     existing = get_passport(passport_id) if passport_id else None
     update_job_id = job_id or (passport_id if passport_id and not existing else None)
@@ -161,6 +182,12 @@ def build_passport(
         certificate_skills = _merge_skill_matches(*certificate_groups)
     else:
         certificate_skills = certificate_skill_mentions or []
+    if report_files:
+        progress("Reading reports")
+        parsed_reports = [parse_report(name, content) for name, content in report_files]
+    else:
+        # Re-check: reports aren't stored, so earlier claims and quotes are re-checked as they are.
+        parsed_reports = (existing or {}).get("reports") or []
     # Stored mentions from older passports may predate redaction; the redaction is idempotent.
     resume_skills = _redact_mentions(resume_skills)
     certificate_skills = _redact_mentions(certificate_skills)
@@ -190,6 +217,13 @@ def build_passport(
         verified["skills"] = _preserve_missing_skills(
             existing.get("skills", []), verified["skills"]
         )
+    # After verification and exclusion, so levels are final; reports never change them.
+    reports = report_results(parsed_reports, verified["skills"], ingestion["username"])
+    add_report_mentions(verified["skills"], reports)
+    if portfolio_url:
+        portfolio = portfolio_status(portfolio_url, ingestion["username"])
+    else:
+        portfolio = (existing or {}).get("portfolio")  # kept as is on re-check; never fetched
     progress("Matching role")
     coverage = build_coverage(ingestion)
     role_match = match_role(verified["skills"], target_role, coverage)
@@ -248,6 +282,14 @@ def build_passport(
         # The rules this passport was built with; recheck_all.py --only-incomplete rebuilds older ones.
         "verifier_version": VERIFIER_VERSION,
     }
+    if isinstance(target_role, dict):
+        # A role from a job description: re-check reuses this definition, not roles.json.
+        passport["custom_role"] = target_role
+    if reports:
+        passport["reports"] = reports
+        passport["sources"]["reports"] = len(reports)
+    if portfolio:
+        passport["portfolio"] = portfolio
     if existing:
         # Union of old and new skills, after earlier sources were excluded; a skill
         # that is absent on one side counts as Claimed (no evidence).
@@ -290,7 +332,7 @@ def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dic
         ]
     return build_passport(
         github_username=existing["github_username"],
-        target_role=existing["role_match"]["role_id"],
+        target_role=existing.get("custom_role") or existing["role_match"]["role_id"],
         resume_bytes=b"",
         passport_id=existing["id"],
         job_id=job_id,
@@ -303,10 +345,12 @@ def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dic
 def run_passport_job(
     job_id: str,
     github_username: str,
-    target_role: str,
+    target_role: str | dict[str, Any],
     resume_bytes: bytes,
     certificate_bytes: list[bytes],
     is_demo: bool,
+    report_files: list[tuple[str, bytes]] | None = None,
+    portfolio_url: str | None = None,
 ) -> None:
     update_job_id = job_id
     with keep_job_lease(job_id):
@@ -318,6 +362,8 @@ def run_passport_job(
                 certificate_bytes=certificate_bytes,
                 is_demo=is_demo,
                 passport_id=update_job_id,
+                report_files=report_files,
+                portfolio_url=portfolio_url,
             )
         except Exception as exc:
             logger.exception("Passport job %s failed", job_id)

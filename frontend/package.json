@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "test": "node --test tests/requirements.test.ts tests/jobPolling.test.ts tests/ownership.test.ts tests/passportForm.test.ts tests/verifiability.test.ts",
+    "test": "node --test tests/requirements.test.ts tests/jobPolling.test.ts tests/ownership.test.ts tests/passportForm.test.ts tests/verifiability.test.ts tests/customRole.test.ts",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

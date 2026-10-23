@@ -5,6 +5,7 @@ import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, 
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
+import ReportsPanel from "../components/ReportsPanel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
@@ -89,6 +90,7 @@ export default function RecruiterView() {
           <div className="eyebrow">RECRUITER VIEW · EVIDENCE-BACKED SUMMARY</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}{openRequests > 0 && <Link className="open-requests" to={`/recruiter/${passport.id}/evidence`}>{openRequests} open review request{openRequests === 1 ? "" : "s"}</Link>}</p>
+          {passport.custom_role && <p className="custom-role-note">Custom role from job description: <strong>{passport.custom_role.title}</strong></p>}
           <CoverageSummary coverage={passport.coverage} />
           <IdentityChecks signals={passport.identity} />
           {growthUnavailable(passport) && <p className="unavailable-note">{GROWTH_UNAVAILABLE}</p>}
@@ -108,6 +110,7 @@ export default function RecruiterView() {
               const packet = passport.requirement_packets?.find((item) => item.skill_id === requirement.skill_id);
               const Icon = requirement.status === "met" ? CheckCircle2 : XCircle;
               const open = expanded === requirement.skill_id;
+              const quote = passport.custom_role?.requirements.find((item) => item.skill_id === requirement.skill_id)?.quote;
               return (
                 <div className={`requirement-item ${open ? "requirement-open" : ""}`} key={requirement.skill_id}>
                   <article className={`requirement-row req-${requirement.status}`}>
@@ -124,6 +127,7 @@ export default function RecruiterView() {
                         <ChevronDown size={12} className="req-chevron" />
                       </div>
                       <p>{packet?.summary ?? requirement.reason}</p>
+                      {quote && <small className="req-quote" title={quote}>From the job description: “{quote}”</small>}
                     </button>
                     {skill && <LadderPill level={skill.level} />}
                     <Link className="view-evidence-link" to={`/recruiter/${passport.id}/evidence?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
@@ -157,7 +161,7 @@ export default function RecruiterView() {
             {claimedSkills.length ? (
               <>
                 <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>These skills may be listed on the resume or certificates, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
+                <p>These skills may be listed on the resume, certificates or project reports, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
               </>
             ) : <p>No unverified claims in this passport.</p>}
           </section>
@@ -172,6 +176,7 @@ export default function RecruiterView() {
               </article>
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
           </details>
+          <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" />
         </aside>
       </div>
       <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>

@@ -3,7 +3,10 @@ export function validatePassportForm(input: {
   resume: File | null;
   role: string;
   certificates: File[];
+  reports?: File[];
+  portfolioUrl?: string;
 }): string | null {
+  const reports = input.reports ?? [];
   const username = input.username.trim();
   if (!username) return "Enter your GitHub username.";
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username)) {
@@ -20,8 +23,30 @@ export function validatePassportForm(input: {
   if (input.certificates.some((file) => file.size > 10 * 1024 * 1024)) {
     return "Each certificate must be 10 MB or smaller.";
   }
-  if (input.resume.size + input.certificates.reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024) {
-    return "The resume and certificates must total 25 MB or less.";
+  if (reports.length > 3) return "Upload no more than 3 project reports.";
+  if (reports.some((file) => !isSupportedCertificate(file))) return "Project reports must be PDFs, PNG images, or JPEG images.";
+  if (reports.some((file) => file.size === 0)) return "An uploaded project report is empty. Choose a file with content or remove it.";
+  if (reports.some((file) => file.size > 10 * 1024 * 1024)) return "Each project report must be 10 MB or smaller.";
+  if (input.resume.size + [...input.certificates, ...reports].reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024) {
+    return reports.length
+      ? "The resume, certificates and reports must total 25 MB or less."
+      : "The resume and certificates must total 25 MB or less.";
+  }
+  return portfolioUrlError(input.portfolioUrl ?? "");
+}
+
+/** Same rule as the backend: empty, or one https:// link of at most 300 characters. */
+export function portfolioUrlError(value: string): string | null {
+  const url = value.trim();
+  if (!url) return null;
+  if (url.length > 300 || /\s/.test(url)) return "The portfolio URL must be a single https:// link of at most 300 characters.";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || !parsed.hostname || parsed.username || parsed.password) {
+      return "The portfolio URL must start with https://.";
+    }
+  } catch {
+    return "The portfolio URL must start with https://.";
   }
   return null;
 }

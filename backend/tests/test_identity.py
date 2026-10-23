@@ -257,7 +257,7 @@ def _create(client: TestClient, **data: str):
 def test_create_needs_an_ownership_proof_for_real_passports(monkeypatch) -> None:
     monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", True)
     started = []
-    monkeypatch.setattr(main_module, "run_passport_job", lambda *args: started.append(args))
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: started.append(args))
     client = TestClient(main_module.app)
 
     denied = _create(client)
@@ -288,7 +288,7 @@ def test_create_needs_an_ownership_proof_for_real_passports(monkeypatch) -> None
 
 def test_demo_passports_skip_the_ownership_proof(monkeypatch) -> None:
     monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", True)
-    monkeypatch.setattr(main_module, "run_passport_job", lambda *args: None)
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: None)
     challenge = create_challenge("janedoe")
     response = _create(TestClient(main_module.app), is_demo="true", ownership_challenge_id=challenge["challenge_id"])
     assert response.status_code == 202
@@ -302,7 +302,7 @@ def test_passport_created_with_proof_disabled_does_not_show_ownership_verified(m
     prove(monkeypatch, "janedoe", "p-earlier")  # the real owner proved it once, for another passport
     monkeypatch.setattr(config, "REQUIRE_OWNERSHIP_PROOF", False)
     started = []
-    monkeypatch.setattr(main_module, "run_passport_job", lambda *args: started.append(args))
+    monkeypatch.setattr(main_module, "run_passport_job", lambda *args, **kwargs: started.append(args))
     response = _create(TestClient(main_module.app))
     assert response.status_code == 202
     job_id = response.json()["job_id"]

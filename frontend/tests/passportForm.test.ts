@@ -47,6 +47,18 @@ test("passport form rejects invalid and oversized certificate uploads", () => {
   assert.match(validatePassportForm({ ...base, certificates: [file("large.pdf", 11 * 1024 * 1024)] }) ?? "", /10 MB/);
 });
 
+test("passport form checks optional project reports and the portfolio URL", () => {
+  const base = { username: "octocat", resume: file("resume.pdf"), role: "backend-intern", certificates: [] };
+  assert.equal(validatePassportForm({ ...base, reports: [file("report.pdf"), file("scan.png", 100, "image/png")], portfolioUrl: "https://octocat.github.io" }), null);
+  assert.match(validatePassportForm({ ...base, reports: [file("a.pdf"), file("b.pdf"), file("c.pdf"), file("d.pdf")] }) ?? "", /3 project reports/);
+  assert.match(validatePassportForm({ ...base, reports: [file("notes.txt", 10, "text/plain")] }) ?? "", /Project reports must be/);
+  assert.match(validatePassportForm({ ...base, reports: [file("empty.pdf", 0)] }) ?? "", /report is empty/);
+  assert.match(validatePassportForm({ ...base, certificates: [file("c.pdf", 9 * 1024 * 1024)], reports: [file("r1.pdf", 9 * 1024 * 1024), file("r2.pdf", 9 * 1024 * 1024)] }) ?? "", /reports must total 25 MB/);
+  assert.match(validatePassportForm({ ...base, portfolioUrl: "http://octocat.github.io" }) ?? "", /https/);
+  assert.match(validatePassportForm({ ...base, portfolioUrl: `https://x.io/${"a".repeat(300)}` }) ?? "", /300/);
+  assert.equal(validatePassportForm({ ...base, portfolioUrl: "   " }), null);
+});
+
 test("passport form accepts PNG and JPEG certificates", () => {
   const base = { username: "octocat", resume: file("resume.pdf"), role: "backend-intern" };
   assert.equal(

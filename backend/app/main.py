@@ -42,6 +42,12 @@ from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import GitHubIngestError, validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
+from app.services.jd_parse import (
+    CUSTOM_ROLE_PREFIX,
+    JobDescriptionError,
+    build_custom_role,
+    role_definition,
+)
 from app.services.jobs import (
     fail_job,
     get_active_jobs_count,
@@ -52,10 +58,12 @@ from app.services.jobs import (
 from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
 from app.services.pipeline import run_passport_job, run_recheck_job
+from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
 from app.services.storage import (
     check_storage_rate_limit,
     check_storage_ready,
     create_review_request,
+    get_custom_role,
     get_passport,
     get_passport_owner_token_hash,
     get_review_requests_by_passports,
@@ -66,6 +74,7 @@ from app.services.storage import (
     prune_old_jobs,
     prune_old_rate_limits,
     reconcile_interrupted_jobs,
+    save_custom_role,
 )
 from app.services.verifier import (
     CHECK_LABELS,
@@ -302,8 +311,12 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
     view.pop("resume_skill_mentions", None)
     view.pop("certificate_skill_mentions", None)
     view.pop("identity", None)  # identity checks are recruiter-only
+    for report in view.get("reports", []):
+        # A link to a repository on another account is a recruiter-only signal.
+        report["repo_links"] = [link for link in report.get("repo_links", []) if link.get("status") == "own"]
     for skill in view.get("skills", []):
         skill.pop("resume_mention", None)
+        skill.pop("report_mention", None)
         for item in skill.get("evidence", []):
             item.pop("integrity", None)
             item.pop("record", None)  # the evidence record is for recruiters and the badge
@@ -438,6 +451,33 @@ def skills() -> list[dict[str, str]]:
     ]
 
 
+@app.get("/features")
+def features() -> dict[str, bool]:
+    """Optional features the frontend shows only when enabled."""
+    return {"custom_roles": config.ENABLE_CUSTOM_ROLES, "reports": config.ENABLE_REPORTS}
+
+
+class JobDescriptionBody(BaseModel):
+    title: str = Field(max_length=1000)
+    description: str = Field(max_length=20000)
+
+
+@app.post("/roles/from-description", status_code=201)
+def role_from_description(body: JobDescriptionBody, request: Request) -> dict:
+    """A target role from a pasted job description. The AI proposes requirements; code matches
+    skill names, sets minimum levels by fixed rules and checks every quote against the text.
+    If the AI is unavailable the role comes from exact matching only (`mode: "exact_only"`)."""
+    if not config.ENABLE_CUSTOM_ROLES:
+        raise HTTPException(status_code=404, detail="Not Found")
+    check_rate_limit(request, "role_from_description", max_requests=10, window_seconds=600)
+    try:
+        role = build_custom_role(body.title, body.description)
+    except JobDescriptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    save_custom_role(role)
+    return {**role, "name": role["title"], "custom": True}
+
+
 class OwnershipChallengeBody(BaseModel):
     github_username: str = Field(min_length=1, max_length=39)
 
@@ -487,7 +527,7 @@ async def stream_and_validate_file(
         if current_aggregate + file_bytes > max_aggregate:
             raise HTTPException(
                 status_code=413,
-                detail=f"Total upload size across resume and certificates must be {max_aggregate // (1024 * 1024)} MB or smaller.",
+                detail=f"Total upload size across resume, certificates and reports must be {max_aggregate // (1024 * 1024)} MB or smaller.",
             )
         chunks.append(chunk)
     if file_bytes == 0:
@@ -505,6 +545,8 @@ async def create_passport(
     certificates: list[UploadFile] | None = File(default=None),
     is_demo: bool = Form(default=False),
     ownership_challenge_id: str | None = Form(default=None),
+    reports: list[UploadFile] | None = File(default=None),
+    portfolio_url: str | None = Form(default=None),
 ) -> dict[str, str]:
     check_rate_limit(request, "create_passport", max_requests=20, window_seconds=600)
     try:
@@ -520,8 +562,23 @@ async def create_passport(
         )
     role_ids = {role["id"] for role in get_roles()}
     role_names = {role["name"] for role in get_roles()}
-    if target_role not in role_ids | role_names:
+    role: str | dict[str, Any] = target_role
+    if target_role.startswith(CUSTOM_ROLE_PREFIX) and config.ENABLE_CUSTOM_ROLES:
+        stored_role = get_custom_role(target_role)
+        if not stored_role:
+            raise HTTPException(status_code=422, detail="Unknown target role.")
+        # The full definition travels with the passport, so re-check never needs roles.json.
+        role = role_definition(stored_role)
+    elif target_role not in role_ids | role_names:
         raise HTTPException(status_code=422, detail="Unknown target role.")
+    if not config.ENABLE_REPORTS:
+        reports, portfolio_url = None, None  # feature off: the inputs are ignored
+    if reports and len(reports) > MAX_REPORTS:
+        raise HTTPException(status_code=422, detail=f"At most {MAX_REPORTS} project reports may be uploaded.")
+    try:
+        portfolio_url = validate_portfolio_url(portfolio_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Atomic job slot reservation before accepting large file bodies
     candidate_key = github_username.strip().lower()
@@ -571,6 +628,22 @@ async def create_passport(
                     detail="Certificates must be PDF, PNG, or JPEG files.",
                 )
             cert_bytes.append(content)
+
+        report_files = []
+        for report in reports or []:
+            content, total_bytes = await stream_and_validate_file(
+                report,
+                max_bytes=MAX_SINGLE_FILE_BYTES,
+                current_aggregate=total_bytes,
+                max_aggregate=MAX_TOTAL_UPLOAD_BYTES,
+                error_label="Each project report",
+            )
+            if not _supported_certificate_bytes(content):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Project reports must be PDF, PNG, or JPEG files.",
+                )
+            report_files.append((safe_filename(report.filename), content))
     except Exception as exc:
         fail_job(job_id, f"Upload rejected: {exc}")
         raise
@@ -588,10 +661,12 @@ async def create_passport(
         run_passport_job,
         job_id,
         github_username,
-        target_role,
+        role,
         resume_bytes,
         cert_bytes,
         is_demo,
+        report_files=report_files,
+        portfolio_url=portfolio_url,
     )
     return {"job_id": job_id, "access_token": access_token}
 

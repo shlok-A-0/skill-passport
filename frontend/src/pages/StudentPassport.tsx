@@ -7,6 +7,7 @@ import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims, { type Audience } from "../components/RejectedClaims";
+import ReportsPanel from "../components/ReportsPanel";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
@@ -171,7 +172,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         <div>
           <div className="eyebrow">STUDENT PASSPORT · CREATED {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · RE-CHECKED ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
           <h1>@{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
-          <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates</span></p>
+          <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates{passport.sources.reports ? ` · ${passport.sources.reports} project report${passport.sources.reports === 1 ? "" : "s"}` : ""}</span></p>
           <CoverageSummary coverage={passport.coverage} />
         </div>
         <div className="passport-actions">
@@ -209,9 +210,10 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
               <div className="claimed-skills">{claimed.map((skill) => (
                 <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
               ))}</div>
-              <p className="muted">These skills may be listed on your resume or certificates, found only in files you did not commit to, or retained from an earlier check. No qualifying evidence was found in the latest analysis.</p>
+              <p className="muted">These skills may be listed on your resume, certificates or project reports, found only in files you did not commit to, or retained from an earlier check. No qualifying evidence was found in the latest analysis.</p>
             </section>
           )}
+          <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience={audience} />
           <section className="panel growth-panel">
             <div className="panel-heading"><div><div className="eyebrow">GROWTH LOOP</div><h2>Turn gaps into proof</h2></div></div>
             <p className="muted">Complete a task in your repo, then re-ingest GitHub to check for new evidence.</p>
