@@ -263,7 +263,11 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
         }
         if isinstance(item, dict) else item
         for item in proposed
-        if not (isinstance(item, dict) and item.get("skill_id") in exact)
+        if not (
+            isinstance(item, dict)
+            and isinstance(item.get("skill_id"), str)
+            and item["skill_id"] in exact
+        )
     ]
     for item in candidates:
         if not isinstance(item, dict):
