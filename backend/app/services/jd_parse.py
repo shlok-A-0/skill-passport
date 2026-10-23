@@ -178,7 +178,7 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
             # headings like "Our Python stack"—must replace/reset the section.
             bare_line = line.strip().rstrip(":,").strip().casefold()
             is_bare_skill_entry = any(
-                bare_line == term.casefold()
+                (span := _jd_term_span(term, bare_line)) == (0, len(bare_line))
                 for skill in get_skills()
                 for term in skill_terms(skill)
             )
