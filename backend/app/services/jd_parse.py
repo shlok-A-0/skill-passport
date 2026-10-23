@@ -162,6 +162,27 @@ def _jd_term_span(term: str, sentence: str) -> tuple[int, int] | None:
     return None
 
 
+def _is_skill_list_line(line: str) -> bool:
+    """True when a line contains only known skill names/aliases separated as a list.
+
+    Supports common plain-text separators (comma, slash, ampersand, and 'and') without
+    mistaking a heading like "Our Python stack" for a skills list.
+    """
+    cleaned = line.strip().rstrip(":,").strip()
+    if not cleaned:
+        return False
+    items = re.split(r"\\s*(?:[,/&]|\\band\\b)\\s*", cleaned, flags=re.IGNORECASE)
+    for item in items:
+        item = item.strip()
+        if not item or not any(
+            (span := _jd_term_span(term, item)) == (0, len(item))
+            for skill in get_skills()
+            for term in skill_terms(skill)
+        ):
+            return False
+    return True
+
+
 def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
     """Exact-only fallback: for each skill named in the text, the strongest sentence naming it.
 
@@ -173,16 +194,9 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
     for line in text.splitlines():
         heading = _heading_section(line)
         if heading is not False:
-            # Preserve the current section only when the entire line is a skill
-            # name/alias (e.g. "Python"). Every other heading—including unknown
-            # headings like "Our Python stack"—must replace/reset the section.
-            bare_line = line.strip().rstrip(":,").strip().casefold()
-            is_bare_skill_entry = any(
-                (span := _jd_term_span(term, bare_line)) == (0, len(bare_line))
-                for skill in get_skills()
-                for term in skill_terms(skill)
-            )
-            if not is_bare_skill_entry:
+            # Only actual skill-list content preserves the section. A heading like
+            # "Our Python stack" mentions a skill but must still reset the section.
+            if not _is_skill_list_line(line):
                 section = heading
         for start, end in _sentence_spans(line):
             sentence = line[start:end]
