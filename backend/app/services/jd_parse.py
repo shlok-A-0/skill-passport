@@ -171,7 +171,7 @@ def _is_skill_list_line(line: str) -> bool:
     cleaned = line.strip().rstrip(":,").strip()
     if not cleaned:
         return False
-    items = re.split(r"\\s*(?:[,/&]|\\band\\b)\\s*", cleaned, flags=re.IGNORECASE)
+    items = re.split(r"\s*(?:[,/&]|\band\b)\s*", cleaned, flags=re.IGNORECASE)
     for item in items:
         item = item.strip()
         if not item or not any(
