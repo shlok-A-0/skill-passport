@@ -670,6 +670,41 @@ def test_plain_skill_lines_keep_requirements_section_when_ai_unavailable(monkeyp
     assert requirements["docker"]["importance"] == "must"
 
 
+def test_skill_names_containing_a_separator_stay_whole_in_lists() -> None:
+    # Greptile: "CI/CD" was split into "CI" and "CD", which cleared the requirements section.
+    text = "Requirements:\nCI/CD\nPython\nSQL\nDocker\nPostgreSQL\nRedis"
+    matches = jd_parse.strongest_exact_matches(text)
+    assert all(matches[skill][1] == "must" for skill in ("cicd", "python", "sql", "docker", "postgresql", "redis"))
+    assert jd_parse._is_skill_list_line("CI/CD, Docker")
+    assert jd_parse._is_skill_list_line("Node.js / Express and Docker")
+    assert not jd_parse._is_skill_list_line("Our CI/CD stack")
+
+
+def test_versioned_skill_entries_keep_the_requirements_section() -> None:
+    # Greptile: "Python 3.11" was not seen as a skill entry and cleared the section.
+    matches = jd_parse.strongest_exact_matches("Requirements:\nPython 3.11\nJava 17+, Docker\nRedis")
+    assert all(matches[skill][1] == "must" for skill in ("python", "java", "docker", "redis"))
+    assert not jd_parse._is_skill_list_line("Python 3.11 is used everywhere")
+
+
+def test_requirement_lines_keep_the_section_but_headings_still_reset_it() -> None:
+    # Greptile: "Experience with Python" was treated as an unknown heading.
+    matches = jd_parse.strongest_exact_matches("Requirements:\nExperience with Python\nDocker")
+    assert matches["python"][1] == "must" and matches["docker"][1] == "must"
+    # Nice-words in the line itself still win over the section.
+    assert jd_parse.strongest_exact_matches("Requirements:\nFamiliarity with Kubernetes\nDocker")["kubernetes"][1] == "nice"
+    # Real headings still reset the section, including ones that mention a skill.
+    headed = jd_parse.strongest_exact_matches("Requirements:\nOur Python stack\n- Some Redis experience")
+    assert headed["redis"][1] == "nice"
+    assert jd_parse.strongest_exact_matches("Requirements\n- Docker\nAbout us\n- Redis")["redis"][1] == "nice"
+
+
+def test_capitalised_everyday_word_skills_keep_the_section() -> None:
+    # Greptile (already fixed on this branch): lowercasing broke "React", "Express", "Go" entries.
+    matches = jd_parse.strongest_exact_matches("Requirements:\nReact\nTypeScript\nExpress\nGolang")
+    assert all(matches[skill][1] == "must" for skill in ("react", "typescript", "express", "go"))
+
+
 @pytest.mark.parametrize("bad_skill_id", [["python"], {"name": "python"}])
 def test_non_string_ai_skill_id_is_dropped_without_crashing(monkeypatch, bad_skill_id) -> None:
     _gemini(monkeypatch, [

@@ -162,18 +162,54 @@ def _jd_term_span(term: str, sentence: str) -> tuple[int, int] | None:
     return None
 
 
+LIST_SEPARATOR = re.compile(r"\s*(?:[,/&]|\band\b)\s*", re.IGNORECASE)
+# A version after a skill name in a list entry: "Python 3.11", "Java 17+", "Node.js v20".
+TRAILING_VERSION = re.compile(r"\s+v?\d+(?:\.\d+)*\+?$", re.IGNORECASE)
+# Short unbulleted lines that state a requirement ("Experience with Python") rather than head a
+# section ("Our Python stack"); such lines keep the current section.
+REQUIREMENT_LEAD = re.compile(
+    r"^\s*(?:experience|knowledge|proficiency|proficient|familiarity|familiar|exposure|"
+    r"understanding|strong|solid|good|working|hands-on|ability|expertise|skilled|fluency|fluent)\b",
+    re.IGNORECASE,
+)
+
+
+def _protect_separator_terms(line: str) -> tuple[str, list[str]]:
+    """Replace skill names that contain a list separator ("CI/CD", "Node.js / Express") with
+    placeholders, longest first, so splitting the list can't cut them apart."""
+    names = sorted(
+        {term for skill in get_skills() for term in skill_terms(skill) if LIST_SEPARATOR.search(term)},
+        key=len, reverse=True,
+    )
+    kept: list[str] = []
+    for name in names:
+        pattern = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.IGNORECASE)
+
+        def placeholder(match: re.Match[str]) -> str:
+            kept.append(match.group(0))
+            return f"\x00{len(kept) - 1}\x00"
+
+        line = pattern.sub(placeholder, line)
+    return line, kept
+
+
 def _is_skill_list_line(line: str) -> bool:
     """True when a line contains only known skill names/aliases separated as a list.
 
     Supports common plain-text separators (comma, slash, ampersand, and 'and') without
-    mistaking a heading like "Our Python stack" for a skills list.
+    mistaking a heading like "Our Python stack" for a skills list. Skill names that contain a
+    separator ("CI/CD") stay whole, and an entry may end with a version ("Python 3.11").
     """
     cleaned = line.strip().rstrip(":,").strip()
     if not cleaned:
         return False
-    items = re.split(r"\s*(?:[,/&]|\band\b)\s*", cleaned, flags=re.IGNORECASE)
+    protected, kept = _protect_separator_terms(cleaned)
+    items = [
+        re.sub(r"\x00(\d+)\x00", lambda match: kept[int(match.group(1))], item)
+        for item in LIST_SEPARATOR.split(protected)
+    ]
     for item in items:
-        item = item.strip()
+        item = TRAILING_VERSION.sub("", item.strip())
         if not item or not any(
             (span := _jd_term_span(term, item)) == (0, len(item))
             for skill in get_skills()
@@ -181,6 +217,14 @@ def _is_skill_list_line(line: str) -> bool:
         ):
             return False
     return True
+
+
+def _is_requirement_line(line: str) -> bool:
+    """A short line that states a requirement for a named skill ("Experience with Python",
+    "Familiarity with Docker"), not a section heading ("Our Python stack", "About us")."""
+    return bool(REQUIREMENT_LEAD.match(line)) and any(
+        _jd_term_span(term, line) is not None for skill in get_skills() for term in skill_terms(skill)
+    )
 
 
 def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
@@ -194,9 +238,9 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
     for line in text.splitlines():
         heading = _heading_section(line)
         if heading is not False:
-            # Only actual skill-list content preserves the section. A heading like
+            # Skill-list content and requirement lines preserve the section. A heading like
             # "Our Python stack" mentions a skill but must still reset the section.
-            if not _is_skill_list_line(line):
+            if not _is_skill_list_line(line) and not _is_requirement_line(line):
                 section = heading
         for start, end in _sentence_spans(line):
             sentence = line[start:end]
