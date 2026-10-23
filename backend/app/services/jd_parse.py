@@ -176,7 +176,7 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
             # Preserve the current section only when the entire line is a skill
             # name/alias (e.g. "Python"). Every other heading—including unknown
             # headings like "Our Python stack"—must replace/reset the section.
-            bare_line = line.strip().rstrip(":").strip().casefold()
+            bare_line = line.strip().rstrip(":,").strip().casefold()
             is_bare_skill_entry = any(
                 bare_line == term.casefold()
                 for skill in get_skills()
