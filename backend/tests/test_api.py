@@ -1060,6 +1060,21 @@ def test_rate_limiter_storage_failure_fails_closed_with_503(monkeypatch) -> None
     assert "Rate limiting service temporarily unavailable" in res.json()["detail"]
 
 
+def test_passport_create_rate_limit_runs_before_multipart_parsing(monkeypatch) -> None:
+    def reject_upload(*args, **kwargs):
+        raise main_module.HTTPException(status_code=429, detail="Upload limit reached.")
+
+    monkeypatch.setattr(main_module, "check_rate_limit", reject_upload)
+    client = TestClient(main_module.app)
+    response = client.post(
+        "/passport/create",
+        content=b"not a valid multipart body",
+        headers={"Content-Type": "multipart/form-data"},
+    )
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Upload limit reached."}
+
+
 def test_rate_limit_uses_forwarded_ip_only_from_configured_proxies(monkeypatch) -> None:
     from starlette.requests import Request
 

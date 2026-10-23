@@ -1,5 +1,6 @@
 import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2, FlaskConical, X } from "lucide-react";
 import { DEFAULT_CHECK_LABELS, skillLabel, type Evidence, type PassportSkill } from "../api";
+import { showsNotCountedNote } from "../evidencePanel";
 import LadderPill from "./LadderPill";
 import type { Audience } from "./RejectedClaims";
 
@@ -70,7 +71,7 @@ export default function EvidencePanel({ skill, audience, labels }: {
             )}
             {item.build_config_present && <p className="evidence-context">Build or deploy config present</p>}
             {/* Grouped test files count only when committed to, like other config files (2026-10-20). */}
-            {(item.type === "dependency" || item.type === "config") && "authored" in item.checks && !item.checks.authored && (
+            {showsNotCountedNote(item) && (
               <p className="not-counted-note">Found in a file you did not commit to; not counted.</p>
             )}
             <div className="verification-list">

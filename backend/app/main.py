@@ -25,6 +25,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import config
@@ -187,6 +188,26 @@ class RequestBodyTooLarge(Exception):
     pass
 
 
+class PassportCreateRateLimitMiddleware:
+    """Reject excess passport uploads before FastAPI parses multipart bodies."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/passport/create":
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            check_rate_limit(Request(scope), "create_passport", max_requests=20, window_seconds=600)
+        except HTTPException as exc:
+            response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def startup() -> None:
     if REQUIRE_RECRUITER_AUTH and (
         not config.RECRUITER_ACCOUNTS_SETTING_VALID or not RECRUITER_ACCOUNTS
@@ -224,6 +245,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Skill Passport", version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BYTES)
+app.add_middleware(PassportCreateRateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
@@ -545,7 +567,6 @@ async def create_passport(
     reports: list[UploadFile] | None = File(default=None),
     portfolio_url: str | None = Form(default=None),
 ) -> dict[str, str]:
-    check_rate_limit(request, "create_passport", max_requests=20, window_seconds=600)
     try:
         github_username = validate_github_username(github_username)
     except ValueError as exc:
