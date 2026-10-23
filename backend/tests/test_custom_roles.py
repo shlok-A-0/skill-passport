@@ -458,6 +458,8 @@ def test_plural_aliases_match_in_job_descriptions_only(monkeypatch) -> None:
     plain_list = jd_parse.strongest_exact_matches("Requirements:\nREST APIs\nPython")
     assert plain_list["rest-api"][1] == "must"
     assert plain_list["python"][1] == "must"
+    combined_list = jd_parse.strongest_exact_matches("Requirements:\nPython, SQL and Docker")
+    assert all(combined_list[skill][1] == "must" for skill in ("python", "sql", "docker"))
     # Everyday-word skills don't get plurals: "reacts" is ordinary English.
     assert "react" not in jd_parse.strongest_exact_matches("The service reacts quickly.\nPython is required.")
 
