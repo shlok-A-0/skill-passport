@@ -454,6 +454,10 @@ def test_plural_aliases_match_in_job_descriptions_only(monkeypatch) -> None:
     skills = {item["skill_id"] for item in _exact_only(monkeypatch, "Intern", text)["requirements"]}
     assert "rest-api" in skills
     assert "rest-api" not in {item["skill_id"] for item in match_resume_skills("Built REST APIs in Python.")}
+    # Plain skill-list lines retain the section, including the parser's supported plural aliases.
+    plain_list = jd_parse.strongest_exact_matches("Requirements:\nREST APIs\nPython")
+    assert plain_list["rest-api"][1] == "must"
+    assert plain_list["python"][1] == "must"
     # Everyday-word skills don't get plurals: "reacts" is ordinary English.
     assert "react" not in jd_parse.strongest_exact_matches("The service reacts quickly.\nPython is required.")
 
