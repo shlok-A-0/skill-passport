@@ -21,7 +21,7 @@ load_dotenv(BASE_DIR / ".env")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Passport build: skill proposals, growth plan and interview kit.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-flash-latest").strip() or "gemini-flash-latest"
 # Small extraction calls: job-description requirements and project-report claims.
 GEMINI_JD_MODEL = os.getenv("GEMINI_JD_MODEL") or "gemini-3.5-flash-lite"
 FRONTEND_ORIGINS = [
