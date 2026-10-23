@@ -174,15 +174,15 @@ def strongest_exact_matches(text: str) -> dict[str, tuple[str, str]]:
         heading = _heading_section(line)
         if heading is not False:
             # Preserve the current section only when the entire line is a skill
-            # name/alias (e.g. "Python"). Headings like "Our Python stack"
-            # must still clear the section.
+            # name/alias (e.g. "Python"). Every other heading—including unknown
+            # headings like "Our Python stack"—must replace/reset the section.
             bare_line = line.strip().rstrip(":").strip().casefold()
             is_bare_skill_entry = any(
                 bare_line == term.casefold()
                 for skill in get_skills()
                 for term in skill_terms(skill)
             )
-            if heading is not None and not is_bare_skill_entry:
+            if not is_bare_skill_entry:
                 section = heading
         for start, end in _sentence_spans(line):
             sentence = line[start:end]
