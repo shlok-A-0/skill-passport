@@ -69,7 +69,8 @@ export default function EvidencePanel({ skill, audience, labels }: {
               <p className="evidence-context evidence-tested"><FlaskConical size={12} /> Exercised by tests: {item.demonstrated_by.path} ({item.demonstrated_by.match === "name" ? "test named after this file" : "test imports this file"})</p>
             )}
             {item.build_config_present && <p className="evidence-context">Build or deploy config present</p>}
-            {(item.type === "dependency" || item.type === "config") && "authored" in item.checks && !item.checks.authored && !item.test_file_group && (
+            {/* Grouped test files count only when committed to, like other config files (2026-10-20). */}
+            {(item.type === "dependency" || item.type === "config") && "authored" in item.checks && !item.checks.authored && (
               <p className="not-counted-note">Found in a file you did not commit to; not counted.</p>
             )}
             <div className="verification-list">
