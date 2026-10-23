@@ -3,7 +3,7 @@ import { skillLabel, type Portfolio, type ProjectReport } from "../api";
 import type { Audience } from "./RejectedClaims";
 
 /**
- * Project reports and the portfolio link. Report claims are checked against code evidence and
+ * Project reports and the portfolio link. Report claims are checked against counted evidence and
  * never raise a level; links to another account's repositories are shown to recruiters only.
  */
 export default function ReportsPanel({ reports = [], portfolio, audience }: {
@@ -20,7 +20,7 @@ export default function ReportsPanel({ reports = [], portfolio, audience }: {
         <span><div className="eyebrow">CLAIMS, NOT EVIDENCE</div><strong>Project reports &amp; portfolio</strong></span>
         <span className="count-tag">{claimCount} claim{claimCount === 1 ? "" : "s"}</span>
       </summary>
-      <p className="muted">Reports are checked against code evidence and never raise a level. Skills a report mentions without code evidence stay unverified.</p>
+      <p className="muted">Reports are checked against counted evidence and never raise a level. Skills a report mentions without counted evidence stay unverified.</p>
       {reports.map((report, index) => (
         <article className="report-entry" key={`${report.filename}-${index}`}>
           <strong>{report.filename}</strong>
@@ -30,11 +30,13 @@ export default function ReportsPanel({ reports = [], portfolio, audience }: {
               {report.claims.map((claim) => (
                 <li key={claim.skill_id}>
                   <span className="report-claim-skill">{skillLabel(claim)}</span>
-                  {claim.status === "corroborated"
-                    ? (claim.evidence?.url
-                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by code" : "Corroborated by your code"} <ExternalLink size={10} /></a>
-                      : <span className="flag-ok"><CheckCircle2 size={11} /> {recruiter ? "Corroborated by code" : "Corroborated by your code"}</span>)
-                    : <span className="muted">{recruiter ? "Not evidenced in code" : "Not yet evidenced in code"}</span>}
+                  {claim.status === "corroborated" ? (
+                    claim.evidence?.url
+                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> Corroborated by counted evidence <ExternalLink size={10} /></a>
+                      : <span className="flag-ok"><CheckCircle2 size={11} /> Corroborated by counted evidence</span>
+                  ) : (
+                    <span className="muted">{recruiter ? "Not corroborated by counted evidence" : "Not yet corroborated by counted evidence"}</span>
+                  )}
                   <small className="muted">“{claim.quote}”</small>
                 </li>
               ))}
