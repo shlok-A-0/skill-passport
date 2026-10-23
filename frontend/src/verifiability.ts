@@ -1,7 +1,7 @@
-import { EARLIER_SOURCE_KINDS, type IntegritySignal, type Passport } from "./api";
-import { countRequirementsMet, type RequirementLike } from "./requirements";
-import { latestPerStudent } from "./latestPerStudent";
-export { latestPerStudent } from "./latestPerStudent";
+import { EARLIER_SOURCE_KINDS, NOT_WRITTEN_KIND, type IntegritySignal, type Passport } from "./api.ts";
+import { countRequirementsMet, type RequirementLike } from "./requirements.ts";
+import { latestPerStudent } from "./latestPerStudent.ts";
+export { latestPerStudent } from "./latestPerStudent.ts";
 
 export type Verifiability = {
   tier: "High" | "Medium" | "Low" | "Not checked";
@@ -11,6 +11,8 @@ export type Verifiability = {
   codeSkills: number;
   /** Citations not counted because they match code that appeared earlier elsewhere. */
   earlierSources: number;
+  /** Citations not counted because none of the cited lines were last changed by the candidate. */
+  notWritten: number;
 };
 
 // Signals that point at the code itself not being the student's are weighted as serious.
@@ -43,6 +45,7 @@ export function verifiability(passport: Passport): Verifiability {
   const warnings = all.filter(({ signal }) => signal.status === "warn");
   const passed = all.length - warnings.length;
   const earlierSources = passport.rejected_claims.filter((item) => EARLIER_SOURCE_KINDS.has(item.kind ?? "")).length;
+  const notWritten = passport.rejected_claims.filter((item) => item.kind === NOT_WRITTEN_KIND).length;
   let tier: Verifiability["tier"] = "Not checked";
   if (all.length) {
     const serious = warnings.some(({ signal }) => SERIOUS.has(signal.id));
@@ -50,12 +53,26 @@ export function verifiability(passport: Passport): Verifiability {
     else if (serious || warnings.length / all.length > 0.25) tier = "Low";
     else tier = "Medium";
   }
-  if (earlierSources) tier = "Low";
-  return { tier, passed, checked: all.length, warnings, codeSkills, earlierSources };
+  // Excluded citations leave the count, so they must still decide the tier.
+  if (earlierSources || notWritten) tier = "Low";
+  return { tier, passed, checked: all.length, warnings, codeSkills, earlierSources, notWritten };
 }
 
 export function earlierSourcesText(count: number): string {
   return `${count} citation${count === 1 ? "" : "s"} matched earlier public sources`;
+}
+
+export function notWrittenText(count: number): string {
+  return `${count} citation${count === 1 ? "" : "s"} not written by the candidate`;
+}
+
+/** Citations excluded from the passport (earlier source or not written); each needs a human look. */
+export function excludedCitations(verify: Verifiability): number {
+  return verify.earlierSources + verify.notWritten;
+}
+
+export function excludedCitationsText(count: number): string {
+  return `${count} excluded citation${count === 1 ? "" : "s"} to review`;
 }
 
 export function requirementsMet(passport: Passport, requirements: RequirementLike[]) {

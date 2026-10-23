@@ -7,7 +7,7 @@ import EvidencePanel from "../components/EvidencePanel";
 import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims from "../components/RejectedClaims";
-import { earlierSourcesText, verifiability } from "../verifiability";
+import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
 
 const levelOrder: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 
@@ -52,6 +52,7 @@ export default function RecruiterEvidence() {
             Candidate for <strong>{passport.target_role}</strong> ·{" "}
             <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>
             {verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}
+            {verify.notWritten > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {notWrittenText(verify.notWritten)}</span>}
           </p>
           <CoverageSummary coverage={passport.coverage} />
           <IdentityChecks signals={passport.identity} />

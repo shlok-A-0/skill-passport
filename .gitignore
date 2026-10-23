@@ -6,6 +6,8 @@ backend/**/__pycache__/
 backend/.pytest_cache/
 backend/skill_passport.db
 backend/skill_passport.db-*
+backend/skill_passport.backup*.db
+backend/skill_passport.backup*.db-*
 backend/cache/*
 !backend/cache/.gitkeep
 frontend/node_modules/

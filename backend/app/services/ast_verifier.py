@@ -3,13 +3,39 @@ import re
 from typing import Any
 
 
+def _signature_in_text(signature: str, text: str) -> bool:
+    """Case-insensitive; a signature starting with a letter must start a word ("SELECT " is not in "deselect ")."""
+    prefix = r"(?<![A-Za-z0-9_])" if signature[:1].isalnum() or signature[:1] == "_" else ""
+    return re.search(prefix + re.escape(signature), text, flags=re.IGNORECASE) is not None
+
+
+def _call_argument_strings(call: ast.Call):
+    """String literals passed to a call, including nested calls and concatenations:
+    execute(text("SELECT ...")), read_sql("SELECT " + table), connect(f"postgresql://{host}").
+    A lambda's body is not passed to the call (register(lambda: "SELECT ...") is not evidence);
+    calls inside it are checked on their own."""
+    pending: list[ast.AST] = [*call.args, *(keyword.value for keyword in call.keywords)]
+    while pending:
+        child = pending.pop()
+        if isinstance(child, ast.Lambda):
+            continue
+        if isinstance(child, ast.Constant) and isinstance(child.value, str):
+            yield child
+        pending.extend(ast.iter_child_nodes(child))
+
+
 def python_ast_has_signature(
     source_content: str,
     start_line: int,
     end_line: int,
     signatures: list[str],
+    string_arguments: bool = False,
 ) -> bool | None:
     """Check if the cited line range (with +-5 margin) in a Python file contains AST-level evidence.
+
+    With `string_arguments`, a signature also counts inside a string literal that is an argument to a
+    call (SQL in text(...)/execute(...), connection URLs in connect(...)); comments, docstrings and
+    other bare strings still never count.
 
     Returns:
         True: AST found valid syntax node matching the signature.
@@ -60,6 +86,14 @@ def python_ast_has_signature(
 
         # 3. Function / Constructor calls (e.g. Flask(), FastAPI(), APIRouter())
         if isinstance(node, ast.Call):
+            if string_arguments:
+                for literal in _call_argument_strings(node):
+                    literal_start = getattr(literal, "lineno", start_l)
+                    literal_end = getattr(literal, "end_lineno", literal_start)
+                    if literal_start <= window_end and literal_end >= window_start and any(
+                        _signature_in_text(sig, literal.value) for sig in signatures
+                    ):
+                        return True
             call_id = ""
             if isinstance(node.func, ast.Name):
                 call_id = node.func.id

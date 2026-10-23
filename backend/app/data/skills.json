@@ -282,7 +282,8 @@
       "sql"
     ],
     "file_extensions": [
-      ".sql"
+      ".sql",
+      ".py"
     ],
     "dependency_names": [],
     "code_signatures": [

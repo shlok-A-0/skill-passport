@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
-import { earlierSourcesText, latestPerStudent, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
+import { earlierSourcesText, excludedCitations, excludedCitationsText, latestPerStudent, notWrittenText, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
 function VerifyPill({ verify }: { verify: Verifiability }) {
   return (
@@ -118,6 +118,7 @@ export default function PlacementCell() {
       "Checks Passed",
       "Checks Total",
       "Earlier Sources",
+      "Not Written By Candidate",
       "Warnings Count",
     ];
     const csvRows = [headers.join(",")];
@@ -136,6 +137,7 @@ export default function PlacementCell() {
           row.verify.passed,
           row.verify.checked,
           row.verify.earlierSources,
+          row.verify.notWritten,
           row.verify.warnings.length,
         ].join(",")
       );
@@ -201,7 +203,9 @@ export default function PlacementCell() {
                       ? "Authorship checks have not run on this passport yet; use Re-check."
                       : best.verify.warnings.length
                         ? `${best.verify.warnings.length} authorship signal(s) need a human look.`
-                        : `All ${best.verify.checked} authorship checks passed.`}
+                        : excludedCitations(best.verify)
+                          ? `${excludedCitationsText(excludedCitations(best.verify))}.`
+                          : `All ${best.verify.checked} authorship checks passed.`}
                   </p>
                 </div>
                 <Link className="best-link" to={`/recruiter/${best.passport.id}`}>Recruiter view <ArrowUpRight size={14} /></Link>
@@ -218,13 +222,16 @@ export default function PlacementCell() {
                       {!row.passport.coverage && <div className="unavailable-note">{COVERAGE_MISSING}</div>}</td>
                     <td>{row.mustMet} of {row.mustTotal}</td>
                     <td>{row.met} of {requirements.length}</td>
-                    <td><VerifyPill verify={row.verify} />{row.verify.earlierSources > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(row.verify.earlierSources)}</div>}</td>
+                    <td><VerifyPill verify={row.verify} />{row.verify.earlierSources > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(row.verify.earlierSources)}</div>}{row.verify.notWritten > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {notWrittenText(row.verify.notWritten)}</div>}</td>
                     <td className="rank-flags">
                       {row.verify.tier === "Not checked" ? <span className="muted">Run Re-check to collect signals</span>
-                        : row.verify.warnings.length === 0 ? <span className="flag-ok"><ShieldCheck size={12} /> None</span>
-                          : row.verify.warnings.slice(0, 2).map(({ signal, where }) => (
-                            <span className="flag-warn" key={`${signal.id}-${where}`} title={signal.detail}><AlertTriangle size={11} /> {signal.label}: <i>{where}</i></span>
-                          ))}
+                        : row.verify.warnings.length === 0 && !excludedCitations(row.verify) ? <span className="flag-ok"><ShieldCheck size={12} /> None</span>
+                          : <>
+                            {excludedCitations(row.verify) > 0 && <span className="flag-warn"><AlertTriangle size={11} /> {excludedCitationsText(excludedCitations(row.verify))}</span>}
+                            {row.verify.warnings.slice(0, 2).map(({ signal, where }) => (
+                              <span className="flag-warn" key={`${signal.id}-${where}`} title={signal.detail}><AlertTriangle size={11} /> {signal.label}: <i>{where}</i></span>
+                            ))}
+                          </>}
                       {row.verify.warnings.length > 2 && <span className="muted">+{row.verify.warnings.length - 2} more</span>}
                     </td>
                     <td><Link className="view-evidence-link" to={`/recruiter/${row.passport.id}`}>Recruiter view</Link></td>

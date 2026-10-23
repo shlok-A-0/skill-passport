@@ -2,7 +2,7 @@ from typing import Any
 
 from app.services.coverage import coverage_phrase
 from app.services.framework import get_roles, skill_map
-from app.services.verifier import LEVEL_ORDER
+from app.services.verifier import LEVEL_ORDER, reachable_min_level
 
 
 def _get_role(role: str | dict[str, Any]) -> dict[str, Any]:
@@ -35,7 +35,8 @@ def match_role(
         student = student_skills.get(skill_id)
         level = student.get("level", "Claimed") if student else None
         has_evidence = bool(student and student.get("evidence") and level != "Claimed")
-        minimum = requirement["min_level"]
+        # A requirement above the highest level the skill can reach could never be met.
+        minimum = reachable_min_level(skill_id, requirement["min_level"])
         if not has_evidence:
             status = "missing"
             # "Not found" in a sample of files, not "lacks the skill".

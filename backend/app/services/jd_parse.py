@@ -16,7 +16,7 @@ from app.services.claim_validation import validate_proposals
 from app.services.framework import get_skills
 from app.services.gemini import GeminiOutputError, GeminiUnavailableError, propose_json_items
 from app.services.resume_parse import COMMON_WORDS, skill_terms, term_span
-from app.services.verifier import LEVEL_ORDER
+from app.services.verifier import LEVEL_ORDER, reachable_min_level
 
 TITLE_MAX_CHARS = 120
 DESCRIPTION_MIN_CHARS = 50
@@ -64,11 +64,13 @@ def default_importance(quote: str) -> str:
     return "must" if IMPORTANCE_WORDS.search(quote or "") else "nice"
 
 
-def min_level_for(importance: str, quote: str) -> str:
-    """Fixed rule, never the AI: nice -> Used; must -> Applied; must + a testing word -> Demonstrated."""
+def min_level_for(importance: str, quote: str, skill_id: str = "") -> str:
+    """Fixed rule, never the AI: nice -> Used; must -> Applied; must + a testing word -> Demonstrated,
+    capped at the highest level the skill can reach (Unit Testing: Applied)."""
     if importance != "must":
         return "Used"
-    return "Demonstrated" if TESTING_WORDS.search(quote or "") else "Applied"
+    level = "Demonstrated" if TESTING_WORDS.search(quote or "") else "Applied"
+    return reachable_min_level(skill_id, level)
 
 
 def _strictness(item: dict[str, Any]) -> tuple[bool, int]:
@@ -343,7 +345,8 @@ def extract_requirements(title: str, description: str) -> dict[str, Any]:
         quote = item["quote"] if isinstance(item.get("quote"), str) else ""
         if item.get("importance") not in ("must", "nice"):
             item["importance"] = default_importance(quote)
-        item["min_level"] = min_level_for(item["importance"], quote)
+        skill_id = item["skill_id"] if isinstance(item.get("skill_id"), str) else ""
+        item["min_level"] = min_level_for(item["importance"], quote, skill_id)
 
     kept, dropped = validate_proposals(
         candidates,
