@@ -646,6 +646,13 @@ def test_flag_off_hides_the_feature(tmp_path, monkeypatch) -> None:
 
 
 
+def test_skill_mention_inside_heading_does_not_preserve_requirements_section() -> None:
+    text = "Requirements:\nPython\nOur Python stack\nRedis"
+    matches = jd_parse.strongest_exact_matches(text)
+    assert matches["python"][1] == "must"
+    assert matches["redis"][1] == "nice"
+
+
 def test_plain_skill_lines_keep_requirements_section_when_ai_unavailable(monkeypatch) -> None:
     _gemini(monkeypatch, GeminiUnavailableError("offline"))
     description = "Requirements:\nPython\nSQL\nDocker\n" + ("Build reliable services. " * 3)
