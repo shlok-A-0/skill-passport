@@ -1,6 +1,7 @@
-import { shouldRememberGenerationJob } from "./jobPolling";
+import { shouldRememberGenerationJob } from "./jobPolling.ts";
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// `?.` so the module also loads under Node's test runner, where Vite's import.meta.env is absent.
+export const API_BASE = import.meta.env?.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export type Evidence = {
   type: "code" | "dependency" | "config" | "commit";
