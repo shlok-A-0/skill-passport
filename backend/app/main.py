@@ -5,7 +5,6 @@ import ipaddress
 import json
 import logging
 import secrets
-import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -40,7 +39,7 @@ from app.config import (
 from app.routes.debug import router as debug_router
 from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
-from app.services.github_ingest import GitHubIngestError, validate_github_username
+from app.services.github_ingest import validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
 from app.services.jd_parse import (
     CUSTOM_ROLE_PREFIX,
@@ -50,9 +49,7 @@ from app.services.jd_parse import (
 )
 from app.services.jobs import (
     fail_job,
-    get_active_jobs_count,
     get_job,
-    is_active_job_running_for,
     reserve_job,
 )
 from app.services.json_cache import prune_json_cache
@@ -656,6 +653,10 @@ async def create_passport(
         except OwnershipError as exc:
             fail_job(job_id, str(exc))
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except Exception as exc:
+            # Release the reserved slot; otherwise the username stays "in progress" until the lease expires.
+            fail_job(job_id, f"Ownership check failed: {exc}")
+            raise
 
     background_tasks.add_task(
         run_passport_job,

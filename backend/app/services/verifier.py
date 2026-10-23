@@ -8,7 +8,6 @@ from urllib.parse import quote
 
 from app.config import VERIFIER_VERSION
 from app.services.ast_verifier import (
-    check_test_has_assertions,
     js_has_signature,
     python_ast_has_signature,
     test_targets_implementation_with_assertions,

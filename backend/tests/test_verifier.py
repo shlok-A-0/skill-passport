@@ -563,6 +563,24 @@ def test_copy_check_compares_when_the_files_first_appeared(monkeypatch) -> None:
     assert copy_check.LABEL == "Earlier public source"
 
 
+def test_copy_check_date_lookup_rate_limit_is_unknown_not_fatal(monkeypatch) -> None:
+    from app.services import copy_check
+    from app.services.github_ingest import GitHubRateLimitError
+
+    def rate_limited(*_args, **_kwargs):
+        raise GitHubRateLimitError("GitHub API rate limit exceeded (remaining=0)")
+
+    monkeypatch.setattr(
+        copy_check, "_search",
+        lambda client, line, username: {"total": 1, "matches": [{"repo": "x/y", "url": "u", "path": "a.py"}]},
+    )
+    monkeypatch.setattr(copy_check, "oldest_commit_date", rate_limited)
+    evidence = {"snippet": "    return calculate_invoice_total(order_items, tax_rate)"}
+    signal = copy_check.copy_signal(evidence, object(), "student", "2024-06-01T00:00:00Z")
+    # The advisory check reports an undetermined order instead of failing the passport.
+    assert signal["status"] == "warn" and not signal.get("earlier_source")
+
+
 def test_ai_chat_leftover_is_flagged_with_its_line() -> None:
     ingestion = sample_ingestion()
     source = ingestion["repos"][0]["source_files"]["app.py"]
