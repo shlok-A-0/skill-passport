@@ -154,6 +154,17 @@ def _line_share(source: dict[str, Any], start: int, end: int, username: str) -> 
     return identified == total, identified == total and yours / total >= 0.5
 
 
+def _has_candidate_authored_lines(source: dict[str, Any], username: str, line_count: int) -> bool:
+    """Whether current line blame attributes any content in this file to the candidate."""
+    if not username:
+        return False
+    return any(
+        login and login.casefold() == username.casefold()
+        and min(line_count, last) >= max(1, first)
+        for first, last, login in (source.get("blame") or [])
+    )
+
+
 def _excluded_files(verified: dict[str, Any]) -> set[tuple[str, str]]:
     excluded = set()
     for item in verified.get("rejected_claims", []):
@@ -518,7 +529,7 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
             continue
         file_lines = source.get("lines") or text.splitlines()
         attribution_complete, _candidate_majority = _line_share(source, 1, max(1, len(file_lines)), username)
-        if not attribution_complete:
+        if not attribution_complete or not _has_candidate_authored_lines(source, username, len(file_lines)):
             uncertain.update(row[0] for row in profile)
             continue
         for competency, _label, _weight, _foundation in profile:

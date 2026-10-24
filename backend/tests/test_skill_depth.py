@@ -174,6 +174,15 @@ def test_missing_line_blame_cannot_establish_zero_depth_or_coverage():
     assert all(row["status"] == "insufficient_evidence" for row in result["competencies"])
 
 
+def test_file_with_no_current_candidate_lines_cannot_establish_zero_depth_or_coverage():
+    data = repo({"src/a.py": "x = 1\n"})
+    data["source_files"]["src/a.py"]["blame"] = [[1, 1, "collaborator"]]
+    result = run("python", data)
+    assert result["score"] is None
+    assert result["coverage"]["percent"] == 0
+    assert all(row["status"] == "insufficient_evidence" for row in result["competencies"])
+
+
 def test_fastapi_profile_ignores_flask_decorators_and_async_handlers():
     code = "from flask import Flask\napp = Flask(__name__)\n@app.get('/')\nasync def route():\n    try:\n        return {}\n    except Exception:\n        return {}\n"
     result = run("fastapi", repo({"app.py": code}))
