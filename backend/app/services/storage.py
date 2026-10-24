@@ -198,6 +198,69 @@ def initialize_storage() -> None:
             )
             """
         )
+        # Recruiter sign-in: a recruiter key is exchanged once for a short-lived session token;
+        # only the token's hash is stored.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recruiter_sessions (
+                token_hash TEXT PRIMARY KEY,
+                recruiter_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """
+        )
+        # Private recruiter interview sessions. Kept out of the passport payload, so no student
+        # endpoint can return them. Outcomes are human observations and never change evidence.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_sessions (
+                id TEXT PRIMARY KEY,
+                passport_id TEXT NOT NULL,
+                recruiter_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source_revision TEXT,
+                error TEXT,
+                payload TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_sessions_idempotency
+            ON interview_sessions (recruiter_id, passport_id, idempotency_key)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_questions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                skill_id TEXT NOT NULL,
+                question_type TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interview_questions_session ON interview_questions (session_id, position)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_assessments (
+                question_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                assessor_id TEXT NOT NULL,
+                assessed_at TEXT NOT NULL
+            )
+            """
+        )
     _initialized_dbs.add(db_key)
 
 
@@ -769,3 +832,205 @@ def check_storage_rate_limit(key: str, max_requests: int, window_seconds: float)
             (key, now),
         )
         return True
+
+
+def create_recruiter_session(recruiter_id: str, token_hash: str, ttl_seconds: int) -> str:
+    """Store a sign-in session (token hash only) and prune expired ones; returns expires_at."""
+    initialize_storage()
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+    with _connect() as connection:
+        connection.execute("DELETE FROM recruiter_sessions WHERE expires_at < ?", (now.isoformat(),))
+        connection.execute(
+            "INSERT INTO recruiter_sessions (token_hash, recruiter_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token_hash, recruiter_id, now.isoformat(), expires_at),
+        )
+    return expires_at
+
+
+def get_recruiter_session(token_hash: str) -> str | None:
+    """The recruiter id for an unexpired session token hash."""
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT recruiter_id FROM recruiter_sessions WHERE token_hash = ? AND expires_at > ?",
+            (token_hash, datetime.now(timezone.utc).isoformat()),
+        ).fetchone()
+    return row["recruiter_id"] if row else None
+
+
+def delete_recruiter_session(token_hash: str) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute("DELETE FROM recruiter_sessions WHERE token_hash = ?", (token_hash,))
+
+
+# A session still "generating" after this long was interrupted (for example by a restart).
+INTERVIEW_GENERATION_TIMEOUT_SECONDS = 300
+INTERRUPTED_INTERVIEW_ERROR = "Generation was interrupted. Start a new interview set."
+
+
+def _interview_session_row(row: sqlite3.Row) -> dict[str, Any]:
+    session = dict(row)
+    session["payload"] = json.loads(session["payload"] or "{}")
+    if session["status"] == "generating":
+        started = datetime.fromisoformat(session["created_at"])
+        if datetime.now(timezone.utc) - started > timedelta(seconds=INTERVIEW_GENERATION_TIMEOUT_SECONDS):
+            session["status"] = "failed"
+            session["error"] = INTERRUPTED_INTERVIEW_ERROR
+    return session
+
+
+def start_interview_session(
+    passport_id: str, recruiter_id: str, idempotency_key: str, source_revision: str | None
+) -> tuple[dict[str, Any], str]:
+    """Reserve a session row before calling the model.
+
+    Returns (session, outcome): "created" for a new reservation, "existing" when this recruiter
+    already used the idempotency key for this passport (a retry or double submit), or "busy"
+    when another set for this passport is still being generated by the same recruiter.
+    """
+    initialize_storage()
+    now = datetime.now(timezone.utc)
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        existing = connection.execute(
+            """
+            SELECT * FROM interview_sessions
+            WHERE recruiter_id = ? AND passport_id = ? AND idempotency_key = ?
+            """,
+            (recruiter_id, passport_id, idempotency_key),
+        ).fetchone()
+        if existing:
+            return _interview_session_row(existing), "existing"
+        cutoff = (now - timedelta(seconds=INTERVIEW_GENERATION_TIMEOUT_SECONDS)).isoformat()
+        busy = connection.execute(
+            """
+            SELECT * FROM interview_sessions
+            WHERE recruiter_id = ? AND passport_id = ? AND status = 'generating' AND created_at > ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (recruiter_id, passport_id, cutoff),
+        ).fetchone()
+        if busy:
+            return _interview_session_row(busy), "busy"
+        session_id = str(uuid.uuid4())
+        connection.execute(
+            """
+            INSERT INTO interview_sessions
+                (id, passport_id, recruiter_id, idempotency_key, status, created_at, updated_at, source_revision)
+            VALUES (?, ?, ?, ?, 'generating', ?, ?, ?)
+            """,
+            (session_id, passport_id, recruiter_id, idempotency_key, now.isoformat(), now.isoformat(), source_revision),
+        )
+        row = connection.execute("SELECT * FROM interview_sessions WHERE id = ?", (session_id,)).fetchone()
+    return _interview_session_row(row), "created"
+
+
+def complete_interview_session(
+    session_id: str, payload: dict[str, Any], questions: list[dict[str, Any]]
+) -> None:
+    """Save validated questions and mark the session ready, in one transaction."""
+    initialize_storage()
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        for position, question in enumerate(questions):
+            connection.execute(
+                """
+                INSERT INTO interview_questions (id, session_id, position, skill_id, question_type, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    question["id"], session_id, position, question["skill_id"],
+                    question["question_type"], json.dumps(question, ensure_ascii=False),
+                ),
+            )
+        cursor = connection.execute(
+            """
+            UPDATE interview_sessions SET status = 'ready', payload = ?, updated_at = ?, error = NULL
+            WHERE id = ? AND status = 'generating'
+            """,
+            (json.dumps(payload, ensure_ascii=False), now, session_id),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            raise RuntimeError("Cannot complete a missing or finished interview session.")
+
+
+def fail_interview_session(session_id: str, error: str) -> None:
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE interview_sessions SET status = 'failed', error = ?, updated_at = ?
+            WHERE id = ? AND status = 'generating'
+            """,
+            (error, datetime.now(timezone.utc).isoformat(), session_id),
+        )
+
+
+def get_interview_session(session_id: str) -> dict[str, Any] | None:
+    """The session with its questions (in order) and saved assessments keyed by question id."""
+    initialize_storage()
+    with _connect() as connection:
+        row = connection.execute("SELECT * FROM interview_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        questions = connection.execute(
+            "SELECT payload FROM interview_questions WHERE session_id = ? ORDER BY position", (session_id,)
+        ).fetchall()
+        assessments = connection.execute(
+            "SELECT * FROM interview_assessments WHERE session_id = ?", (session_id,)
+        ).fetchall()
+    session = _interview_session_row(row)
+    session["questions"] = [json.loads(item["payload"]) for item in questions]
+    session["assessments"] = {item["question_id"]: dict(item) for item in assessments}
+    return session
+
+
+def list_interview_sessions(passport_id: str, recruiter_id: str) -> list[dict[str, Any]]:
+    """This recruiter's sessions for one passport, newest first, with questions and assessments."""
+    initialize_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id FROM interview_sessions WHERE passport_id = ? AND recruiter_id = ?
+            ORDER BY created_at DESC, id
+            """,
+            (passport_id, recruiter_id),
+        ).fetchall()
+    return [session for row in rows if (session := get_interview_session(row["id"]))]
+
+
+def save_interview_assessment(
+    session_id: str, question_id: str, outcome: str, note: str, assessor_id: str
+) -> dict[str, Any] | None:
+    """Create or replace the outcome for one question; None if the question isn't in the session."""
+    initialize_storage()
+    assessment = {
+        "question_id": question_id,
+        "session_id": session_id,
+        "outcome": outcome,
+        "note": note,
+        "assessor_id": assessor_id,
+        "assessed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        belongs = connection.execute(
+            "SELECT 1 FROM interview_questions WHERE id = ? AND session_id = ?", (question_id, session_id)
+        ).fetchone()
+        if not belongs:
+            return None
+        connection.execute(
+            """
+            INSERT INTO interview_assessments (question_id, session_id, outcome, note, assessor_id, assessed_at)
+            VALUES (:question_id, :session_id, :outcome, :note, :assessor_id, :assessed_at)
+            ON CONFLICT(question_id) DO UPDATE SET
+                outcome = excluded.outcome, note = excluded.note,
+                assessor_id = excluded.assessor_id, assessed_at = excluded.assessed_at
+            """,
+            assessment,
+        )
+    return assessment

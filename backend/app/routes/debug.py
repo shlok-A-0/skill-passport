@@ -13,7 +13,7 @@ def require_debug_access(x_recruiter_key: str | None = Header(default=None)) -> 
     if getattr(config, "REQUIRE_RECRUITER_AUTH", False):
         # Debug endpoints must be protected when authentication is enforced
         from app.main import require_recruiter
-        require_recruiter(x_recruiter_key)
+        require_recruiter(x_recruiter_key, None)
 
 
 @router.get("/github/{username}", dependencies=[Depends(require_debug_access)])

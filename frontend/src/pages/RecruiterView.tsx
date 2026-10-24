@@ -1,11 +1,13 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, FileText, Layers, ListChecks, MessagesSquare, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
+import InterviewWorkspace from "../components/InterviewWorkspace";
 import LadderPill from "../components/LadderPill";
 import ReportsPanel from "../components/ReportsPanel";
+import SectionTabs from "../components/SectionTabs";
 import SqlDepthPanel from "../components/SqlDepthPanel";
 import SkillDepthPanel from "../components/SkillDepthPanel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
@@ -46,11 +48,22 @@ function PacketDetails({ packet, reason }: { packet: RequirementPacket; reason: 
 
 export default function RecruiterView() {
   const { id = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [passport, setPassport] = useState<Passport | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const loadVersion = useRef(0);
+
+  const section = searchParams.get("section") ?? "requirements";
+  function setSection(next: string) {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (next === "requirements") params.delete("section");
+      else params.set("section", next);
+      return params;
+    }, { replace: true });
+  }
 
   useEffect(() => {
     const version = ++loadVersion.current;
@@ -84,6 +97,14 @@ export default function RecruiterView() {
   const interviews = passport.interview_kit;
   const verify = verifiability(passport);
   const openRequests = (passport.review_requests ?? []).filter((request) => request.status === "open").length;
+  const hasReports = (passport.reports?.length ?? 0) > 0 || !!passport.portfolio;
+
+  const tabs = [
+    { id: "requirements", label: "Requirements", icon: ListChecks, count: passport.role_match.requirements.length },
+    { id: "skills", label: "Skills", icon: Layers, count: topSkills.length + claimedSkills.length },
+    { id: "interview", label: "Interview", icon: MessagesSquare, count: interviews.length },
+    { id: "reports", label: "Reports", icon: FileText, count: passport.reports?.length ?? 0 },
+  ];
 
   return (
     <div className="recruiter-page">
@@ -103,7 +124,8 @@ export default function RecruiterView() {
         </div>
       </header>
       {error && <div className="notice notice-error">{error}</div>}
-      <div className="recruiter-grid">
+      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Candidate sections" />
+      {section === "requirements" && (
         <section className="panel requirement-panel">
           <div className="panel-heading"><div><h2>Role requirements</h2></div><span className="muted">Must-have gaps first</span></div>
           <div className="requirement-list">
@@ -139,37 +161,53 @@ export default function RecruiterView() {
               );
             })}
           </div>
-          <p className="attribution-note">Attribution shows how clearly the work traces to the candidate, not their ability.</p>
         </section>
-        <aside className="recruiter-side">
-          <section className="panel verified-summary">
-            <div className="panel-heading"><div><h2>Strongest evidence</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
-            {topSkills.length ? topSkills.map((skill) => {
-              const evidence = skill.evidence.find((item) => item.type === "code") ?? skill.evidence[0];
-              const where = evidence.start_line > 0
-                ? `${evidence.repo}/${evidence.file_path} · L${evidence.start_line}–L${evidence.end_line}`
-                : `${evidence.repo}/${evidence.file_path}`;
-              const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
-              return (
-                <Link className="strength-row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
-                  <span><strong>{skillLabel(skill)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{where}</small></span>
-                  <LadderPill level={skill.level} />
-                </Link>
-              );
-            }) : <p className="muted">No evidence was found in the analysed files yet.</p>}
-          </section>
-          <section className="panel claimed-summary">
-            <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimedSkills.length}</span></div>
-            {claimedSkills.length ? (
-              <>
-                <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted.</p>
-              </>
-            ) : <p>No unverified claims in this passport.</p>}
-          </section>
-          <details className="panel interview-summary">
-            <summary><span><strong>Interview questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>
-            {interviews.length ? interviews.slice(0, 5).map((entry) => (
+      )}
+      {section === "skills" && (
+        <div className="section-columns">
+          <div className="section-col">
+            <section className="panel verified-summary">
+              <div className="panel-heading"><div><h2>Strongest evidence</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
+              {topSkills.length ? topSkills.map((skill) => {
+                const evidence = skill.evidence.find((item) => item.type === "code") ?? skill.evidence[0];
+                const where = evidence.start_line > 0
+                  ? `${evidence.repo}/${evidence.file_path} · L${evidence.start_line}–L${evidence.end_line}`
+                  : `${evidence.repo}/${evidence.file_path}`;
+                const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
+                return (
+                  <Link className="strength-row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
+                    <span><strong>{skillLabel(skill)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{where}</small></span>
+                    <LadderPill level={skill.level} />
+                  </Link>
+                );
+              }) : <p className="muted">No evidence was found in the analysed files yet.</p>}
+            </section>
+            <section className="panel claimed-summary">
+              <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimedSkills.length}</span></div>
+              {claimedSkills.length ? (
+                <>
+                  <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
+                  <p>From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted.</p>
+                </>
+              ) : <p>No unverified claims in this passport.</p>}
+            </section>
+          </div>
+          <div className="section-col">
+            <SkillDepthPanel results={passport.skill_depth} />
+            <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
+          </div>
+        </div>
+      )}
+      {section === "interview" && (
+        <div className="section-col">
+          <InterviewWorkspace passportId={passport.id} />
+          <section className="panel interview-panel practice-panel">
+            <div className="panel-heading">
+              <div><div className="eyebrow">SHOWN TO THE STUDENT FOR PRACTICE</div><h2>Student practice questions</h2></div>
+              <span className="count-tag">{interviews.length} skills</span>
+            </div>
+            <p className="muted">The candidate has seen these questions (without the answer notes). Use the private interview kit above for the interview itself.</p>
+            {interviews.length ? interviews.map((entry) => (
               <article className="interview-entry" key={entry.skill_id}>
                 <strong>{skillName(entry.skill_id)}</strong>
                 {entry.questions.map((question, index) => (
@@ -177,13 +215,15 @@ export default function RecruiterView() {
                 ))}
               </article>
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
-          </details>
-          <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" />
-          <SkillDepthPanel results={passport.skill_depth} />
-          <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
-        </aside>
-      </div>
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated link to code the candidate wrote; Used means dependencies or config. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
+          </section>
+        </div>
+      )}
+      {section === "reports" && (
+        hasReports
+          ? <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" defaultOpen />
+          : <div className="empty-state">No project reports or portfolio were attached to this passport.</div>
+      )}
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Verified levels link to the candidate's own code. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
-                                      }
+}

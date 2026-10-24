@@ -21,6 +21,7 @@ from fastapi import (
     HTTPException,
     Request,
     Query,
+    Response,
     UploadFile,
     FastAPI,
 )
@@ -44,6 +45,13 @@ from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
+from app.services.interview_sessions import (
+    OUTCOMES,
+    InterviewGenerationError,
+    build_interview_set,
+    session_view,
+    source_revision,
+)
 from app.services.jd_parse import (
     CUSTOM_ROLE_PREFIX,
     JobDescriptionError,
@@ -64,11 +72,18 @@ from app.services.skill_depth import student_skill_depth
 from app.services.storage import (
     check_storage_rate_limit,
     check_storage_ready,
+    complete_interview_session,
+    create_recruiter_session,
     create_review_request,
+    delete_recruiter_session,
+    fail_interview_session,
     get_custom_role,
+    get_interview_session,
     get_passport,
     get_passport_owner_token_hash,
+    get_recruiter_session,
     get_review_requests_by_passports,
+    list_interview_sessions,
     list_passports_page,
     list_latest_passports_page,
     list_review_requests,
@@ -77,6 +92,8 @@ from app.services.storage import (
     prune_old_rate_limits,
     reconcile_interrupted_jobs,
     save_custom_role,
+    save_interview_assessment,
+    start_interview_session,
 )
 from app.services.verifier import (
     CHECK_LABELS,
@@ -415,12 +432,50 @@ def _recruiter_id_for_key(key: str | None) -> str | None:
     return None
 
 
-def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> str:
+# A signed-in recruiter session lasts one working day; signing in again issues a new token.
+RECRUITER_SESSION_SECONDS = 8 * 3600
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    return token.strip() or None
+
+
+def _recruiter_id_for_session(authorization: str | None) -> str | None:
+    """The recruiter behind a sign-in token, only while their key is still configured, so
+    removing a key from RECRUITER_ACCOUNTS also ends that recruiter's sessions."""
+    token = _bearer_token(authorization)
+    if not token:
+        return None
+    recruiter_id = get_recruiter_session(hashlib.sha256(token.encode()).hexdigest())
+    if recruiter_id in RECRUITER_ACCOUNTS:
+        return recruiter_id
+    if recruiter_id == "local-recruiter" and not REQUIRE_RECRUITER_AUTH and RECRUITER_KEY:
+        return recruiter_id
+    return None
+
+
+def _recruiter_id_from_credentials(key: str | None, authorization: str | None) -> str | None:
+    return _recruiter_id_for_key(key) or _recruiter_id_for_session(authorization)
+
+
+def require_recruiter(
+    x_recruiter_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> str:
     """Review endpoints require valid authentication with fail-closed security.
+
+    Credentials: a sign-in token (`Authorization: Bearer`, from POST /auth/recruiter/login) or
+    the recruiter key itself (`X-Recruiter-Key`, for scripts). The role always comes from these
+    server-checked credentials, never from a request parameter.
 
     In production (or when REQUIRE_RECRUITER_AUTH is enabled):
     - If no named recruiter keys are configured, fails closed with 500 (misconfigured security).
-    - If X-Recruiter-Key header does not match, fails closed with 401.
+    - If no credential matches, fails closed with 401.
     Local development may use RECRUITER_KEY or leave recruiter routes open.
     """
     if REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS:
@@ -430,9 +485,9 @@ def require_recruiter(x_recruiter_key: str | None = Header(default=None)) -> str
         )
     if not REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS and not RECRUITER_KEY:
         return "local-recruiter"
-    recruiter_id = _recruiter_id_for_key(x_recruiter_key)
+    recruiter_id = _recruiter_id_from_credentials(x_recruiter_key, authorization)
     if not recruiter_id:
-        raise HTTPException(status_code=401, detail="A valid recruiter key is required.")
+        raise HTTPException(status_code=401, detail="Recruiter sign-in is required.")
     return recruiter_id
 
 
@@ -451,10 +506,11 @@ def _require_passport_access(
     passport_id: str,
     token: str | None,
     recruiter_key: str | None = None,
+    authorization: str | None = None,
 ) -> None:
     if _valid_token_hash(get_passport_owner_token_hash(passport_id), token):
         return
-    if _recruiter_id_for_key(recruiter_key):
+    if _recruiter_id_from_credentials(recruiter_key, authorization):
         return
     raise HTTPException(status_code=404, detail="Passport not found.")
 
@@ -892,8 +948,9 @@ def recheck_passport_endpoint(
     request: Request,
     x_passport_token: str | None = Header(default=None),
     x_recruiter_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict:
-    _require_passport_access(passport_id, x_passport_token, x_recruiter_key)
+    _require_passport_access(passport_id, x_passport_token, x_recruiter_key, authorization)
     check_rate_limit(request, "recheck_passport", max_requests=10, window_seconds=300)
     existing = get_passport(passport_id)
     if not existing:
@@ -930,3 +987,155 @@ def badge(passport_id: str) -> dict:
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
     return create_badge(result)
+
+
+class RecruiterLoginBody(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+
+
+def _recruiter_auth_open() -> bool:
+    """Development only: no recruiter keys at all, so recruiter routes are open (see require_recruiter)."""
+    return not REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS and not RECRUITER_KEY
+
+
+@app.post("/auth/recruiter/login")
+def recruiter_login(body: RecruiterLoginBody, request: Request) -> dict:
+    """Exchange a recruiter key for a short-lived sign-in token (only its hash is stored)."""
+    check_rate_limit(request, "recruiter_login", max_requests=10, window_seconds=600)
+    if REQUIRE_RECRUITER_AUTH and not RECRUITER_ACCOUNTS:
+        raise HTTPException(status_code=500, detail="Recruiter authentication is not configured.")
+    recruiter_id = _recruiter_id_for_key(body.key.strip())
+    if not recruiter_id:
+        raise HTTPException(status_code=401, detail="That recruiter password is not valid.")
+    token = secrets.token_urlsafe(32)
+    expires_at = create_recruiter_session(
+        recruiter_id, hashlib.sha256(token.encode()).hexdigest(), RECRUITER_SESSION_SECONDS
+    )
+    return {"token": token, "role": "recruiter", "recruiter_id": recruiter_id, "expires_at": expires_at}
+
+
+@app.get("/auth/me")
+def auth_me(
+    x_recruiter_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Who is signed in. `role` is null when nobody is (200, so the sign-in probe isn't an error)."""
+    try:
+        recruiter_id = require_recruiter(x_recruiter_key, authorization)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return {"role": None, "recruiter_id": None, "auth_required": True}
+    return {"role": "recruiter", "recruiter_id": recruiter_id, "auth_required": not _recruiter_auth_open()}
+
+
+@app.post("/auth/logout")
+def recruiter_logout(authorization: str | None = Header(default=None)) -> dict:
+    token = _bearer_token(authorization)
+    if token:
+        delete_recruiter_session(hashlib.sha256(token.encode()).hexdigest())
+    return {"signed_out": True}
+
+
+# Recruiter interview sessions. Every route needs a recruiter credential, and a session is only
+# visible to the recruiter who created it (404 otherwise, so its existence isn't revealed).
+# Nothing here is part of the passport payload or any student response.
+
+def _owned_session(session_id: str, recruiter_id: str) -> dict[str, Any]:
+    session = get_interview_session(session_id)
+    if not session or session["recruiter_id"] != recruiter_id:
+        raise HTTPException(status_code=404, detail="Interview session not found.")
+    return session
+
+
+def _session_response(session: dict[str, Any]) -> dict[str, Any]:
+    return session_view(session, get_passport(session["passport_id"]))
+
+
+@app.get("/passport/{passport_id}/interview-sessions")
+def interview_sessions(passport_id: str, recruiter_id: str = Depends(require_recruiter)) -> dict:
+    passport = get_passport(passport_id)
+    if not passport:
+        raise HTTPException(status_code=404, detail="Passport not found.")
+    return {"items": [session_view(item, passport) for item in list_interview_sessions(passport_id, recruiter_id)]}
+
+
+@app.post("/passport/{passport_id}/interview-sessions", status_code=201)
+def create_interview_session(
+    passport_id: str,
+    request: Request,
+    response: Response,
+    recruiter_id: str = Depends(require_recruiter),
+    idempotency_key: str | None = Header(default=None, max_length=100),
+) -> dict:
+    """Generate and save a fresh private interview set without rebuilding the passport.
+
+    Retrying with the same Idempotency-Key returns the same session instead of a second set.
+    A failed generation is saved as failed (no questions) and returned as 503; retry with a new key.
+    """
+    passport = get_passport(passport_id)
+    if not passport:
+        raise HTTPException(status_code=404, detail="Passport not found.")
+    check_rate_limit(request, "interview_session", max_requests=12, window_seconds=600)
+    key = (idempotency_key or "").strip() or str(uuid.uuid4())
+    session, outcome = start_interview_session(passport_id, recruiter_id, key, source_revision(passport))
+    if outcome == "busy" or (outcome == "existing" and session["status"] == "generating"):
+        raise HTTPException(status_code=409, detail="An interview set for this candidate is still being generated.")
+    if outcome == "existing":
+        response.status_code = 200
+        if session["status"] == "failed":
+            raise HTTPException(status_code=503, detail=session.get("error") or "Interview generation failed.")
+        return _session_response(get_interview_session(session["id"]) or session)
+    previous = [
+        question["question"]
+        for item in list_interview_sessions(passport_id, recruiter_id)
+        for question in item.get("questions", [])
+    ]
+    try:
+        payload, questions = build_interview_set(passport, previous)
+        complete_interview_session(session["id"], payload, questions)
+    except InterviewGenerationError as exc:
+        fail_interview_session(session["id"], str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logging.getLogger(__name__).error("Interview generation failed: %s", exc.__class__.__name__)
+        fail_interview_session(session["id"], "Interview generation failed unexpectedly. Try again.")
+        raise HTTPException(status_code=500, detail="Interview generation failed unexpectedly. Try again.") from exc
+    return _session_response(_owned_session(session["id"], recruiter_id))
+
+
+@app.get("/interview-sessions/{session_id}")
+def interview_session(session_id: str, recruiter_id: str = Depends(require_recruiter)) -> dict:
+    return _session_response(_owned_session(session_id, recruiter_id))
+
+
+@app.get("/interview-sessions/{session_id}/summary")
+def interview_session_summary(session_id: str, recruiter_id: str = Depends(require_recruiter)) -> dict:
+    return _session_response(_owned_session(session_id, recruiter_id))["summary"]
+
+
+class AssessmentBody(BaseModel):
+    outcome: str = Field(min_length=1, max_length=40)
+    note: str = Field(default="", max_length=500)
+
+
+@app.put("/interview-sessions/{session_id}/questions/{question_id}/assessment")
+def assess_interview_question(
+    session_id: str,
+    question_id: str,
+    body: AssessmentBody,
+    recruiter_id: str = Depends(require_recruiter),
+) -> dict:
+    """Record a human observation. Never changes levels, role match, depth scores or verification."""
+    session = _owned_session(session_id, recruiter_id)
+    if session["status"] != "ready":
+        raise HTTPException(status_code=409, detail="Only a ready interview set can be assessed.")
+    if body.outcome not in OUTCOMES:
+        raise HTTPException(status_code=422, detail=f"Outcome must be one of: {', '.join(OUTCOMES)}.")
+    assessment = save_interview_assessment(
+        session_id, question_id, body.outcome, body.note.strip(), recruiter_id
+    )
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Question not found in this interview session.")
+    view = _session_response(_owned_session(session_id, recruiter_id))
+    return {"assessment": assessment, "summary": view["summary"]}
