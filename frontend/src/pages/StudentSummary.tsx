@@ -62,7 +62,7 @@ export default function StudentSummary() {
       link.href = url;
       link.download = `skill-passport-${id}.json`;
       link.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (reason) {
       setDownloadError(reason instanceof Error ? reason.message : "Could not download the credential.");
     }
