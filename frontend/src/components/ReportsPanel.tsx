@@ -6,16 +6,17 @@ import type { Audience } from "./RejectedClaims";
  * Project reports and the portfolio link. Report claims are checked against counted evidence and
  * never raise a level; links to another account's repositories are shown to recruiters only.
  */
-export default function ReportsPanel({ reports = [], portfolio, audience }: {
+export default function ReportsPanel({ reports = [], portfolio, audience, defaultOpen }: {
   reports?: ProjectReport[];
   portfolio?: Portfolio;
   audience: Audience;
+  defaultOpen?: boolean;
 }) {
   if (!reports.length && !portfolio) return null;
   const recruiter = audience === "recruiter";
   const claimCount = reports.reduce((total, report) => total + report.claims.length, 0);
   return (
-    <details className="panel interview-summary reports-summary" open={!recruiter}>
+    <details className="panel interview-summary reports-summary" open={defaultOpen ?? !recruiter}>
       <summary>
         <span><strong>Project reports &amp; portfolio</strong></span>
         <span className="count-tag">{claimCount} claim{claimCount === 1 ? "" : "s"}</span>
