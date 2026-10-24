@@ -219,6 +219,45 @@ export type Passport = {
   portfolio?: Portfolio;
   /** Absent on passports built before the feature or while it is off; null when it couldn't be computed. */
   sql_depth?: SqlDepth | null;
+  /** Skill-specific, cited evidence summaries; never a proficiency estimate. */
+  skill_depth?: Record<string, SkillDepth | null>;
+};
+
+export type SkillDepthEvidence = {
+  repo: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  commit_sha: string;
+  url: string;
+  snippet: string;
+  explanation?: string;
+};
+export type SkillDepthCompetency = {
+  id: string;
+  label: string;
+  weight: number;
+  points: number;
+  status: "observed" | "not_observed" | "not_applicable" | "insufficient_evidence";
+  explanation: string;
+  evidence: SkillDepthEvidence[];
+};
+export type SkillDepth = {
+  rubric_version: string;
+  score: number | null;
+  label: string;
+  coverage: {
+    percent: number;
+    assessable_weight: number;
+    applicable_weight: number;
+    assessable_competencies: number;
+    total_competencies: number;
+    source_files_read?: number;
+    source_files_total?: number;
+    notes?: string[];
+  };
+  competencies: SkillDepthCompetency[];
+  disclaimer: string;
 };
 
 /** One cited range of SQL (or the line that calls or tests it), linking to the exact GitHub lines. */
@@ -289,7 +328,13 @@ export type CustomRole = {
   mode?: "ai" | "exact_only";
   note?: string | null;
 };
-export type Features = { custom_roles: boolean; reports: boolean; sql_depth?: boolean };
+export type Features = {
+  custom_roles: boolean;
+  reports: boolean;
+  sql_depth?: boolean;
+  skill_depth?: boolean;
+  skill_depth_profiles?: string[];
+};
 
 /** A skill a project report says was used, checked against code evidence. Never raises a level. */
 export type ReportClaim = {

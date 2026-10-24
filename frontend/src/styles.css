@@ -265,3 +265,16 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 @media (max-width: 700px) { .topbar { height: auto; min-height: 64px; padding: 10px 18px; align-items: flex-start; }.topbar nav { gap: 2px; flex-wrap: wrap; justify-content: flex-end; }.topbar nav a { padding: 7px 6px; font-size: 10px; }.topbar nav a:last-child { display: none; } footer { padding: 12px; flex-wrap: wrap; } footer span { margin-left: 8px; }.create-layout,.passport-page,.recruiter-page,.placement-page { margin-left: 18px; margin-right: 18px; }.legend-items { grid-template-columns: repeat(2,1fr); }.legend-title { flex-wrap: wrap; }.legend-title small { flex-basis: 100%; }.skill-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.passport-heading h1,.recruiter-heading h1 { font-size: 27px; }.source-summary { display: block; margin: 6px 0 0; border: 0; padding: 0; }.passport-actions,.recruiter-actions { flex-wrap: wrap; }.verification-list { grid-template-columns: 1fr; }.packet { grid-template-columns: 1fr; margin-left: 0; }.requirement-row { grid-template-columns: 18px minmax(0,1fr) auto; padding: 7px 0; }.requirement-row > .ladder-pill { grid-column: 2; justify-self: start; }.view-evidence-link { grid-column: 3; grid-row: 1; }.req-main p { white-space: normal; }.placement-stats { grid-template-columns: 1fr; }.workshop-card { grid-column: auto; }.placement-heading h1 { font-size: 27px; } }
 .topbar nav a:last-child { display: inline-block; }
 @media (max-width: 480px) { .create-intro h1 { font-size: 38px; }.skill-grid { grid-template-columns: 1fr; }.passport-page,.recruiter-page,.placement-page { margin-left: 12px; margin-right: 12px; }.legend-items { grid-template-columns: 1fr 1fr; }.match-total { width: 100%; }.recruiter-actions .button { flex: 1; }.ranking-panel .panel-heading { align-items: flex-start; flex-direction: column; }.gap-bar-label { width: 88px; font-size: 10px; } }
+/* Skill Evidence Depth stays visibly separate from the four-level evidence ladder. */
+.skill-depth-panel { display: grid; gap: 12px; }
+.skill-depth-disclaimer { margin: 0; color: var(--muted, #667085); font-size: .88rem; line-height: 1.5; }
+.skill-depth-profile { border-top: 1px solid var(--line, #e5e7eb); padding-top: 10px; }
+.skill-depth-profile > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; cursor: pointer; }
+.skill-depth-profile > summary span { font-weight: 650; }
+.skill-depth-profile > summary small { margin-left: auto; color: var(--muted, #667085); }
+.skill-depth-profile ul { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 12px; }
+.skill-depth-profile li { border-left: 2px solid var(--line, #e5e7eb); padding-left: 10px; }
+.skill-depth-profile li > div { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.skill-depth-profile li p { margin: 4px 0; color: var(--muted, #667085); font-size: .86rem; }
+.skill-depth-status { font-size: .75rem; color: var(--muted, #667085); }
+.skill-depth-citation { display: inline-flex; gap: 4px; align-items: center; margin: 3px 8px 3px 0; font-size: .78rem; }

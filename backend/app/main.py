@@ -58,6 +58,7 @@ from app.services.packets import requirement_packets
 from app.services.pipeline import run_passport_job, run_recheck_job
 from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
 from app.services.sql_depth import student_sql_depth
+from app.services.skill_depth import student_skill_depth
 from app.services.storage import (
     check_storage_rate_limit,
     check_storage_ready,
@@ -353,14 +354,22 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
             view["sql_depth"] = student_sql_depth(view["sql_depth"])
         else:
             view.pop("sql_depth")
+    if "skill_depth" in view:
+        if config.ENABLE_SKILL_DEPTH:
+            view["skill_depth"] = student_skill_depth(view["skill_depth"])
+        else:
+            view.pop("skill_depth")
     return view
 
 
 def _without_disabled_features(passport: dict[str, Any]) -> dict[str, Any]:
     """Stored results of a feature that is now switched off are not returned."""
-    if config.ENABLE_SQL_DEPTH or "sql_depth" not in passport:
-        return passport
-    return {key: value for key, value in passport.items() if key != "sql_depth"}
+    hidden = set()
+    if not config.ENABLE_SQL_DEPTH:
+        hidden.add("sql_depth")
+    if not config.ENABLE_SKILL_DEPTH:
+        hidden.add("skill_depth")
+    return {key: value for key, value in passport.items() if key not in hidden}
 
 
 def _excluded_keys(passport: dict[str, Any]) -> set[str]:
@@ -484,12 +493,18 @@ def skills() -> list[dict[str, str]]:
 
 
 @app.get("/features")
-def features() -> dict[str, bool]:
+def features() -> dict[str, Any]:
     """Optional features the frontend shows only when enabled."""
     return {
         "custom_roles": config.ENABLE_CUSTOM_ROLES,
         "reports": config.ENABLE_REPORTS,
         "sql_depth": config.ENABLE_SQL_DEPTH,
+        "skill_depth": config.ENABLE_SKILL_DEPTH,
+        "skill_depth_profiles": (
+            (["sql"] if config.ENABLE_SQL_DEPTH else [])
+            + ["python", "react", "fastapi", "docker", "git", "unit-testing", "scikit-learn"]
+            if config.ENABLE_SKILL_DEPTH else []
+        ),
     }
 
 

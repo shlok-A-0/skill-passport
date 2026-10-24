@@ -638,14 +638,18 @@ SKILLS = [{"skill_id": "sql", "name": "SQL", "level": "Used", "certified": False
 def test_pipeline_computes_sql_depth_without_changing_levels_or_the_match(monkeypatch) -> None:
     _stub_pipeline(monkeypatch, rich_repos(), SKILLS)
     monkeypatch.setattr(config, "ENABLE_SQL_DEPTH", True)
+    monkeypatch.setattr(config, "ENABLE_SKILL_DEPTH", True)
     on = _build()
     monkeypatch.setattr(config, "ENABLE_SQL_DEPTH", False)
     off = _build()
     assert on["sql_depth"]["score"] >= 70
     assert "sql_depth" not in off
+    assert on["skill_depth"]["sql"]["score"] == on["sql_depth"]["score"]
+    assert "sql" not in off["skill_depth"]
     for key in ("skills", "role_match", "rejected_claims", "verifier_version"):
         assert on[key] == off[key]
     assert on["skills"][0]["level"] == "Used"
+    assert on["skill_depth"]["sql"]["score"] == on["sql_depth"]["score"]
 
 
 def test_flag_off_hides_stored_results_and_the_feature(tmp_path, monkeypatch) -> None:

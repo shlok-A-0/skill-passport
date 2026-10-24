@@ -1,0 +1,618 @@
+"""Deterministic, citation-backed summaries of skill evidence in sampled repositories.
+
+These are evidence summaries, not proficiency estimates. Signals are capped and only come
+from candidate-attributed, non-fork files that have not been excluded by verification.
+"""
+from __future__ import annotations
+
+import ast
+import copy
+import json
+import logging
+import re
+from pathlib import PurePosixPath
+from typing import Any
+from urllib.parse import quote
+
+from app.services.sql_depth import safe_sql_depth
+
+logger = logging.getLogger(__name__)
+DISCLAIMER = (
+    "Skill Evidence Depth summarizes patterns found in analyzed repository files. "
+    "It is not a measure of overall proficiency; missing patterns do not mean the skill is absent."
+)
+MIN_COVERAGE = 60
+MIN_COMPETENCIES = 3
+
+# (id, label, weight, foundational); weights total 100 in each profile.
+PROFILES: dict[str, list[tuple[str, str, int, bool]]] = {
+    "python": [
+        ("structure", "Functions and modular structure", 25, True),
+        ("data", "Data handling and transformation", 20, True),
+        ("errors", "Error handling", 20, True),
+        ("interfaces", "Reusable interfaces and abstractions", 20, False),
+        ("robustness", "Input validation and defensive behavior", 15, False),
+    ],
+    "react": [
+        ("components", "Reusable components", 25, True),
+        ("state", "State and event handling", 25, True),
+        ("composition", "Component composition and props", 20, True),
+        ("effects", "Effects and lifecycle boundaries", 15, False),
+        ("accessibility", "Accessible interaction signals", 15, False),
+    ],
+    "fastapi": [
+        ("routes", "Route design and HTTP behavior", 25, True),
+        ("validation", "Request and response validation", 25, True),
+        ("dependencies", "Dependency injection", 20, True),
+        ("errors", "Explicit error handling", 15, False),
+        ("async", "Async endpoint behavior", 15, False),
+    ],
+    "docker": [
+        ("build", "Explicit image build stages", 25, True),
+        ("runtime", "Runtime and process configuration", 20, True),
+        ("security", "Least-privilege runtime signals", 20, True),
+        ("health", "Health checks and readiness", 15, False),
+        ("compose", "Service orchestration", 20, False),
+    ],
+    "git": [
+        ("authored", "Candidate-authored repository changes", 30, True),
+        ("breadth", "Changes across distinct project files", 25, True),
+        ("history", "Usable commit history", 20, True),
+        ("config", "Repository collaboration configuration", 15, False),
+        ("workflow", "Workflow-linked changes", 10, False),
+    ],
+    "unit-testing": [
+        ("behavior", "Behavior-focused assertions", 25, True),
+        ("cases", "Multiple test cases", 20, True),
+        ("negative", "Failure and boundary cases", 20, True),
+        ("isolation", "Test isolation and controlled dependencies", 20, False),
+        ("targeting", "Tests linked to analyzed source", 15, False),
+    ],
+    "scikit-learn": [
+        ("estimator", "Estimator use and fit/predict flow", 25, True),
+        ("split", "Held-out validation", 25, True),
+        ("preprocessing", "Preprocessing and feature preparation", 20, True),
+        ("pipeline", "Leakage-aware pipelines or cross-validation", 20, False),
+        ("metrics", "Explicit evaluation metrics", 10, False),
+    ],
+}
+
+PATTERNS: dict[str, dict[str, tuple[str, ...]]] = {
+    "python": {
+        "structure": (r"^\s*(?:async\s+)?def\s+\w+\s*\(", r"^\s*class\s+\w+"),
+        "data": (r"\b(?:for|yield)\b", r"\.(?:map|filter|groupby|sort_values|apply)\s*\("),
+        "errors": (r"\btry\s*:", r"\bexcept\b"),
+        "interfaces": (r"^\s*@(?:dataclass|property)", r"^\s*class\s+\w+"),
+        "robustness": (r"\b(?:isinstance|assert)\s*\(", r"\braise\s+(?:ValueError|TypeError|KeyError)"),
+    },
+    "react": {
+        "components": (r"\bfunction\s+[A-Z]\w*\s*\(", r"\bconst\s+[A-Z]\w*\s*=\s*(?:\([^)]*\)|\w+)\s*=>"),
+        "state": (r"\buseState\s*\(", r"\bon(?:Click|Change|Submit)\s*="),
+        "composition": (r"\bchildren\b", r"<[A-Z]\w+[\s/>]", r"\bprops\s*\."),
+        "effects": (r"\buseEffect\s*\(", r"\buseMemo\s*\("),
+        "accessibility": (r"\b(?:aria-label|aria-describedby|role)\s*=", r"<label\b", r"\b(?:htmlFor|tabIndex)\s*="),
+    },
+    "fastapi": {
+        "routes": (r"@\w+\.(?:get|post|put|patch|delete|api_route)\s*\(",),
+        "validation": (r"\b(?:BaseModel|Field|Query|Path|Body)\b", r"->\s*(?:\w+Response|\w+Model)"),
+        "dependencies": (r"\bDepends\s*\(",),
+        "errors": (r"\bHTTPException\s*\(", r"\b(?:try\s*:|except\s+\w+)"),
+        "async": (r"async\s+def\s+\w+", r"\bawait\s+"),
+    },
+    "docker": {
+        "build": (r"(?im)^\s*FROM\s+.+", r"(?im)^\s*(?:COPY|ADD|RUN)\s+.+"),
+        "runtime": (r"(?im)^(?:WORKDIR|CMD|ENTRYPOINT|EXPOSE)\s+.+",),
+        "security": (r"(?im)^USER\s+(?!root\b|0\b)\S+",),
+        "health": (r"(?im)^HEALTHCHECK\s+.+",),
+        "compose": (r"(?m)^\s{0,4}services\s*:", r"(?m)^\s{2,}healthcheck\s*:"),
+    },
+    "unit-testing": {
+        "behavior": (r"\b(?:assert\s+|assertEqual\s*\(|expect\s*\(|should\s*\(|assertThat\s*\()",),
+        "cases": (r"\b(?:def\s+test_\w+|it\s*\(|test\s*\(|pytest\.mark\.parametrize|parameterized)\b",),
+        "negative": (r"\b(?:raises\s*\(|assertRaises\s*\(|toThrow\s*\(|rejects\.)", r"\b(?:invalid|empty|missing|boundary|limit)\b"),
+        "isolation": (r"\b(?:monkeypatch|mock|Mock|patch\s*\(|fixture|setUp)\b",),
+        "targeting": (r"\bfrom\s+\w+\s+import\b", r"\bimport\s+\w+"),
+    },
+    "scikit-learn": {
+        "estimator": (r"\b(?:\.fit\s*\(|\.predict\s*\(|\w+Classifier\s*\(|\w+Regressor\s*\()",),
+        "split": (r"\btrain_test_split\s*\(", r"\b(?:cross_val_score|KFold|StratifiedKFold)\s*\("),
+        "preprocessing": (r"\b(?:StandardScaler|OneHotEncoder|ColumnTransformer|SimpleImputer)\s*\(", r"\b(?:get_dummies|LabelEncoder)\s*\("),
+        "pipeline": (r"\b(?:make_pipeline|Pipeline)\s*\(", r"\bGridSearchCV\s*\("),
+        "metrics": (r"\b(?:accuracy_score|f1_score|roc_auc_score|mean_squared_error|classification_report)\s*\(",),
+    },
+}
+
+
+def _line_share(source: dict[str, Any], start: int, end: int, username: str) -> tuple[bool, bool]:
+    """Return whether line history is complete and whether the candidate owns at least half."""
+    blame = source.get("blame")
+    if not blame:
+        return False, False
+    total = end - start + 1
+    identified = yours = 0
+    for first, last, login in blame:
+        overlap = max(0, min(end, last) - max(start, first) + 1)
+        if overlap and login:
+            identified += overlap
+            yours += overlap if login.casefold() == username.casefold() else 0
+    return identified == total, identified == total and yours / total >= 0.5
+
+
+def _excluded_files(verified: dict[str, Any]) -> set[tuple[str, str]]:
+    excluded = set()
+    for item in verified.get("rejected_claims", []):
+        if item.get("kind") not in {"earlier_source", "copied", "not_written_by_candidate"}:
+            continue
+        claim = item.get("claim") or {}
+        repo = claim.get("repo") or item.get("repo")
+        path = claim.get("file_path") or claim.get("path") or item.get("file_path")
+        if repo and path:
+            excluded.add((repo, path))
+    return excluded
+
+
+def _citation(repo: dict[str, Any], path: str, source: dict[str, Any], start: int,
+              end: int, explanation: str) -> dict[str, Any]:
+    lines = source.get("lines") or []
+    sha = repo.get("head_sha") or "HEAD"
+    url = "https://github.com/" + repo.get("full_name", repo["name"]) + "/blob/" + sha
+    url += "/" + quote(path, safe="/") + f"#L{start}-L{end}"
+    return {"repo": repo["name"], "file_path": path, "start_line": start, "end_line": end,
+            "commit_sha": sha, "url": url, "snippet": "\n".join(lines[start - 1:min(end, start + 4)]),
+            "explanation": explanation}
+
+
+def _eligible_sources(ingestion: dict[str, Any], verified: dict[str, Any]):
+    excluded = _excluded_files(verified)
+    username = ingestion.get("username", "")
+    for repo in ingestion.get("repos", []):
+        if repo.get("is_fork"):
+            continue
+        for path, source in (repo.get("source_files") or {}).items():
+            if (repo.get("name"), path) in excluded or not source.get("authored_shas"):
+                continue
+            lines = source.get("lines") or []
+            if lines:
+                yield repo, path, source, "\n".join(lines)
+
+
+def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, int, str]]:
+    try:
+        root = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    pydantic_models = {
+        node.name for node in ast.walk(root)
+        if isinstance(node, ast.ClassDef)
+        and any(ast.unparse(base).split(".")[-1] == "BaseModel" for base in node.bases)
+    }
+    result: list[tuple[int, int, str]] = []
+    for node in ast.walk(root):
+        name = ""
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+        matched = False
+        if skill_id == "python":
+            matched = {
+                "structure": isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
+                "data": isinstance(node, (ast.For, ast.AsyncFor, ast.Yield, ast.YieldFrom))
+                        or name in {"map", "filter", "groupby", "sort_values", "apply"},
+                "errors": isinstance(node, (ast.Try, ast.Raise)),
+                "interfaces": isinstance(node, ast.ClassDef) or
+                              (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                               and any(ast.unparse(decorator).split("(")[0].endswith(("dataclass", "property"))
+                                       for decorator in node.decorator_list)),
+                "robustness": isinstance(node, ast.Assert) or name == "isinstance" or
+                              (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                               and ast.unparse(node.exc.func) in {"ValueError", "TypeError", "KeyError"}),
+            }[competency]
+        elif skill_id == "fastapi":
+            decorators = getattr(node, "decorator_list", [])
+            decorator_names = [ast.unparse(item) for item in decorators]
+            validation_names = {"BaseModel", "Field", "Query", "Path", "Body", *pydantic_models}
+            matched = {
+                "routes": any(re.search(r"\.(?:get|post|put|patch|delete|api_route)\s*\(", item)
+                              for item in decorator_names),
+                "validation": any(
+                    isinstance(part, (ast.Name, ast.Attribute))
+                    and ast.unparse(part).split(".")[-1] in validation_names
+                    for part in ast.walk(node)
+                ),
+                "dependencies": name == "Depends",
+                "errors": name == "HTTPException" or isinstance(node, ast.Try),
+                "async": isinstance(node, (ast.AsyncFunctionDef, ast.Await)),
+            }[competency]
+        elif skill_id == "scikit-learn":
+            matched = {
+                "estimator": name in {"fit", "predict"} or name.endswith(("Classifier", "Regressor")),
+                "split": name in {"train_test_split", "cross_val_score", "KFold", "StratifiedKFold"},
+                "preprocessing": name in {"StandardScaler", "OneHotEncoder", "ColumnTransformer",
+                                          "SimpleImputer", "get_dummies", "LabelEncoder"},
+                "pipeline": name in {"make_pipeline", "Pipeline", "GridSearchCV"},
+                "metrics": name in {"accuracy_score", "f1_score", "roc_auc_score",
+                                    "mean_squared_error", "classification_report"},
+            }[competency]
+        elif skill_id == "unit-testing":
+            matched = {
+                "behavior": isinstance(node, ast.Assert) or name in {"assertEqual", "assertThat", "expect"},
+                "cases": (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"))
+                         or name in {"it", "test"},
+                "negative": name in {"raises", "assertRaises", "toThrow"} or
+                            (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                             and any(word in node.value.lower() for word in ("invalid", "empty", "missing", "boundary", "limit"))),
+                "isolation": name in {"monkeypatch", "Mock", "patch", "fixture", "setUp"},
+                "targeting": isinstance(node, (ast.Import, ast.ImportFrom)),
+            }[competency]
+        else:
+            matched = False
+        if matched and getattr(node, "lineno", None):
+            line = node.lineno
+            label = ast.unparse(node)[:120]
+            result.append((line, getattr(node, "end_lineno", line) or line, label))
+            if len(result) >= 3:
+                break
+    return result
+
+
+def _react_matches(competency: str, text: str, path: str) -> list[tuple[int, int, str]]:
+    try:
+        from tree_sitter import Language, Parser
+        import tree_sitter_typescript as ts
+        grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx")) else ts.language_typescript()
+        parser = Parser(Language(grammar))
+        tree = parser.parse(text.encode("utf-8"))
+    except (ImportError, TypeError, AttributeError):
+        return []
+    if tree.root_node.has_error:
+        return []
+    found = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        raw = node.text.decode("utf-8", errors="replace")
+        lower = raw.lower()
+        kind = node.type
+        if competency == "components":
+            matched = kind in {"function_declaration", "arrow_function", "function_expression"} and "<" in raw
+        elif competency == "state":
+            matched = (kind == "call_expression" and re.search(r"\buseState\s*\(", raw)) or (
+                kind == "jsx_attribute" and re.match(r"on(?:Click|Change|Submit)\s*=", raw))
+        elif competency == "composition":
+            matched = kind in {"jsx_element", "jsx_self_closing_element"} and (
+                bool(re.search(r"<[A-Z]\w+", raw)) or "children" in lower)
+        elif competency == "effects":
+            matched = kind == "call_expression" and re.search(r"\b(?:useEffect|useMemo)\s*\(", raw)
+        else:
+            matched = kind == "jsx_attribute" and re.match(r"(?:aria-label|aria-describedby|role|htmlFor|tabIndex)\s*=", raw)
+        if matched:
+            start = node.start_point.row + 1
+            end = max(start, node.end_point.row + (1 if node.end_point.column else 0))
+            found.append((start, end, raw.strip()[:120]))
+            if len(found) >= 3:
+                break
+        stack.extend(reversed(node.children))
+    return found
+
+
+def _matches(skill_id: str, competency: str, text: str, path: str = "") -> list[tuple[int, int, str]]:
+    if skill_id in {"python", "fastapi", "scikit-learn", "unit-testing"}:
+        return _ast_matches(skill_id, competency, text)
+    if skill_id == "react":
+        return _react_matches(competency, text, path)
+    if skill_id == "docker":
+        if PurePosixPath(path).name.lower() != "dockerfile":
+            try:
+                import yaml
+                document = yaml.safe_load(text)
+            except Exception:
+                return []
+            if not isinstance(document, dict):
+                return []
+        lines = text.splitlines()
+        patterns = PATTERNS["docker"][competency]
+        return [(index, index, line.strip()) for index, line in enumerate(lines, 1)
+                if any(re.search(pattern, line) for pattern in patterns)][:1]
+    for pattern in PATTERNS.get(skill_id, {}).get(competency, ()):
+        match = re.search(pattern, text)
+        if match:
+            start = text.count("\n", 0, match.start()) + 1
+            end = text.count("\n", 0, match.end()) + 1
+            return [(start, end, match.group(0).strip())]
+    return []
+
+
+def _docker_config_valid(path: str, text: str) -> bool:
+    if PurePosixPath(path).name.lower() == "dockerfile":
+        return any(re.match(r"(?i)^\s*(FROM|RUN|CMD|ENTRYPOINT|WORKDIR|COPY|ADD|USER|EXPOSE|ENV|ARG|HEALTHCHECK)\b", line)
+                   for line in text.splitlines())
+    try:
+        import yaml
+        value = yaml.safe_load(text)
+        return isinstance(value, dict) and isinstance(value.get("services"), dict)
+    except Exception:
+        return False
+
+
+def _package_has_react(text: str) -> bool:
+    try:
+        package = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return any("react" in (package.get(group) or {})
+               for group in ("dependencies", "devDependencies", "peerDependencies"))
+
+
+def _parse_ok(skill_id: str, path: str, text: str) -> bool:
+    if path.endswith(".py") and skill_id in {"python", "fastapi", "scikit-learn", "unit-testing"}:
+        try:
+            ast.parse(text)
+        except (SyntaxError, ValueError):
+            return False
+    if skill_id == "react" and path.lower().endswith((".tsx", ".ts", ".jsx", ".js")):
+        try:
+            from tree_sitter import Language, Parser
+            import tree_sitter_typescript as ts
+
+            grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx")) else ts.language_typescript()
+            parser = Parser(Language(grammar))
+            tree = parser.parse(text.encode("utf-8"))
+            return not tree.root_node.has_error
+        except ImportError:
+            # Missing parser is not silently treated as valid source: caller marks it unassessable.
+            return False
+    return True
+
+
+def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[str, Any]) -> dict[str, Any]:
+    profile = PROFILES[skill_id]
+    evidence: dict[str, list[dict[str, Any]]] = {row[0]: [] for row in profile}
+    assessable: set[str] = set()
+    uncertain: set[str] = set()
+    username = ingestion.get("username", "")
+    for repo, path, source, text in _eligible_sources(ingestion, verified):
+        if skill_id == "docker" and PurePosixPath(path).name.lower() != "dockerfile":
+            continue
+        suffix = PurePosixPath(path).suffix.lower()
+        if skill_id in {"python", "fastapi", "scikit-learn"} and suffix != ".py":
+            continue
+        if skill_id == "react" and suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            continue
+        if skill_id == "react":
+            package_context = any(
+                PurePosixPath(dep_path).name == "package.json" and _package_has_react(content)
+                for dep_path, content in (repo.get("dependency_contents") or {}).items()
+            )
+            source_context = bool(re.search(
+                r"(?:from\s+['\"]react['\"]|require\s*\(\s*['\"]react['\"]|"
+                r"\bReact\.|\buse(?:State|Effect|Memo|Callback)\s*\()",
+                text,
+            ))
+            if not (package_context or source_context):
+                continue
+        if skill_id == "unit-testing":
+            from app.services.github_ingest import is_test_path
+            if not is_test_path(path):
+                continue
+        if skill_id == "fastapi" and not re.search(r"\b(?:FastAPI|Depends|HTTPException)\b|@\w+\.(?:get|post|put|patch|delete)\s*\(", text):
+            # A language file without framework context cannot establish absence of FastAPI patterns.
+            continue
+        if skill_id == "scikit-learn" and not re.search(r"\b(?:sklearn|train_test_split|Pipeline|StandardScaler|Classifier|Regressor)\b", text):
+            continue
+        if skill_id == "react" and not path.lower().endswith((".tsx", ".jsx")) and not re.search(r"\b(?:React|useState|useEffect|jsx)\b|<[A-Z]\w+[\s/>]", text):
+            continue
+        if skill_id == "git":
+            continue
+        for competency, _label, _weight, _foundation in profile:
+            if skill_id == "docker" and competency == "compose":
+                continue
+            if not _parse_ok(skill_id, path, text):
+                continue
+            assessable.add(competency)
+            for start, end, signal in _matches(skill_id, competency, text, path):
+                if skill_id == "unit-testing" and competency == "targeting":
+                    from app.services.github_ingest import is_test_path
+                    target_stems = {
+                        PurePosixPath(other).stem.removesuffix("_test").removesuffix("_spec")
+                        for other in (repo.get("source_files") or {})
+                        if not is_test_path(other) and len(PurePosixPath(other).stem) >= 3
+                    }
+                    target_stems.update(
+                        PurePosixPath(other).stem.removeprefix("test_").removesuffix("_test").removesuffix("_spec")
+                        for other in (repo.get("source_files") or {})
+                        if is_test_path(other) and other != path
+                    )
+                    if not any(re.search(r"\b" + re.escape(stem) + r"\b", text, re.I)
+                               for stem in target_stems):
+                        continue
+                known, authored = _line_share(source, start, end, username)
+                if not known or not authored:
+                    uncertain.add(competency)
+                    continue
+                evidence[competency].append(_citation(
+                    repo, path, source, start, end, f"Observed {signal} in an attributable source file."
+                ))
+                break
+
+    # Dockerfiles and Compose files come from the bounded structured config reader. Existing
+    # authored_paths confirms a user commit to that path; unsupported config leaves stay unknown.
+    if skill_id == "docker":
+        for repo in ingestion.get("repos", []):
+            if repo.get("is_fork"):
+                continue
+            for path, text in (repo.get("config_contents") or {}).items():
+                basename = PurePosixPath(path).name.lower()
+                is_dockerfile = basename == "dockerfile"
+                is_compose = basename in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+                if not (repo.get("authored_paths") or {}).get(path) or not (is_dockerfile or is_compose):
+                    continue
+                if not _docker_config_valid(path, text):
+                    continue
+                for competency, _label, _weight, _foundation in profile:
+                    if (competency == "compose") != is_compose:
+                        continue
+                    assessable.add(competency)
+                    lines = text.splitlines()
+                    for start, end, signal in _matches(skill_id, competency, text, path):
+                        evidence[competency].append(_citation(
+                            repo, path, {"lines": lines}, start, end,
+                            f"Observed {signal} in a candidate-authored container configuration."
+                        ))
+                        break
+
+    # Git uses the existing author-filtered history and authored source-path metadata. Commit
+    # volume is never scored; citations point at exact files changed in user-authored commits.
+    if skill_id == "git":
+        for repo in ingestion.get("repos", []):
+            if repo.get("is_fork"):
+                continue
+            authored = [(path, src) for path, src in (repo.get("source_files") or {}).items()
+                        if src.get("authored_shas") and (repo.get("name"), path) not in _excluded_files(verified)]
+            commits = repo.get("user_commits") or []
+            if authored and commits:
+                assessable.update({"authored", "breadth", "history"})
+                for path, src in authored[:2]:
+                    ref = _citation(repo, path, src, 1, 1,
+                                    "Candidate-authored file linked to GitHub commit history; commit count is not scored.")
+                    evidence["authored"].append(ref)
+                if len(authored) >= 2:
+                    evidence["breadth"].extend(
+                        _citation(repo, path, src, 1, 1,
+                                  "A second candidate-authored project file shows repository change breadth.")
+                        for path, src in authored[:2]
+                    )
+                evidence["history"].append(evidence["authored"][0])
+            gitignore = (repo.get("config_contents") or {}).get(".gitignore")
+            ignore_lines = (gitignore or "").splitlines()
+            meaningful_ignore = next(
+                (index for index, line in enumerate(ignore_lines, 1)
+                 if line.strip() and not line.lstrip().startswith("#")),
+                None,
+            )
+            if meaningful_ignore and (repo.get("authored_paths") or {}).get(".gitignore"):
+                assessable.add("config")
+                evidence["config"].append(_citation(
+                    repo, ".gitignore", {"lines": ignore_lines}, meaningful_ignore, meaningful_ignore,
+                    "Candidate-authored repository ignore configuration is present."
+                ))
+
+    competencies = []
+    applicable = assessable_weight = earned = count = 0
+    foundational_observed = True
+    for cid, label, weight, foundational in profile:
+        applicable += weight
+        citations = evidence[cid][:3]
+        if cid not in assessable or (cid in uncertain and not citations):
+            status, points = "insufficient_evidence", 0
+            explanation = "This competency could not be assessed from attributable sampled files."
+            if foundational:
+                foundational_observed = False
+        elif citations:
+            status, points = "observed", weight
+            explanation = "A qualifying signal was found in candidate-attributed evidence."
+            assessable_weight += weight
+            earned += points
+            count += 1
+        else:
+            status, points = "not_observed", 0
+            explanation = "No qualifying signal was found in the applicable analyzed files; this does not mean the skill is absent."
+            assessable_weight += weight
+            count += 1
+            if foundational:
+                foundational_observed = False
+        competencies.append({"id": cid, "label": label, "weight": weight, "points": points,
+                             "status": status, "explanation": explanation, "evidence": citations})
+    coverage = round(100 * assessable_weight / applicable) if applicable else 0
+    enough = coverage >= MIN_COVERAGE and count >= MIN_COMPETENCIES
+    score = round(100 * earned / assessable_weight) if enough and assessable_weight else None
+    if score is None:
+        label = "Insufficient evidence"
+    elif score >= 70 and foundational_observed:
+        label = "Broad evidence"
+    elif score >= 40 or score >= 70:
+        label = "Developing evidence"
+    else:
+        label = "Foundation evidence"
+    return {"rubric_version": "pilot-1", "score": score, "label": label,
+            "coverage": {"percent": coverage, "assessable_weight": assessable_weight,
+                         "applicable_weight": applicable, "assessable_competencies": count,
+                         "total_competencies": len(profile)},
+            "competencies": competencies, "disclaimer": DISCLAIMER}
+
+
+def _sql_adapter(
+    result: dict[str, Any] | None,
+    ingestion: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not result:
+        return None
+    competencies = []
+    commit_shas = {repo.get("name"): repo.get("head_sha") or "HEAD"
+                   for repo in ingestion.get("repos", [])}
+    for key, part in result["parts"].items():
+        citations = [{
+            **{field: item[field] for field in
+               ("repo", "file_path", "start_line", "end_line", "url", "snippet")
+               if field in item},
+            "commit_sha": commit_shas.get(item.get("repo"), "HEAD"),
+        } for item in part.get("evidence", [])]
+        competencies.append({"id": key, "label": part["label"],
+                             "weight": round(part["weight"] * 100), "points": round(part["points"]),
+                             "status": "observed" if citations else "not_observed",
+                             "explanation": part["reason"], "evidence": citations})
+    return {"rubric_version": "sql-legacy", "score": result["score"], "label": result["label"],
+            "coverage": {"percent": 100, "assessable_weight": 100, "applicable_weight": 100,
+                         "assessable_competencies": len(competencies), "total_competencies": len(competencies)},
+            "competencies": competencies, "disclaimer": result.get("note", DISCLAIMER)}
+
+
+def compute_skill_depth(
+    ingestion: dict[str, Any],
+    verified: dict[str, Any],
+    sql_result: dict[str, Any] | None = None,
+    include_sql: bool = True,
+) -> dict[str, dict[str, Any] | None]:
+    """Compute the pilot profiles. A single analyzer failure never fails passport generation."""
+    results: dict[str, dict[str, Any] | None] = {}
+    for skill_id in (("sql",) if include_sql else ()) + tuple(PROFILES):
+        try:
+            results[skill_id] = (_sql_adapter(sql_result if sql_result is not None else safe_sql_depth(ingestion, verified), ingestion) if skill_id == "sql"
+                                 else _generic_profile(skill_id, ingestion, verified))
+        except Exception:
+            logger.exception("Skill depth analyzer failed for %s", skill_id)
+            results[skill_id] = None
+    source_total = sum(
+        (repo.get("coverage") or {}).get("source_files_total", len(repo.get("tree") or []))
+        for repo in ingestion.get("repos", [])
+    )
+    source_read = sum(
+        (repo.get("coverage") or {}).get("source_files_read", len(repo.get("source_files") or {}))
+        for repo in ingestion.get("repos", [])
+    )
+    notes = []
+    if source_read < source_total:
+        notes.append(f"Analyzed {source_read} of {source_total} listed source files; repository sampling may omit relevant evidence.")
+    if ingestion.get("repo_count", len(ingestion.get("repos", []))) >= 5:
+        notes.append("The analysis is bounded to the five most recently pushed eligible public repositories.")
+    for result in results.values():
+        if result:
+            result["coverage"]["source_files_read"] = source_read
+            result["coverage"]["source_files_total"] = source_total
+            result["coverage"]["notes"] = notes[:]
+    return results
+
+
+def student_skill_depth(results: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Remove recruiter-only advisory fields from citation records."""
+    if results is None:
+        return None
+    clean = copy.deepcopy(results)
+    for result in clean.values():
+        if result:
+            for competency in result.get("competencies", []):
+                for citation in competency.get("evidence", []):
+                    citation.pop("integrity", None)
+                    citation.pop("copy_check", None)
+    return clean

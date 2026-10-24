@@ -35,6 +35,7 @@ from app.services.jobs import (
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
 from app.services.sql_depth import safe_sql_depth
+from app.services.skill_depth import compute_skill_depth
 from app.services.storage import get_passport, save_passport
 from app.services.verifier import exclude_uncounted_citations, verify_claims
 
@@ -292,9 +293,16 @@ def build_passport(
         passport["sources"]["reports"] = len(reports)
     if portfolio:
         passport["portfolio"] = portfolio
+    sql_depth_result = None
     if config.ENABLE_SQL_DEPTH:
         # Read-only, after exclusion: uses the final evidence and never changes levels or the match.
-        passport["sql_depth"] = safe_sql_depth(ingestion, verified)
+        sql_depth_result = safe_sql_depth(ingestion, verified)
+        passport["sql_depth"] = sql_depth_result
+    if config.ENABLE_SKILL_DEPTH:
+        # Independent read-only profiles. Analyzer failures are isolated per skill.
+        passport["skill_depth"] = compute_skill_depth(
+            ingestion, verified, sql_depth_result, include_sql=config.ENABLE_SQL_DEPTH
+        )
     if existing:
         # Union of old and new skills, after earlier sources were excluded; a skill
         # that is absent on one side counts as Claimed (no evidence).
