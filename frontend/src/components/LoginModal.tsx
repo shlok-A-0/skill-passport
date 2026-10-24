@@ -6,11 +6,9 @@ import {
   Eye,
   EyeOff,
   GraduationCap,
-  KeyRound,
   Lock,
   Mail,
   ShieldCheck,
-  Sparkles,
   X,
 } from "lucide-react";
 import { DEMO_PROFILES, useAuth, type UserRole } from "../auth";
@@ -127,8 +125,7 @@ export default function LoginModal() {
           <div className="auth-modal-brand-badge">
             <ShieldCheck size={28} />
           </div>
-          <span className="eyebrow">PROOF, NOT CLAIMS</span>
-          <h2 id="auth-modal-title">Demo Sign-In</h2>
+          <h2 id="auth-modal-title">Demo sign-in</h2>
           <p className="auth-modal-subtitle">
             This demo switches between sample Student and Recruiter views. Recruiter sign-in is checked by the server; student profiles are samples, not real accounts.
           </p>
@@ -144,7 +141,7 @@ export default function LoginModal() {
           <div className="auth-autofill-hint" role="status">
             <CheckCircle2 size={15} />
             <span>
-              Auto-filled <strong>{lastAutoFilledRole === "recruiter" ? "Recruiter" : "Student"}</strong> credentials! Press <strong>Sign In</strong> below to continue.
+              <strong>{lastAutoFilledRole === "recruiter" ? "Recruiter" : "Student"}</strong> credentials filled. Press <strong>Sign in</strong> to continue.
             </span>
           </div>
         )}
@@ -206,13 +203,13 @@ export default function LoginModal() {
             id="auth-submit-btn"
             disabled={submitting}
           >
-            <span>Sign In / Enter</span>
+            <span>Sign in</span>
             <ArrowRight size={16} />
           </button>
         </form>
 
         <div className="auth-divider">
-          <span>Or Quick-Fill Demo Profiles</span>
+          <span>Or use a demo profile</span>
         </div>
 
         <div className="auth-demo-options">
@@ -229,18 +226,10 @@ export default function LoginModal() {
               </div>
               <div className="auth-demo-info">
                 <div className="auth-demo-title-row">
-                  <span className="auth-demo-title">Recruiter Profile</span>
-                  <span className="auth-demo-badge full-access">Full Access</span>
+                  <span className="auth-demo-title">Recruiter</span>
                 </div>
-                <span className="auth-demo-meta">Upload resumes & screen students</span>
+                <span className="auth-demo-meta">All views, including Placement Cell</span>
               </div>
-            </div>
-            <p className="auth-demo-desc">
-              Unrestricted access to all sections: Create, Student, Recruiter Evidence, and Placement Cell.
-            </p>
-            <div className="auth-demo-fill-action">
-              <Sparkles size={13} />
-              <span>Click to auto-fill recruiter credentials</span>
             </div>
           </button>
 
@@ -257,26 +246,14 @@ export default function LoginModal() {
               </div>
               <div className="auth-demo-info">
                 <div className="auth-demo-title-row">
-                  <span className="auth-demo-title">Student Profile</span>
-                  <span className="auth-demo-badge student-access">Candidate Access</span>
+                  <span className="auth-demo-title">Student</span>
                 </div>
-                <span className="auth-demo-meta">Generate & view skill passport</span>
+                <span className="auth-demo-meta">Create and view a passport</span>
               </div>
-            </div>
-            <p className="auth-demo-desc">
-              Access to Create Passport and Student Verification views. Recruiter views remain protected.
-            </p>
-            <div className="auth-demo-fill-action">
-              <Sparkles size={13} />
-              <span>Click to auto-fill student credentials</span>
             </div>
           </button>
         </div>
 
-        <div className="auth-footer-note">
-          <KeyRound size={13} />
-          <span>Clicking either profile populates credentials directly so you can test instantly.</span>
-        </div>
       </div>
     </div>
   );

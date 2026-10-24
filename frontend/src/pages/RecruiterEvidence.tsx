@@ -47,7 +47,7 @@ export default function RecruiterEvidence() {
     <div className="passport-page">
       <header className="passport-heading">
         <div>
-          <div className="eyebrow">RECRUITER EVIDENCE REVIEW · NOT SHOWN TO THE CANDIDATE</div>
+          <div className="eyebrow">EVIDENCE REVIEW · NOT SHOWN TO THE CANDIDATE</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>
             Candidate for <strong>{passport.target_role}</strong> ·{" "}
@@ -65,7 +65,7 @@ export default function RecruiterEvidence() {
       <div className="passport-grid">
         <div className="skill-column">
           <section className="panel skill-panel">
-            <div className="panel-heading"><div><div className="eyebrow">ALL SKILLS</div><h2>Evidence by skill</h2></div><span className="count-tag">{passport.skills.length} skills</span></div>
+            <div className="panel-heading"><div><h2>All skills</h2></div><span className="count-tag">{passport.skills.length} skills</span></div>
             {passport.skills.length ? (
               <div className="skill-grid">{sortedSkills(passport).map((skill) => {
                 const flags = skill.evidence.flatMap((item) => item.integrity ?? []).filter((signal) => signal.status === "warn").length;
@@ -102,4 +102,4 @@ export default function RecruiterEvidence() {
 
 function sortedSkills(passport: Passport): PassportSkill[] {
   return [...passport.skills].sort((left, right) => levelOrder[right.level] - levelOrder[left.level]);
-}
+            }

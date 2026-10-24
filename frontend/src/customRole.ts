@@ -21,7 +21,7 @@ export function jobDescriptionInputError(title: string, description: string): st
   return null;
 }
 
-export const EXACT_ONLY_NOTE = "AI suggestions unavailable right now; showing requirements found by exact matching.";
+export const EXACT_ONLY_NOTE = "AI suggestions unavailable; showing requirements found by exact matching.";
 
 /** The muted note under extracted requirements: only when the AI was unavailable. */
 export function extractionNote(role: { mode?: string }): string | null {
