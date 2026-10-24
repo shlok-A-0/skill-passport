@@ -21,6 +21,7 @@ import uuid
 from typing import Any, Literal
 
 from google import genai
+from sqlglot.tokens import Tokenizer, TokenType
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import config
@@ -372,14 +373,58 @@ def build_prompt(targets: list[dict[str, Any]], role_name: str, previous: list[s
     )
 
 
-def _code_only(text: str) -> str:
-    """The snippet with comments and string contents removed, so only code tokens remain.
+# SQL keywords and standard aggregate/clause words that do not name code identifiers.
+_SQL_KEYWORDS = {
+    "select", "from", "where", "group", "by", "order", "having", "limit", "offset",
+    "join", "inner", "left", "right", "outer", "cross", "on", "using",
+    "insert", "into", "values", "update", "set", "delete", "create", "alter",
+    "drop", "table", "index", "view", "database", "schema", "primary", "key",
+    "foreign", "references", "default", "check", "unique", "constraint",
+    "distinct", "union", "all", "exists", "between", "like", "ilike", "similar",
+    "case", "when", "then", "else", "end", "cast", "as", "asc", "desc", "nulls",
+    "first", "last", "with", "recursive", "sum", "count", "avg", "min", "max",
+}
 
-    Words inside `# ...`, `// ...`, `-- ...` and `/* ... */` comments or inside string literals
-    name no identifier; a question overlapping only those words does not refer to the code.
+_SQL_START = re.compile(
+    r"^\s*(?:(?:--[^\n]*(?:\n|$)|/\*.*?\*/)\s*)*"
+    r"(?:select|with|insert\s+into|update|delete\s+from|create\s+table|alter\s+table|drop\s+table"
+    r"|where|group\s+by|order\s+by|having|from|join)\b",
+    re.I | re.S,
+)
+
+_SQL_CALLS_PATTERN = re.compile(
+    r"\b(?:execute|executemany|executescript|text|read_sql|read_sql_query)\s*\($",
+    re.I,
+)
+
+
+def _extract_sql_identifiers(sql: str) -> list[str]:
+    """Extract column, table, alias and parameter identifiers from an executable SQL string."""
+    try:
+        tokens = Tokenizer().tokenize(sql)
+        identifiers: list[str] = []
+        for token in tokens:
+            if token.token_type in (TokenType.VAR, TokenType.IDENTIFIER):
+                val = token.text.strip('"`[]')
+                if val and val.lower() not in _SQL_KEYWORDS and val.lower() not in _STOP_WORDS:
+                    identifiers.append(val)
+        return identifiers
+    except Exception:
+        words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sql)
+        return [w for w in words if w.lower() not in _SQL_KEYWORDS and w.lower() not in _STOP_WORDS]
+
+
+def _code_only(text: str) -> str:
+    """The snippet with comments and ordinary string contents removed, so only code tokens remain.
+
+    SQL identifiers from executable query strings (passed to text()/execute() or matching SQL statements)
+    and quoted SQL names are preserved, while ordinary text strings and comments are ignored.
     Newlines are preserved so tokens on different lines never merge."""
     out: list[str] = []
     i, n = 0, len(text)
+    sql_call_depth = 0
+    paren_depth = 0
+
     while i < n:
         ch = text[i]
         nxt = text[i + 1] if i + 1 < n else ""
@@ -393,6 +438,22 @@ def _code_only(text: str) -> str:
             out.append("\n" * chunk.count("\n"))
             i = n if end == -1 else end + 2
             continue
+        if ch == "(":
+            paren_depth += 1
+            preceding = "".join(out)
+            if _SQL_CALLS_PATTERN.search(preceding + "("):
+                sql_call_depth = paren_depth
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ")":
+            if sql_call_depth == paren_depth:
+                sql_call_depth = 0
+            if paren_depth > 0:
+                paren_depth -= 1
+            out.append(ch)
+            i += 1
+            continue
         if ch in "'\"`":
             quote = ch * 3 if text.startswith(ch * 3, i) else ch
             j = i + len(quote)
@@ -404,7 +465,29 @@ def _code_only(text: str) -> str:
                     j += len(quote)
                     break
                 j += 1
-            out.append("\n" * text[i:j].count("\n"))
+            raw_chunk = text[i:j]
+            newline_count = raw_chunk.count("\n")
+            content_inner = text[i + len(quote) : j - len(quote)]
+
+            # Quoted SQL name: e.g. "amount_cents" or `expenses`
+            if quote in ('"', '`') and len(quote) == 1 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", content_inner):
+                if content_inner.lower() not in _STOP_WORDS and content_inner.lower() not in _SQL_KEYWORDS:
+                    out.append(f" {content_inner} ")
+                    out.append("\n" * newline_count)
+                    i = j
+                    continue
+
+            # Executable SQL query string (inside text()/execute() or starts with SQL syntax)
+            is_sql_query = (sql_call_depth > 0) or bool(_SQL_START.match(content_inner))
+            if is_sql_query:
+                identifiers = _extract_sql_identifiers(content_inner)
+                if identifiers:
+                    out.append(" " + " ".join(identifiers) + " ")
+                    out.append("\n" * newline_count)
+                    i = j
+                    continue
+
+            out.append("\n" * newline_count)
             i = j
             continue
         out.append(ch)
@@ -415,7 +498,7 @@ def _code_only(text: str) -> str:
 def _identifiers(text: str) -> set[str]:
     return {
         word.lower() for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text)
-        if word.lower() not in _STOP_WORDS
+        if word.lower() not in _STOP_WORDS and word.lower() not in _SQL_KEYWORDS
     }
 
 
@@ -423,10 +506,8 @@ def _short_identifiers(text: str) -> set[str]:
     """2-3 character names (single letters never count)."""
     return {
         word for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{1,2}\b", text)
-        if word.lower() not in _SHORT_STOP_WORDS
+        if word.lower() not in _SHORT_STOP_WORDS and word.lower() not in _SQL_KEYWORDS
     }
-
-
 def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> bool:
     """The main question names an identifier from its focus lines. A file name, a line number or
     a follow-up alone is not enough: any question could mention those.

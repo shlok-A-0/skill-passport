@@ -371,6 +371,32 @@ def test_short_names_in_the_cited_code_can_ground_a_question() -> None:
     assert not _grounded("How would you add logging here?", mixed)
 
 
+def test_sql_query_identifiers_ground_questions() -> None:
+    sql_example = (
+        'rows = conn.execute(\n'
+        '    text("SELECT category, SUM(amount_cents) AS total FROM expenses "\n'
+        '         "WHERE spent_on >= :start AND spent_on < :end "\n'
+        '         "GROUP BY category ORDER BY total DESC"),\n'
+        '    {"start": start, "end": end},\n'
+        ')'
+    )
+    assert _grounded("Why are expenses grouped by category in this query?", sql_example)
+    assert _grounded("Why did you aggregate amount_cents?", sql_example)
+    assert _grounded("How does the query filter on spent_on?", sql_example)
+    # Generic SQL keywords alone do not ground questions.
+    assert not _grounded("Why did you use select here?", sql_example)
+    assert not _grounded("Can you explain this where clause?", sql_example)
+
+    # db.execute
+    db_exec = "return db.execute('SELECT id, name FROM users LIMIT ?', (limit,))"
+    assert _grounded("What users are returned by the query?", db_exec)
+    assert _grounded("Why does it query name from users?", db_exec)
+
+    # Quoted SQL names
+    quoted = 'SELECT "amount_cents", "category" FROM "expenses"'
+    assert _grounded("What is amount_cents in expenses?", quoted)
+
+
 def test_comment_and_string_words_do_not_ground_a_question() -> None:
     # Ordinary words in a comment or a string literal name no identifier, however suggestive.
     assert not _grounded("When should an application cache results?", "x = 1  # Cache results here")
