@@ -226,4 +226,4 @@ export default function RecruiterView() {
       <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Verified levels link to the candidate's own code. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
-}
+    }
