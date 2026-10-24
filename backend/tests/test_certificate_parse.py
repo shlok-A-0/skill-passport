@@ -1,4 +1,5 @@
 import math
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,7 +41,7 @@ def test_certificate_image_uploads_use_local_tesseract(monkeypatch) -> None:
     received = []
     monkeypatch.setattr(
         resume_parse.subprocess, "run",
-        lambda command, **kwargs: received.append((command, kwargs["input"])) or SimpleNamespace(stdout=b"Python AWS"),
+        lambda command, **kwargs: received.append((command, kwargs)) or SimpleNamespace(stdout=b"Python AWS"),
     )
 
     for image_format in ("png", "jpeg"):
@@ -48,7 +49,10 @@ def test_certificate_image_uploads_use_local_tesseract(monkeypatch) -> None:
         skills = resume_parse.parse_certificate(image)
         assert {skill["skill_id"] for skill in skills} >= {"python", "aws"}
         assert received[-1][0] == ["tesseract", "stdin", "stdout"]
-        assert received[-1][1] == image
+        assert received[-1][1]["input"] == image
+        assert received[-1][1]["timeout"] == 60
+        assert received[-1][1]["check"] is True
+        assert received[-1][1]["capture_output"] is True
 
 
 def test_scanned_pdf_ocr_only_sends_pages_with_embedded_images(monkeypatch) -> None:
@@ -87,13 +91,22 @@ def test_certificate_ocr_page_cap_rejects_before_calling_ocr(monkeypatch) -> Non
         resume_parse.parse_certificate(pdf_bytes)
 
 
-def test_tesseract_errors_are_reported_for_image_uploads(monkeypatch) -> None:
-    def fail_ocr(_image: bytes) -> str:
-        raise RuntimeError("Local Tesseract OCR could not process this image.")
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(subprocess.TimeoutExpired("tesseract", 60), id="timeout"),
+        pytest.param(subprocess.CalledProcessError(1, "tesseract"), id="nonzero-exit"),
+    ],
+)
+def test_tesseract_execution_errors_are_not_reported_as_missing_binary(monkeypatch, error) -> None:
+    def fail_ocr(*_args, **_kwargs):
+        raise error
 
-    monkeypatch.setattr(resume_parse, "_document_ocr", fail_ocr)
-    with pytest.raises(RuntimeError, match="Local Tesseract OCR"):
-        resume_parse.parse_certificate(_image_bytes())
+    monkeypatch.setattr(resume_parse.subprocess, "run", fail_ocr)
+
+    with pytest.raises(RuntimeError, match="Local Tesseract OCR could not process") as raised:
+        resume_parse._document_ocr(_image_bytes())
+    assert "available on PATH" not in str(raised.value)
 
 
 def test_missing_tesseract_binary_has_actionable_error(monkeypatch) -> None:
@@ -107,10 +120,9 @@ def test_missing_tesseract_binary_has_actionable_error(monkeypatch) -> None:
 
 
 def test_image_ocr_rejects_oversized_images_before_recognition(monkeypatch) -> None:
-    image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 4, 4), 0)
-    image.clear_with(255)
-    image_bytes = image.tobytes("png")
+    image_bytes = _image_bytes()
     monkeypatch.setattr(resume_parse, "MAX_CERTIFICATE_OCR_PIXELS", 4)
+    monkeypatch.setattr(resume_parse.fitz, "Pixmap", lambda *_args, **_kwargs: pytest.fail("Image was decoded"))
     monkeypatch.setattr(resume_parse.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("OCR called"))
 
     with pytest.raises(ValueError, match="too large for OCR"):
