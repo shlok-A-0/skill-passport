@@ -78,6 +78,16 @@ def test_each_non_sql_pilot_has_cited_observations(skill_id, fixture):
     assert result["disclaimer"]
 
 
+@pytest.mark.parametrize("code", [
+    "from dataclasses import dataclass as dc\n@dc\nclass Record:\n    value: int\n",
+    "from typing import Protocol, TypeVar\nT = TypeVar('T')\nclass Reader(Protocol[T]):\n    value: T\n",
+])
+def test_python_depth_recognizes_aliased_dataclasses_and_generic_protocols(code):
+    result = run("python", repo({"src/interfaces.py": code}))
+    interfaces = next(item for item in result["competencies"] if item["id"] == "interfaces")
+    assert interfaces["status"] == "observed"
+
+
 def test_all_rubrics_total_100_and_foundational_competencies_are_declared():
     assert set(PROFILES) == {"python", "react", "fastapi", "docker", "git", "unit-testing", "scikit-learn"}
     for profile in PROFILES.values():

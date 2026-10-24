@@ -184,6 +184,18 @@ def test_targeting_test_accepts_test_with_assertions_when_committed_only() -> No
     assert targeting_test("pkg/engine.py", repo, committed_only=True) == {"path": "tests/test_engine.py", "match": "name"}
 
 
+def test_committed_javascript_test_can_assert_on_an_imported_symbol() -> None:
+    from app.services.verifier import targeting_test
+
+    path = "src/db.test.js"
+    code = "import { query } from './db';\ntest('query', () => { expect(query()).toEqual([]); });"
+    repo = {"test_files": [path], "test_contents": {path: code}, "test_authored": {path: True}}
+    assert targeting_test("src/db.js", repo, committed_only=True) == {"path": path, "match": "import"}
+
+    repo["test_contents"][path] = "import { query } from './db';\ntest('other', () => { expect(1).toEqual(1); });"
+    assert targeting_test("src/db.js", repo, committed_only=True) is None
+
+
 def test_targeting_test_rejects_unrelated_assertions_in_matching_filename() -> None:
     from app.services.verifier import targeting_test
     # A test named test_engine.py that has assertions for an unrelated function calc()

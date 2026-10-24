@@ -211,12 +211,14 @@ def _resolved_name(node: ast.AST, aliases: dict[str, str]) -> str:
     if isinstance(node, ast.Attribute):
         parent = _resolved_name(node.value, aliases)
         return f"{parent}.{node.attr}" if parent else node.attr
+    if isinstance(node, ast.Subscript):
+        return _resolved_name(node.value, aliases)
     return ""
 
 
-def _has_decorator(node: ast.AST, suffixes: tuple[str, ...]) -> bool:
-    return any(ast.unparse(decorator).split("(")[0].endswith(suffixes)
-               for decorator in getattr(node, "decorator_list", []))
+def _has_decorator(node: ast.AST, suffixes: tuple[str, ...], aliases: dict[str, str]) -> bool:
+    return any(_resolved_name(decorator.func if isinstance(decorator, ast.Call) else decorator, aliases)
+               .endswith(suffixes) for decorator in getattr(node, "decorator_list", []))
 
 
 def _fixture_decorator(node: ast.AST, aliases: dict[str, str]) -> ast.AST | None:
@@ -363,7 +365,7 @@ def _ast_matches(skill_id: str, competency: str, text: str,
                                        "typing.Protocol", "typing_extensions.Protocol", "abc.ABC"}
                                           for base in node.bases)))
                               or (isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-                                  and _has_decorator(node, ("dataclass", "property"))),
+                                  and _has_decorator(node, ("dataclass", "property"), aliases)),
                 "robustness": name == "isinstance" or
                               (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
                                and ast.unparse(node.exc.func) in {"ValueError", "TypeError", "KeyError"}),

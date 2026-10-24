@@ -860,16 +860,13 @@ def _explicitly_imports(content: str, test_path: str, cited_path: str) -> bool:
     cited = PurePosixPath(cited_path)
     if cited.suffix == ".py":
         parts = cited.with_suffix("").parts
-        for start in range(len(parts)):
-            module = ".".join(parts[start:])
-            parent, _, name = module.rpartition(".")
-            patterns = [rf"(?m)^\s*from\s+{re.escape(module)}\s+import\b",
-                        rf"(?m)^\s*import\s+{re.escape(module)}\b(?!\.)"]
-            if parent:
-                patterns.append(rf"(?m)^\s*from\s+{re.escape(parent)}\s+import\s+[^\n]*\b{re.escape(name)}\b")
-            if any(re.search(pattern, content) for pattern in patterns):
-                return True
-        return False
+        module = ".".join(parts)
+        parent, _, name = module.rpartition(".")
+        patterns = [rf"(?m)^\s*from\s+{re.escape(module)}\s+import\b",
+                    rf"(?m)^\s*import\s+{re.escape(module)}\b(?!\.)"]
+        if parent:
+            patterns.append(rf"(?m)^\s*from\s+{re.escape(parent)}\s+import\s+[^\n]*\b{re.escape(name)}\b")
+        return any(re.search(pattern, content) for pattern in patterns)
     target = str(cited.with_suffix(""))
     for spec in JS_IMPORT_SPEC.findall(content):
         if not spec.startswith("."):

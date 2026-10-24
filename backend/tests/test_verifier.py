@@ -379,6 +379,7 @@ def test_short_and_generic_stems_match_an_explicit_import_of_their_module() -> N
 
     for cited, content in (
         ("app/db.py", "from other.db import x"),
+        ("app/db.py", "import db"),
         ("app/db.py", "import dbutils"),
         ("app/db.py", "from app.dbx import y"),
         ("app/db.py", "import app.db.models"),
@@ -387,6 +388,13 @@ def test_short_and_generic_stems_match_an_explicit_import_of_their_module() -> N
     ):
         repo = {"test_files": ["tests/test_x.py"], "test_contents": {"tests/test_x.py": content}}
         assert targeting_test(cited, repo) is None, (cited, content)
+
+    duplicate_modules = {
+        "test_files": ["tests/test_store.py"],
+        "test_contents": {"tests/test_store.py": "import db\n\ndef test_query():\n    assert db.query()"},
+        "source_files": {"db.py": {}, "app/db.py": {}},
+    }
+    assert targeting_test("app/db.py", duplicate_modules) is None
 
 
 def test_short_stem_import_still_needs_a_committed_test_with_assertions() -> None:

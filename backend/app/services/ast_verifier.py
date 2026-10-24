@@ -1,5 +1,6 @@
 import ast
 import re
+from pathlib import PurePosixPath
 
 
 def _signature_in_text(signature: str, text: str) -> bool:
@@ -369,9 +370,31 @@ def test_targets_implementation_with_assertions(content: str, path: str, module_
         has_assertion = any(token in stripped for token in assertion_tokens)
         if not has_assertion:
             return False
-        # Must reference the module stem in the code
-        stem_pattern = rf"(?<![A-Za-z0-9_]){re.escape(stem_lower)}(?![A-Za-z0-9_])"
-        return bool(re.search(stem_pattern, stripped, re.IGNORECASE))
+        # A relative import can exercise an exported symbol without mentioning its module name.
+        target_symbols = {stem_lower}
+        import_pattern = re.compile(
+            r"(?m)^\s*import\s+([\s\S]*?)\s+from\s*(['\"])([^'\"]+)\2\s*;?"
+        )
+        imports = list(import_pattern.finditer(content))
+        for match in imports:
+            if PurePosixPath(match.group(3)).stem.lower() != stem_lower:
+                continue
+            clause = match.group(1).strip()
+            named = re.search(r"\{([^}]*)\}", clause)
+            if named:
+                for item in named.group(1).split(","):
+                    imported, _, local = item.strip().partition(" as ")
+                    if imported:
+                        target_symbols.add((local or imported).lower())
+            default = re.match(r"([\w$]+)", clause)
+            if default and default.group(1) != "type":
+                target_symbols.add(default.group(1).lower())
+            namespace = re.search(r"\*\s+as\s+([\w$]+)", clause)
+            if namespace:
+                target_symbols.add(namespace.group(1).lower())
+        without_imports = strip_js_comments_and_strings(import_pattern.sub(" ", content))
+        return any(re.search(rf"(?<![A-Za-z0-9_$]){re.escape(symbol)}(?![A-Za-z0-9_$])",
+                             without_imports, re.IGNORECASE) for symbol in target_symbols)
 
     # Compiled languages
     stripped = strip_c_style_comments_and_strings(content)
