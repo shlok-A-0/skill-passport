@@ -5,9 +5,11 @@ import ipaddress
 import json
 import logging
 import secrets
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from threading import Lock
 from typing import Any
 
 from fastapi import (
@@ -751,22 +753,53 @@ def passport_job(
     }
 
 
-def _stored_passport(passport_id: str) -> dict:
+_depth_backfill_lock = Lock()
+_depth_backfills: set[str] = set()
+_depth_backfill_attempts: dict[str, tuple[str | None, str, float]] = {}
+
+
+def _run_depth_backfill(passport_id: str) -> None:
+    try:
+        ensure_depth_analyzers(passport_id)
+    finally:
+        with _depth_backfill_lock:
+            _depth_backfills.discard(passport_id)
+
+
+def _queue_depth_backfill(passport: dict[str, Any], background_tasks: BackgroundTasks) -> None:
+    passport_id = passport["id"]
+    version = passport.get("updated_at"), passport.get("created_at", "")
+    now = time.monotonic()
+    with _depth_backfill_lock:
+        previous = _depth_backfill_attempts.get(passport_id)
+        if passport_id in _depth_backfills or (
+            previous and previous[:2] == version and now - previous[2] < 300
+        ):
+            return
+        _depth_backfills.add(passport_id)
+        _depth_backfill_attempts[passport_id] = (*version, now)
+        background_tasks.add_task(_run_depth_backfill, passport_id)
+
+
+def _stored_passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
     result = get_passport(passport_id)
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
-    ensure_depth_analyzers(result)
+    if (config.ENABLE_SQL_DEPTH and result.get("sql_depth") is None) or (
+        config.ENABLE_SKILL_DEPTH and result.get("skill_depth") is None
+    ):
+        _queue_depth_backfill(result, background_tasks)
     return result
 
 
 @app.get("/passport/{passport_id}")
-def passport(passport_id: str) -> dict:
-    return student_view(_stored_passport(passport_id), list_review_requests(passport_id))
+def passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
+    return student_view(_stored_passport(passport_id, background_tasks), list_review_requests(passport_id))
 
 
 @app.get("/passport/{passport_id}/review", dependencies=[Depends(require_recruiter)])
-def review_passport(passport_id: str) -> dict:
-    return review_view(_stored_passport(passport_id))
+def review_passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
+    return review_view(_stored_passport(passport_id, background_tasks))
 
 
 @app.get("/passports", dependencies=[Depends(require_recruiter)])

@@ -224,6 +224,39 @@ def save_passport(passport: dict[str, Any]) -> None:
         _save_passport(connection, passport)
 
 
+def save_passport_depth(
+    passport_id: str,
+    expected_updated_at: str | None,
+    expected_created_at: str,
+    fields: dict[str, Any],
+) -> bool:
+    """Merge missing depth fields only if the stored passport is still the analyzed version."""
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        row = connection.execute("SELECT payload FROM passports WHERE id = ?", (passport_id,)).fetchone()
+        if not row:
+            return False
+        passport = json.loads(row["payload"])
+        if (
+            passport.get("updated_at") != expected_updated_at
+            or passport.get("created_at") != expected_created_at
+        ):
+            return False
+        missing = {
+            key: value for key, value in fields.items()
+            if value is not None and passport.get(key) is None
+        }
+        if not missing:
+            return False
+        passport.update(missing)
+        connection.execute(
+            "UPDATE passports SET payload = ? WHERE id = ?",
+            (json.dumps(passport, ensure_ascii=False), passport_id),
+        )
+        return True
+
+
 def _save_passport(connection: sqlite3.Connection, passport: dict[str, Any]) -> None:
     connection.execute(
         """

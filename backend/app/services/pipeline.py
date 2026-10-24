@@ -36,7 +36,7 @@ from app.services.resume_parse import parse_certificate, parse_resume, redact_pe
 from app.services.role_match import match_role
 from app.services.sql_depth import safe_sql_depth
 from app.services.skill_depth import compute_skill_depth
-from app.services.storage import get_passport, save_passport
+from app.services.storage import get_passport, save_passport, save_passport_depth
 from app.services.verifier import exclude_uncounted_citations, verify_claims
 
 logger = logging.getLogger(__name__)
@@ -323,8 +323,11 @@ def build_passport(
     return passport
 
 
-def ensure_depth_analyzers(passport: dict[str, Any], *, persist: bool = True) -> dict[str, Any]:
-    """Ensure pilot skill depth (and sql depth) are computed for legacy passports."""
+def ensure_depth_analyzers(passport_id: str) -> None:
+    """Backfill depth from the current saved passport without replacing its other fields."""
+    passport = get_passport(passport_id)
+    if not passport:
+        return
     needs_skill_depth = config.ENABLE_SKILL_DEPTH and (
         "skill_depth" not in passport or passport.get("skill_depth") is None
     )
@@ -332,32 +335,62 @@ def ensure_depth_analyzers(passport: dict[str, Any], *, persist: bool = True) ->
         "sql_depth" not in passport or passport.get("sql_depth") is None
     )
     if not (needs_skill_depth or needs_sql_depth):
-        return passport
+        return
 
     username = passport.get("github_username")
     if not username:
-        return passport
+        return
 
     try:
-        ingestion = ingest_github(username)
-        modified = False
+        ingestion = ingest_github(username, force_refresh=True)
+        source_shas: dict[str, set[str]] = {}
+        for skill in passport.get("skills") or []:
+            for evidence in skill.get("evidence") or []:
+                if evidence.get("type") == "code" and evidence.get("repo"):
+                    source_shas.setdefault(evidence["repo"], set()).add(
+                        evidence.get("commit_sha") or ""
+                    )
+        for rejected in passport.get("rejected_claims") or []:
+            claim = rejected.get("claim") or {}
+            repo, url = claim.get("repo"), rejected.get("url")
+            if repo and rejected.get("kind") in {"earlier_source", "copied", "not_written_by_candidate"}:
+                parts = url.split("/blob/", 1) if isinstance(url, str) else []
+                sha = parts[1].split("/", 1)[0] if len(parts) == 2 else ""
+                source_shas.setdefault(repo, set()).add(sha)
+        stable_repos = [
+            repo for repo in ingestion.get("repos", [])
+            if repo.get("name") in source_shas
+            and source_shas[repo["name"]] == {repo.get("head_sha")}
+        ]
+        skipped_repos = len(ingestion.get("repos", [])) - len(stable_repos)
+        depth_ingestion = {**ingestion, "repos": stable_repos, "repo_count": len(stable_repos)}
+        fields: dict[str, Any] = {}
         if needs_sql_depth:
-            passport["sql_depth"] = safe_sql_depth(ingestion, passport)
-            modified = True
+            fields["sql_depth"] = safe_sql_depth(depth_ingestion, passport)
         if needs_skill_depth:
-            passport["skill_depth"] = compute_skill_depth(
-                ingestion,
+            fields["skill_depth"] = compute_skill_depth(
+                depth_ingestion,
                 passport,
-                sql_result=passport.get("sql_depth"),
+                sql_result=fields.get("sql_depth", passport.get("sql_depth")),
                 include_sql=config.ENABLE_SQL_DEPTH,
             )
-            modified = True
-        if modified and persist:
-            save_passport(passport)
+        if skipped_repos:
+            note = (
+                f"Depth backfill skipped {skipped_repos} repository snapshot(s) because their current "
+                "revision could not be matched to this passport's cited source revision. "
+                "Re-check to analyze current files."
+            )
+            sql_result = fields.get("sql_depth")
+            if sql_result:
+                sql_result.setdefault("notes", []).append(note)
+            for result in (fields.get("skill_depth") or {}).values():
+                if result:
+                    result.setdefault("coverage", {}).setdefault("notes", []).append(note)
+        save_passport_depth(
+            passport_id, passport.get("updated_at"), passport["created_at"], fields
+        )
     except Exception:
         logger.exception("Failed to populate depth analyzers for passport %s", passport.get("id"))
-
-    return passport
 
 
 def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
