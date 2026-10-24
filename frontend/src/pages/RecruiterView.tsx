@@ -145,7 +145,7 @@ export default function RecruiterView() {
                         {requirement.status === "missing"
                           ? <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>
                           : <span className={`status-pill status-${requirement.status}`}>{packet?.status_label ?? requirement.status}</span>}
-                        {packet && packet.attribution !== "Not applicable" && (
+                        {packet && packet.attribution !== "Not applicable" && packet.attribution !== "High" && (
                           <span className={`attribution attribution-${packet.attribution.split(" ")[0].toLowerCase()}`} title="How clearly the cited work traces to the candidate, not their ability.">Attribution: {packet.attribution}</span>
                         )}
                         <ChevronDown size={12} className="req-chevron" />
@@ -201,11 +201,11 @@ export default function RecruiterView() {
       {section === "interview" && (
         <div className="section-col">
           <InterviewWorkspace passportId={passport.id} />
-          <section className="panel interview-panel practice-panel">
-            <div className="panel-heading">
+          <details className="panel interview-panel practice-panel practice-collapsible">
+            <summary className="panel-heading">
               <div><div className="eyebrow">SHOWN TO THE STUDENT FOR PRACTICE</div><h2>Student practice questions</h2></div>
-              <span className="count-tag">{interviews.length} skills</span>
-            </div>
+              <span className="count-tag">{interviews.length} skills <ChevronDown size={12} className="practice-chevron" /></span>
+            </summary>
             <p className="muted">The candidate has seen these questions (without the answer notes). Use the private interview kit above for the interview itself.</p>
             {interviews.length ? interviews.map((entry) => (
               <article className="interview-entry" key={entry.skill_id}>
@@ -215,7 +215,7 @@ export default function RecruiterView() {
                 ))}
               </article>
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
-          </section>
+          </details>
         </div>
       )}
       {section === "reports" && (
