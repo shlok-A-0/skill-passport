@@ -20,7 +20,7 @@ export default function GrowthCard({
       <p>{task.task}</p>
       <div className="proof-target"><ArrowUpRight size={14} /> Proof this creates: {task.evidence_it_will_create}</div>
       <button className="button button-light" onClick={onRecheck} disabled={busy}>
-        <RefreshCw size={14} className={busy ? "spin" : ""} /> {busy ? "Re-checking…" : "I've done this · Re-check"}
+        <RefreshCw size={14} className={busy ? "spin" : ""} /> {busy ? "Re-checking…" : "Done · re-check"}
       </button>
     </article>
   );
