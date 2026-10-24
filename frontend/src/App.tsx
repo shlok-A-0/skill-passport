@@ -1,7 +1,20 @@
-import { BadgeCheck, BookOpenCheck, BriefcaseBusiness, LayoutDashboard, ShieldCheck } from "lucide-react";
+import {
+  BadgeCheck,
+  BookOpenCheck,
+  BriefcaseBusiness,
+  GraduationCap,
+  LayoutDashboard,
+  LogIn,
+  LogOut,
+  Repeat,
+  ShieldCheck,
+} from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, isMissingJobError, type PassportJob } from "./api";
+import { AuthProvider, useAuth } from "./auth";
+import LoginModal from "./components/LoginModal";
+import ProtectedRoute from "./components/ProtectedRoute";
 import { nextJobPollDelay } from "./jobPolling";
 import CreatePassport from "./pages/CreatePassport";
 import StudentPassport from "./pages/StudentPassport";
@@ -36,12 +49,19 @@ function LatestPassportRedirect({ view }: { view: "passport" | "recruiter" }) {
 }
 
 function NotFound() {
-  return <section className="page-message"><h1>Page not found</h1><p>This link doesn’t point to a Skill Passport page.</p><Link className="button button-light" to="/">Back to Create</Link></section>;
+  return (
+    <section className="page-message">
+      <h1>Page not found</h1>
+      <p>This link doesn’t point to a Skill Passport page.</p>
+      <Link className="button button-light" to="/">Back to Create</Link>
+    </section>
+  );
 }
 
-function App() {
+function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user, role, openLoginModal, logout } = useAuth();
   const [generationJob, setGenerationJob] = useState<PassportJob | null>(() => api.savedJob());
   const [generationError, setGenerationError] = useState("");
   const [pollingPaused, setPollingPaused] = useState(false);
@@ -107,17 +127,83 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <Link className="brand" to="/"><span className="brand-mark"><ShieldCheck size={20} /></span><span>Skill Passport<small>PROOF, NOT CLAIMS</small></span></Link>
-        <nav aria-label="Primary navigation">
-          <NavLink to="/" end>Create</NavLink>
-          <NavLink to="/student" className={({ isActive }) => isActive || location.pathname.startsWith("/passport/") ? "active" : undefined}>Student</NavLink>
-          <NavLink to="/recruiter">Recruiter</NavLink>
-          <NavLink to="/placement">Placement Cell</NavLink>
-        </nav>
+        <div className="topbar-left">
+          <Link className="brand" to="/">
+            <span className="brand-mark"><ShieldCheck size={20} /></span>
+            <span>Skill Passport<small>PROOF, NOT CLAIMS</small></span>
+          </Link>
+
+          <nav aria-label="Primary navigation">
+            <NavLink to="/" end>Create</NavLink>
+            <NavLink
+              to="/student"
+              className={({ isActive }) => isActive || location.pathname.startsWith("/passport/") ? "active" : undefined}
+            >
+              Student
+            </NavLink>
+            {/* Recruiter and Placement Cell visible only to Recruiter role */}
+            {role === "recruiter" && (
+              <>
+                <NavLink to="/recruiter">Recruiter</NavLink>
+                <NavLink to="/placement">Placement Cell</NavLink>
+              </>
+            )}
+          </nav>
+        </div>
+
+        <div className="topbar-auth">
+          {user ? (
+            <div className="auth-user-controls">
+              <div
+                className={`auth-role-pill ${user.role}`}
+                title={`Signed in as ${user.name} (${user.email})`}
+              >
+                {user.role === "recruiter" ? (
+                  <BriefcaseBusiness size={14} />
+                ) : (
+                  <GraduationCap size={14} />
+                )}
+                <span className="auth-role-name">
+                  <strong>{user.role === "recruiter" ? "Recruiter" : "Student"}:</strong> {user.name.split(" ")[0]}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                className="auth-icon-button"
+                onClick={openLoginModal}
+                title="Switch Profile / Change Account"
+              >
+                <Repeat size={14} />
+                <span>Switch</span>
+              </button>
+
+              <button
+                type="button"
+                className="auth-icon-button logout"
+                onClick={logout}
+                title="Sign Out"
+              >
+                <LogOut size={14} />
+                <span>Logout</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="button button-light auth-signin-btn"
+              onClick={openLoginModal}
+            >
+              <LogIn size={15} />
+              <span>Sign In</span>
+            </button>
+          )}
+        </div>
       </header>
+
       {generationJob && (generationJob.status === "queued" || generationJob.status === "running") && location.pathname !== "/" && (
         <div className="generation-notice" role="status" aria-live="polite">
-          <span>{pollingPaused ? "Passport status check paused" : `Passport generation continues · ${generationJob.step === "Queued" ? "Preparing your evidence…" : generationJob.step}`}</span>
+          <span>{pollingPaused ? "Passport status check paused" : `Passport generation continues • ${generationJob.step === "Queued" ? "Preparing your evidence…" : generationJob.step}`}</span>
           {pollingPaused && <button type="button" className="link-button" onClick={() => { setGenerationError(""); setPollingPaused(false); }}>Retry status check</button>}
           <Link to="/">View progress</Link>
           {generationError && <small>{generationError}</small>}
@@ -134,20 +220,88 @@ function App() {
           <span>{generationError || generationJob.error || "Passport generation failed."}</span><Link to="/">Try again</Link>
         </div>
       )}
+
       <main>
         <Routes>
-          <Route path="/" element={<CreatePassport job={generationJob} pollingPaused={pollingPaused} generationError={generationError} onRetryPolling={() => { setGenerationError(""); setPollingPaused(false); }} onJobChange={(job) => { api.rememberJob(job); setGenerationJob(job); setGenerationError(""); setPollingPaused(false); setDismissedCompletionId(""); }} />} />
+          {/* Accessible to both Student and Recruiter */}
+          <Route
+            path="/"
+            element={
+              <CreatePassport
+                job={generationJob}
+                pollingPaused={pollingPaused}
+                generationError={generationError}
+                onRetryPolling={() => { setGenerationError(""); setPollingPaused(false); }}
+                onJobChange={(job) => {
+                  api.rememberJob(job);
+                  setGenerationJob(job);
+                  setGenerationError("");
+                  setPollingPaused(false);
+                  setDismissedCompletionId("");
+                }}
+              />
+            }
+          />
           <Route path="/student" element={<LatestPassportRedirect view="passport" />} />
-          <Route path="/recruiter" element={<LatestPassportRedirect view="recruiter" />} />
           <Route path="/passport/:id" element={<StudentPassport />} />
-          <Route path="/recruiter/:id" element={<RecruiterView />} />
-          <Route path="/recruiter/:id/evidence" element={<RecruiterEvidence />} />
-          <Route path="/placement" element={<Suspense fallback={<div className="page-message">Loading placement insights…</div>}><PlacementCell /></Suspense>} />
+
+          {/* Recruiter-only protected routes */}
+          <Route
+            path="/recruiter"
+            element={
+              <ProtectedRoute allowedRoles={["recruiter"]}>
+                <LatestPassportRedirect view="recruiter" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/recruiter/:id"
+            element={
+              <ProtectedRoute allowedRoles={["recruiter"]}>
+                <RecruiterView />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/recruiter/:id/evidence"
+            element={
+              <ProtectedRoute allowedRoles={["recruiter"]}>
+                <RecruiterEvidence />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/placement"
+            element={
+              <ProtectedRoute allowedRoles={["recruiter"]}>
+                <Suspense fallback={<div className="page-message">Loading placement insights…</div>}>
+                  <PlacementCell />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
-      <footer><BadgeCheck size={16} /> Built on evidence, not self-reported scores <span><BriefcaseBusiness size={15} /> Recruiter-ready</span><span><BookOpenCheck size={15} /> Growth through proof</span><LayoutDashboard size={15} /></footer>
+
+      {/* Global Interactive Login Modal */}
+      <LoginModal />
+
+      <footer>
+        <BadgeCheck size={16} /> Built on evidence, not self-reported scores
+        <span><BriefcaseBusiness size={15} /> Recruiter-ready</span>
+        <span><BookOpenCheck size={15} /> Growth through proof</span>
+        <LayoutDashboard size={15} />
+      </footer>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
