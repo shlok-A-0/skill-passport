@@ -276,6 +276,7 @@ h2 { margin: 6px 0 0; font: 500 18px/1.2 var(--font-sans); letter-spacing: -.02e
 
 /* Recruiter */
 .recruiter-page, .placement-page { max-width: 1220px; margin: 30px auto 55px; }
+.recruiter-page { margin-top: 16px; }
 .recruiter-heading h1 { font-size: 28px; }
 .recruiter-actions { display: flex; align-items: center; gap: 16px; }
 .match-total { display: flex; align-items: center; gap: 7px; }
@@ -826,7 +827,7 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .hero-side .panel h3 { font-size: 13px; font-weight: 500; margin: 0 0 8px; }
 
 /* Bounded growth (R2): lists inside hero side panels scroll quietly past ~6.5 rows. */
-.panel-list { max-height: 273px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.panel-list { max-height: 273px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding-right: 12px; scrollbar-gutter: stable; }
 .panel-list::-webkit-scrollbar { width: 8px; }
 .panel-list::-webkit-scrollbar-track { background: transparent; }
 .panel-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; }
