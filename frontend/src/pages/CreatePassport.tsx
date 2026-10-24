@@ -210,16 +210,16 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       <section className="create-intro">
         <div className="eyebrow">SKILL PASSPORT · PROOF, NOT CLAIMS</div>
         <h1>Your work speaks.<br /><em>Now show the proof.</em></h1>
-        <p>Turn your real code into a clear, evidence-backed skill profile. Every verified citation links to the exact lines a recruiter can inspect.</p>
+        <p>Create a skill profile from your GitHub work and resume, with links to the code behind each verified skill.</p>
         <div className="promise-list">
           <span><ShieldCheck size={17} /> Human-checkable evidence</span>
           <span><Github size={17} /> Authorship is checked per file</span>
-          <span><ArrowRight size={17} /> Every gap becomes a growth task</span>
+          <span><ArrowRight size={17} /> Tasks to help close role gaps</span>
         </div>
       </section>
       <section className="panel create-card">
         <div className="panel-heading">
-          <div><div className="eyebrow">START YOUR PASSPORT</div><h2>Bring your proof</h2></div>
+          <div><h2>Create your passport</h2></div>
         </div>
         {roleError && <div className="notice notice-error">{roleError}</div>}
         <form onSubmit={submit} className="create-form" noValidate>
@@ -243,7 +243,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
               <button className="button button-light" type="button" onClick={extractRequirements} disabled={extracting}>
                 {extracting ? <LoaderCircle className="spin" size={14} /> : null} {extracting ? "Extracting…" : "Extract requirements"}
               </button>
-              <p className="privacy-note">The description is sent to the AI to suggest requirements; it is not stored. Minimum levels are set by fixed rules, and every quote is checked against your text.</p>
+              <p className="privacy-note">Sent to the AI to suggest requirements; not stored. Levels and quotes are checked by fixed rules.</p>
               {extractError && <div className="notice notice-error" role="alert">{extractError}</div>}
               {extracted && (
                 <div className="jd-requirements" aria-live="polite">
@@ -273,6 +273,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             <small>PDF · Max 10 MB</small>
             <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
+          <details className="optional-uploads"><summary>Optional: certificates, reports and portfolio</summary>
           <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs or images · select multiple</span>
             <input type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={certificates.length >= 5} onChange={(event) => {
               const selected = Array.from(event.currentTarget.files ?? []);
@@ -308,27 +309,27 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
               </label>
             </>
           )}
-          <p className="privacy-note">Text PDFs are read locally; scanned PDFs and certificate{reportsEnabled ? " or report" : ""} images use local OCR on the backend.{reportsEnabled ? " Report text is sent to the AI (personal details removed) to suggest skill claims; it is not stored." : ""}</p>
           {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
             {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
               <span>{certificate.name}</span>
               <button type="button" onClick={() => { setCertificates((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
             </li>)}
           </ul>}
-          <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => { setDemo(event.target.checked); setError(""); }} /> Mark this passport as <strong>DEMO DATA</strong></label>
+          </details>
+          <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => { setDemo(event.target.checked); setError(""); }} /> Create as a demo passport (sample data)</label>
           {!demo && (
             <div className="notice notice-warning">
               <strong><KeyRound size={13} /> Prove this account is yours</strong>
               {challenge ? (
                 <>
-                  <p>Signed in to GitHub as <strong>{challenge.github_username}</strong>, create a <strong>public</strong> gist with this description (any file name and content). The code works once and expires in 1 hour; you can delete the gist afterwards.</p>
+                  <p>While signed in to GitHub as <strong>{challenge.github_username}</strong>, create a <strong>public</strong> gist with this code as the description (any file name and content). It works once and expires in 1 hour; you can delete the gist afterwards.</p>
                   <p><code>{challenge.code}</code></p>
                   <button className="button button-light" type="button" onClick={copyCode}><Clipboard size={14} /> {copied ? "Copied" : "Copy"}</button>{" "}
                   <a className="button button-light" href="https://gist.github.com" target="_blank" rel="noreferrer">Open gist.github.com <ExternalLink size={14} /></a>
                 </>
               ) : (
                 <>
-                  <p>Anyone can type a username, so we check that you control this GitHub account with a one-time code you post as a public gist.</p>
+                  <p>Confirm you control this GitHub account with a one-time code posted as a public gist.</p>
                   <button className="button button-light" type="button" onClick={getCode} disabled={!username.trim() || gettingCode}>
                     {gettingCode ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />} Get verification code
                   </button>
@@ -361,10 +362,12 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             )}
           </section>
         )}
-        <p className="privacy-note">
-          {createScoreNote(sqlDepthEnabled, skillDepthEnabled)} Unverified resume claims stay separate and never count as a match.
-        </p>
+        <p className="privacy-note">Unverified resume claims are never counted as a match.</p>
+        <details className="privacy-details">
+          <summary>How your files and scores are handled</summary>
+          <p>Text PDFs are read locally; scanned documents use OCR on the server.{reportsEnabled ? " Report text is sent to the AI (personal details removed) to suggest skill claims; it is not stored." : ""} {createScoreNote(sqlDepthEnabled, skillDepthEnabled)}</p>
+        </details>
       </section>
     </div>
   );
-}
+  }
