@@ -124,8 +124,8 @@ export default function RecruiterView() {
         </div>
       </header>
       {error && <div className="notice notice-error">{error}</div>}
-      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Candidate sections" />
-      {section === "requirements" && (
+      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Candidate sections" idPrefix="recruiter" />
+      <div id="recruiter-panel-requirements" role="tabpanel" aria-labelledby="recruiter-tab-requirements" tabIndex={0} hidden={section !== "requirements"} style={{ display: section === "requirements" ? undefined : "none" }}>
         <section className="panel requirement-panel">
           <div className="panel-heading"><div><h2>Role requirements</h2></div><span className="muted">Must-have gaps first</span></div>
           <div className="requirement-list">
@@ -162,8 +162,8 @@ export default function RecruiterView() {
             })}
           </div>
         </section>
-      )}
-      {section === "skills" && (
+      </div>
+      <div id="recruiter-panel-skills" role="tabpanel" aria-labelledby="recruiter-tab-skills" tabIndex={0} hidden={section !== "skills"} style={{ display: section === "skills" ? undefined : "none" }}>
         <div className="section-columns">
           <div className="section-col">
             <section className="panel verified-summary">
@@ -197,8 +197,8 @@ export default function RecruiterView() {
             <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
           </div>
         </div>
-      )}
-      {section === "interview" && (
+      </div>
+      <div id="recruiter-panel-interview" role="tabpanel" aria-labelledby="recruiter-tab-interview" tabIndex={0} hidden={section !== "interview"} style={{ display: section === "interview" ? undefined : "none" }}>
         <div className="section-col">
           <InterviewWorkspace passportId={passport.id} />
           <details className="panel interview-panel practice-panel practice-collapsible">
@@ -217,13 +217,13 @@ export default function RecruiterView() {
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
           </details>
         </div>
-      )}
-      {section === "reports" && (
-        hasReports
+      </div>
+      <div id="recruiter-panel-reports" role="tabpanel" aria-labelledby="recruiter-tab-reports" tabIndex={0} hidden={section !== "reports"} style={{ display: section === "reports" ? undefined : "none" }}>
+        {hasReports
           ? <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" defaultOpen />
-          : <div className="empty-state">No project reports or portfolio were attached to this passport.</div>
-      )}
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
+          : <div className="empty-state">No project reports or portfolio were attached to this passport.</div>}
+      </div>
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated link to code the candidate wrote; Used means dependencies, config or commit history. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
 }

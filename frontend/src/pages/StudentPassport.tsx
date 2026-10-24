@@ -183,7 +183,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       <div className="passport-grid">
         <div className="skill-column">
           <section className="panel skill-panel">
-            <div className="panel-heading"><div><h2>Verified skills</h2></div><span className="count-tag">{verified.length} skills</span></div>
+            <div className="panel-heading"><div><div className="eyebrow">FROM THE ANALYSED FILES</div><h2>Evidence from your work</h2></div><span className="count-tag">{verified.length} skills</span></div>
             {verified.length ? (
               <div className="skill-grid">{verified.map((skill) => (
                 <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>

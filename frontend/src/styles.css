@@ -1762,3 +1762,6 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
   .heatmap-table { min-width: 560px; }
   .table-scroll-hint { display: block; }
 }
+
+.inline-disclosure { display: inline-block; margin-left: 4px; font-size: 10px; color: var(--ink-soft); }
+.inline-disclosure summary { cursor: pointer; color: var(--accent); display: inline; text-decoration: underline; font-weight: 600; }

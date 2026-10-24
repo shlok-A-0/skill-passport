@@ -54,9 +54,20 @@ export default function PlacementCell() {
     void loadInitial();
   }, []);
 
+  const roleFromUrl = searchParams.get("preferredRole") ?? "";
   useEffect(() => {
-    setPreferredRole(searchParams.get("preferredRole") ?? "");
-  }, [searchParams]);
+    setPreferredRole(roleFromUrl);
+  }, [roleFromUrl]);
+
+  function handlePreferredRoleChange(next: string) {
+    setPreferredRole(next);
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (!next) params.delete("preferredRole");
+      else params.set("preferredRole", next);
+      return params;
+    }, { replace: true });
+  }
 
   const section = searchParams.get("section") ?? "candidates";
   function setSection(next: string) {
@@ -175,10 +186,10 @@ export default function PlacementCell() {
         <div><h1>Skills across your cohort</h1><p>See where students have proof and where a shared workshop can help.</p></div>
         <div className="placement-filters">
           <label className="role-select-label">Role<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label className="role-select-label">Preferred role<select value={preferredRole} onChange={(event) => setPreferredRole(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="role-select-label">Preferred role<select value={preferredRole} onChange={(event) => handlePreferredRoleChange(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         </div>
       </header>
-      {demoPresent && <div className="demo-notice">Includes demo passports.</div>}
+      {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
       {error && <div className="notice notice-error" role="alert">{error}<button type="button" className="link-button" onClick={() => void (retryLoadMore ? loadMore() : loadInitial())}>Retry</button></div>}
       {loading && <div className="page-message" role="status">Loading cohort insights…</div>}
       {!loading && loadedPassportCount < totalPassports && <p className="muted cohort-page-note">Role filters and exports cover the {loadedPassportCount} loaded passports so far.</p>}
@@ -187,9 +198,8 @@ export default function PlacementCell() {
         <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>Avg. requirements met</small><strong>{avgMet} <i>of {requirements.length}</i></strong></div></section>
         <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>Suggested workshop</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `No evidence found for ${topGap.percent}% of this group.` : "The highest shared gap appears here."}</p></div></section>
       </div>
-      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Cohort sections" />
-      {section === "candidates" && (
-        <>
+      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Cohort sections" idPrefix="placement" />
+      <div id="placement-panel-candidates" role="tabpanel" aria-labelledby="placement-tab-candidates" tabIndex={0} hidden={section !== "candidates"} style={{ display: section === "candidates" ? undefined : "none" }}>
       <section className="panel ranking-panel">
         <div className="panel-heading">
           <div><h2>Candidate ranking · {role?.name ?? "Role"}</h2></div>
@@ -286,9 +296,8 @@ export default function PlacementCell() {
             <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span>
           </div>
         </section>
-        </>
-      )}
-      {section === "gaps" && (
+      </div>
+      <div id="placement-panel-gaps" role="tabpanel" aria-labelledby="placement-tab-gaps" tabIndex={0} hidden={section !== "gaps"} style={{ display: section === "gaps" ? undefined : "none" }}>
       <section className="panel gaps-panel">
           <div className="panel-heading"><div><h2>Most common gaps</h2></div></div>
           <div className="gap-chart">
@@ -312,7 +321,7 @@ export default function PlacementCell() {
           </div>
           {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: {topGap.skill}</strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
       </section>
-      )}
+      </div>
     </div>
   );
 }

@@ -11,7 +11,14 @@ export default function IdentityChecks({ signals }: { signals?: IntegritySignal[
       {signals.map((signal) => (
         <div className={`integrity-row integrity-${signal.status}`} key={signal.id}>
           {signal.status === "ok" ? <Check size={13} /> : signal.status === "warn" ? <AlertTriangle size={13} /> : <CircleHelp size={13} />}
-          <span><strong>{signal.label}.</strong>{signal.status !== "ok" && <> {signal.detail}</>}</span>
+          <span>
+            <strong>{signal.label}.</strong>
+            {signal.status === "ok" ? (
+              signal.detail ? <details className="inline-disclosure"><summary>Details</summary> {signal.detail}</details> : null
+            ) : (
+              <> {signal.detail}</>
+            )}
+          </span>
         </div>
       ))}
     </div>

@@ -13,10 +13,11 @@ type SectionTabsProps = {
   active: string;
   onChange: (id: string) => void;
   ariaLabel: string;
+  idPrefix?: string;
 };
 
 /** Compact segmented action bar: one visible section at a time, everything reachable in one tap. */
-export default function SectionTabs({ tabs, active, onChange, ariaLabel }: SectionTabsProps) {
+export default function SectionTabs({ tabs, active, onChange, ariaLabel, idPrefix = "section" }: SectionTabsProps) {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   function onKeyDown(event: React.KeyboardEvent, index: number) {
@@ -40,6 +41,8 @@ export default function SectionTabs({ tabs, active, onChange, ariaLabel }: Secti
         return (
           <button
             key={tab.id}
+            id={`${idPrefix}-tab-${tab.id}`}
+            aria-controls={`${idPrefix}-panel-${tab.id}`}
             ref={(element) => { tabRefs.current[index] = element; }}
             type="button"
             role="tab"
