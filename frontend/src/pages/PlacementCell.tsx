@@ -156,24 +156,24 @@ export default function PlacementCell() {
   return (
     <div className="placement-page">
       <header className="placement-heading">
-        <div><div className="eyebrow">PLACEMENT CELL · BATCH INSIGHTS</div><h1>Skills across your cohort</h1><p>Evidence ladders show where students have proof and where a shared workshop can help.</p></div>
+        <div><h1>Skills across your cohort</h1><p>See where students have proof and where a shared workshop can help.</p></div>
         <div className="placement-filters">
-          <label className="role-select-label">EVALUATE COHORT AGAINST<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label className="role-select-label">CANDIDATE PREFERRED ROLE<select value={preferredRole} onChange={(event) => setPreferredRole(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="role-select-label">Role<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="role-select-label">Preferred role<select value={preferredRole} onChange={(event) => setPreferredRole(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         </div>
       </header>
-      {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
+      {demoPresent && <div className="demo-notice">Includes demo passports.</div>}
       {error && <div className="notice notice-error" role="alert">{error}<button type="button" className="link-button" onClick={() => void (retryLoadMore ? loadMore() : loadInitial())}>Retry</button></div>}
       {loading && <div className="page-message" role="status">Loading cohort insights…</div>}
       {!loading && loadedPassportCount < totalPassports && <p className="muted cohort-page-note">Role filters and exports cover the {loadedPassportCount} loaded passports so far.</p>}
       <div className="placement-stats">
-        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>STUDENTS IN VIEW</small><strong>{visiblePassports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
-        <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>AVERAGE REQUIREMENTS MET</small><strong>{avgMet} <i>of {requirements.length} requirements</i></strong></div></section>
-        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>SUGGESTED WORKSHOP</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `For ${topGap.percent}% of this group, no evidence was found in the analysed files.` : "The highest shared evidence gap appears here."}</p></div></section>
+        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>Students</small><strong>{visiblePassports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
+        <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>Avg. requirements met</small><strong>{avgMet} <i>of {requirements.length}</i></strong></div></section>
+        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>Suggested workshop</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `No evidence found for ${topGap.percent}% of this group.` : "The highest shared gap appears here."}</p></div></section>
       </div>
       <section className="panel ranking-panel">
         <div className="panel-heading">
-          <div><div className="eyebrow">CANDIDATE RANKING · {role?.name ?? "ROLE"}</div><h2>Who has the strongest evidence</h2></div>
+          <div><h2>Candidate ranking · {role?.name ?? "Role"}</h2></div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             {ranked.length > 0 && (
               <button
@@ -186,7 +186,7 @@ export default function PlacementCell() {
                 <Download size={13} /> Export shown CSV
               </button>
             )}
-            <span className="muted">Ranked by must-have requirements met, then all requirements met, then authorship checks</span>
+            <span className="muted">Ranked by must-haves met, then total met, then authorship checks</span>
           </div>
         </div>
         {!loading && !error && !ranked.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to rank candidates."}</div> : ranked.length > 0 ? (
@@ -195,7 +195,7 @@ export default function PlacementCell() {
               <div className="best-candidate">
                 <span className="stat-icon green"><Award size={18} /></span>
                 <div>
-                  <small>STRONGEST CANDIDATE</small>
+                  <small>Top candidate</small>
                   <strong>{best.passport.github_username}{best.passport.is_demo && <em> DEMO DATA</em>}</strong>
                   <p>
                     Meets {best.mustMet} of {best.mustTotal} must-have and {best.met} of {requirements.length} total requirements; {best.codeMet} with code evidence (Applied or Demonstrated).{" "}
@@ -239,14 +239,14 @@ export default function PlacementCell() {
                 ))}</tbody>
               </table>
             </div>
-            <p className="ranking-note">Verifiability counts advisory authorship checks (line authorship, commit history, bulk uploads, matching code in earlier public sources, AI chat text left in files). A warning is a prompt to look, not a finding. Unverified resume claims never count towards requirements.</p>
+            <p className="ranking-note">Authorship warnings are prompts to look, not findings. Unverified claims never count towards requirements.</p>
           </>
         ) : null}
         {!loading && loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
       </section>
       <div className="placement-grid">
         <section className="panel heatmap-panel">
-          <div className="panel-heading"><div><div className="eyebrow">EVIDENCE BY STUDENT</div><h2>{role?.name ?? "Role"} requirements</h2></div><span className="muted">Select a row to open a passport</span></div>
+          <div className="panel-heading"><div><h2>Requirements by student</h2></div><span className="muted">Select a row to open a passport</span></div>
           {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
               <table className="heatmap-table">
@@ -269,7 +269,7 @@ export default function PlacementCell() {
           </div>
         </section>
         <section className="panel gaps-panel">
-          <div className="panel-heading"><div><div className="eyebrow">SHARED LEARNING GAPS</div><h2>Requirements most often not found</h2></div></div>
+          <div className="panel-heading"><div><h2>Most common gaps</h2></div></div>
           <div className="gap-chart">
             {gaps.length ? (
               <div className="gap-bars-list">
@@ -294,4 +294,4 @@ export default function PlacementCell() {
       </div>
     </div>
   );
-}
+               }
