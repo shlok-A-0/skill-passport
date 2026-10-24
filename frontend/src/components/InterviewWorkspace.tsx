@@ -1,5 +1,5 @@
 import { AlertTriangle, ExternalLink, Eye, EyeOff, Lock, MessagesSquare, RefreshCw, Wrench } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type InterviewOutcome, type InterviewQuestion, type InterviewSession } from "../api";
 import { anchorLines, defaultSessionId, INTERVIEW_DISCLAIMER, newIdempotencyKey, OUTCOME_ORDER, sessionLabel } from "../interview";
 
@@ -119,19 +119,41 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
   const [sessions, setSessions] = useState<InterviewSession[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<{ message: string; retry?: () => void } | null>(null);
   // Kept until the server answers, so retrying after a dropped connection can't create a second set.
   const pendingKey = useRef<string | null>(null);
 
-  useEffect(() => {
+  const loadSessions = useCallback(() => {
     let active = true;
-    setSessions(null);
-    setError("");
+    setLoading(true);
+    setError(null);
     api.interviewSessions(passportId)
-      .then(({ items }) => { if (active) { setSessions(items); setActiveId(defaultSessionId(items)); } })
-      .catch((reason: Error) => { if (active) { setSessions([]); setError(reason.message); } });
+      .then(({ items }) => {
+        if (active) {
+          setSessions(items);
+          setActiveId((current) => current ?? defaultSessionId(items));
+        }
+      })
+      .catch((reason: Error) => {
+        if (active) {
+          setSessions((current) => current ?? []);
+          setError({
+            message: reason.message || "Could not load interview sets.",
+            retry: loadSessions,
+          });
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => { active = false; };
   }, [passportId]);
+
+  useEffect(() => {
+    setSessions(null);
+    return loadSessions();
+  }, [loadSessions]);
 
   // A set still generating (e.g. the page was reloaded mid-generation) appears once it's saved.
   // Polling stops by itself: the server reports a set stuck for 5 minutes as failed.
@@ -150,7 +172,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
   async function generate() {
     if (generating) return;
     setGenerating(true);
-    setError("");
+    setError(null);
     pendingKey.current ??= newIdempotencyKey();
     try {
       const session = await api.createInterviewSession(passportId, pendingKey.current);
@@ -160,7 +182,10 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
     } catch (reason) {
       // The server answered (failed or busy): the next click is a new attempt with a new key.
       if (reason instanceof ApiError && reason.status !== 0) pendingKey.current = null;
-      setError(reason instanceof Error ? reason.message : "Could not generate an interview set.");
+      setError({
+        message: reason instanceof Error ? reason.message : "Could not generate an interview set.",
+        retry: generate,
+      });
       api.interviewSessions(passportId).then(({ items }) => setSessions(items)).catch(() => undefined);
     } finally {
       setGenerating(false);
@@ -176,7 +201,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
     if (activeId) {
       api.interviewSession(activeId)
         .then((fresh) => setSessions((current) => (current ?? []).map((item) => item.id === fresh.id ? fresh : item)))
-        .catch((reason: Error) => setError(reason.message));
+        .catch((reason: Error) => setError({ message: reason.message }));
     }
   }
 
@@ -192,7 +217,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
         </div>
         <div className="interview-actions">
           {session?.status === "ready" && <span className="interview-summary-pill">{session.summary.text}</span>}
-          <button type="button" className="button" onClick={generate} disabled={generating || sessions === null}>
+          <button type="button" className="button" onClick={generate} disabled={generating || loading || sessions === null}>
             {generating ? <><RefreshCw size={14} className="spin" /> Generating…</> : <><MessagesSquare size={14} /> {readySets ? "Generate another set" : "Generate interview set"}</>}
           </button>
         </div>
@@ -200,7 +225,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
       <p className="muted interview-note">
         Questions are picked from the job requirements and the candidate's cited code: job-critical requirements whose attribution needs a look come first, strong evidence last. Each question is checked against the cited file and lines before it's saved. {INTERVIEW_DISCLAIMER}
       </p>
-      {error && <div className="notice notice-error">{error} {!generating && <button type="button" className="link-button" onClick={generate}>Try again</button>}</div>}
+      {error && <div className="notice notice-error">{error.message} {!generating && !loading && error.retry && <button type="button" className="link-button" onClick={error.retry}>Try again</button>}</div>}
       {sessions && sessions.length > 1 && (
         <label className="interview-picker">Interview set
           <select value={activeId ?? ""} onChange={(event) => setActiveId(event.target.value)}>
@@ -209,7 +234,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
         </label>
       )}
       {sessions === null && <p className="muted">Loading interview sets…</p>}
-      {sessions && !sessions.length && !generating && !error && (
+      {sessions && !sessions.length && !generating && !loading && !error && (
         <div className="empty-state">No interview set yet. Generate one to get questions grounded in this candidate's cited code. Refreshing the page never generates new questions.</div>
       )}
       {session?.status === "failed" && <div className="notice notice-error">{session.error ?? "Generation failed."} Generate a new set to try again.</div>}
