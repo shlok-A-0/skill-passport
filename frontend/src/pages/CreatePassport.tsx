@@ -21,6 +21,18 @@ const steps = [
   "Done",
 ];
 
+/** Per-letter spans for the home headline entrance; the h1 keeps a plain aria-label for screen readers. */
+function headlineLetters(text: string, start: number) {
+  let seen = 0;
+  return [...text].map((char, index) => {
+    if (char === " ") return " ";
+    const delay = (start + seen++) * 26;
+    return <span className="headline-letter" style={{ animationDelay: `${delay}ms` }} key={index}>{char}</span>;
+  });
+}
+const HEADLINE_LINE_1 = "Your work speaks.";
+const HEADLINE_LINE_2 = "Now show the proof.";
+
 export default function CreatePassport({ job, onJobChange, pollingPaused = false, generationError = "", onRetryPolling }: {
   job: PassportJob | null;
   onJobChange: (job: PassportJob) => void;
@@ -208,7 +220,13 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   return (
     <div className="create-layout">
       <section className="create-intro">
-        <h1>Your work speaks.<br /><em>Now show the proof.</em></h1>
+        <h1 aria-label="Your work speaks. Now show the proof.">
+          <span aria-hidden="true">
+            {headlineLetters(HEADLINE_LINE_1, 0)}
+            <br />
+            <em>{headlineLetters(HEADLINE_LINE_2, HEADLINE_LINE_1.replace(/ /g, "").length)}</em>
+          </span>
+        </h1>
         <p>Create a skill profile from your GitHub work and resume, with links to the code behind each verified skill.</p>
       </section>
       <section className="panel create-card">
