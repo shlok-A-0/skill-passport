@@ -781,14 +781,24 @@ def _queue_depth_backfill(passport: dict[str, Any], background_tasks: Background
         background_tasks.add_task(_run_depth_backfill, passport_id)
 
 
-def _stored_passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
+def _maybe_queue_depth_backfill(passport: dict, background_tasks: BackgroundTasks) -> None:
+    if (config.ENABLE_SQL_DEPTH and passport.get("sql_depth") is None) or (
+        config.ENABLE_SKILL_DEPTH and passport.get("skill_depth") is None
+    ):
+        _queue_depth_backfill(passport, background_tasks)
+
+
+def _stored_passport(
+    passport_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    queue_backfill: bool = True,
+) -> dict:
     result = get_passport(passport_id)
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
-    if (config.ENABLE_SQL_DEPTH and result.get("sql_depth") is None) or (
-        config.ENABLE_SKILL_DEPTH and result.get("skill_depth") is None
-    ):
-        _queue_depth_backfill(result, background_tasks)
+    if queue_backfill:
+        _maybe_queue_depth_backfill(result, background_tasks)
     return result
 
 
@@ -848,7 +858,7 @@ def create_passport_review_request(
 ) -> dict:
     """A student asks for a human look at an excluded citation. Never changes levels or exclusions."""
     _require_passport_access(passport_id, x_passport_token)
-    stored = _stored_passport(passport_id, background_tasks)
+    stored = _stored_passport(passport_id, background_tasks, queue_backfill=False)
     if body.citation_key not in _excluded_keys(stored):
         raise HTTPException(status_code=422, detail="Reviews can only be requested for citations that were not counted.")
     result, reason = create_review_request(
@@ -860,6 +870,7 @@ def create_passport_review_request(
         raise HTTPException(status_code=409, detail="A review is already requested for this citation.")
     if result is None:
         raise HTTPException(status_code=500, detail="Could not create review request.")
+    _maybe_queue_depth_backfill(stored, background_tasks)
     return result
 
 

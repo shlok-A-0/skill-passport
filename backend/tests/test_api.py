@@ -251,6 +251,42 @@ def test_stored_passport_returns_saved_data_and_queues_backfill(monkeypatch) -> 
     assert len(queued) == 1 and queued[0][0] is saved
 
 
+@pytest.mark.parametrize(
+    ("citation_key", "request_result", "reason", "status_code"),
+    [
+        ("not-excluded", None, None, 422),
+        ("excluded", None, "duplicate", 409),
+        ("excluded", None, "limit", 429),
+    ],
+)
+def test_rejected_review_requests_do_not_queue_or_mark_depth_backfill(
+    monkeypatch, citation_key, request_result, reason, status_code
+) -> None:
+    passport = {"id": "legacy", "created_at": "created", "github_username": "student"}
+    queued = []
+    monkeypatch.setattr(main_module, "get_passport", lambda _passport_id: passport)
+    monkeypatch.setattr(main_module, "_require_passport_access", lambda *_args: None)
+    monkeypatch.setattr(main_module, "_excluded_keys", lambda _passport: {"excluded"})
+    monkeypatch.setattr(
+        main_module, "create_review_request", lambda *_args: (request_result, reason)
+    )
+    monkeypatch.setattr(main_module, "_queue_depth_backfill", lambda saved, _tasks: queued.append(saved))
+    monkeypatch.setattr(main_module.config, "ENABLE_SQL_DEPTH", True)
+    monkeypatch.setattr(main_module.config, "ENABLE_SKILL_DEPTH", True)
+    monkeypatch.setattr(main_module, "_depth_backfills", set())
+
+    with pytest.raises(main_module.HTTPException) as error:
+        main_module.create_passport_review_request(
+            "legacy",
+            main_module.ReviewRequestBody(citation_key=citation_key),
+            BackgroundTasks(),
+        )
+
+    assert error.value.status_code == status_code
+    assert queued == []
+    assert "legacy" not in main_module._depth_backfills
+
+
 def test_depth_backfill_is_deduplicated_per_passport_version(monkeypatch) -> None:
     tasks = BackgroundTasks()
     monkeypatch.setattr(main_module, "_depth_backfills", set())
