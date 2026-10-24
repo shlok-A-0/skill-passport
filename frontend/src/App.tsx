@@ -1,9 +1,6 @@
 import {
-  BadgeCheck,
-  BookOpenCheck,
   BriefcaseBusiness,
   GraduationCap,
-  LayoutDashboard,
   LogIn,
   LogOut,
   Repeat,
@@ -290,12 +287,7 @@ function AppContent() {
       {/* Global Interactive Login Modal */}
       <LoginModal />
 
-      <footer>
-        <BadgeCheck size={16} /> Built on evidence, not self-reported scores
-        <span><BriefcaseBusiness size={15} /> Recruiter-ready</span>
-        <span><BookOpenCheck size={15} /> Growth through proof</span>
-        <LayoutDashboard size={15} />
-      </footer>
+      <footer>Built on evidence, not self-reported scores</footer>
     </div>
   );
 }
