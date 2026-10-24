@@ -357,6 +357,8 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
     if "skill_depth" in view:
         if config.ENABLE_SKILL_DEPTH:
             view["skill_depth"] = student_skill_depth(view["skill_depth"])
+            if not config.ENABLE_SQL_DEPTH and view["skill_depth"]:
+                view["skill_depth"].pop("sql", None)
         else:
             view.pop("skill_depth")
     return view
@@ -364,12 +366,15 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
 
 def _without_disabled_features(passport: dict[str, Any]) -> dict[str, Any]:
     """Stored results of a feature that is now switched off are not returned."""
-    hidden = set()
+    view = {key: value for key, value in passport.items()}
     if not config.ENABLE_SQL_DEPTH:
-        hidden.add("sql_depth")
+        view.pop("sql_depth", None)
     if not config.ENABLE_SKILL_DEPTH:
-        hidden.add("skill_depth")
-    return {key: value for key, value in passport.items() if key not in hidden}
+        view.pop("skill_depth", None)
+    elif not config.ENABLE_SQL_DEPTH and isinstance(view.get("skill_depth"), dict):
+        view["skill_depth"] = copy.deepcopy(view["skill_depth"])
+        view["skill_depth"].pop("sql", None)
+    return view
 
 
 def _excluded_keys(passport: dict[str, Any]) -> set[str]:

@@ -162,6 +162,43 @@ def _citation(repo: dict[str, Any], path: str, source: dict[str, Any], start: in
             "explanation": explanation}
 
 
+def _python_import_aliases(root: ast.AST) -> dict[str, str]:
+    """Map local import names to their fully qualified modules/symbols."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(root):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                local = item.asname or item.name.split(".")[0]
+                aliases[local] = item.name if item.asname else item.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for item in node.names:
+                if item.name == "*":
+                    continue
+                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+    return aliases
+
+
+def _resolved_name(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        parent = _resolved_name(node.value, aliases)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
+
+
+def _python_framework_context(skill_id: str, text: str) -> tuple[ast.AST | None, dict[str, str]]:
+    try:
+        root = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None, {}
+    aliases = _python_import_aliases(root)
+    prefix = {"fastapi": "fastapi.", "scikit-learn": "sklearn."}.get(skill_id)
+    if prefix and not any(value.startswith(prefix) for value in aliases.values()):
+        return None, aliases
+    return root, aliases
+
+
 def _eligible_sources(ingestion: dict[str, Any], verified: dict[str, Any]):
     excluded = _excluded_files(verified)
     username = ingestion.get("username", "")
@@ -181,11 +218,41 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
         root = ast.parse(text)
     except (SyntaxError, ValueError):
         return []
+    aliases = _python_import_aliases(root)
     pydantic_models = {
         node.name for node in ast.walk(root)
         if isinstance(node, ast.ClassDef)
-        and any(ast.unparse(base).split(".")[-1] == "BaseModel" for base in node.bases)
+        and any(_resolved_name(base, aliases) == "pydantic.BaseModel" for base in node.bases)
     }
+    fastapi_routes: set[str] = set()
+    sklearn_estimators: set[str] = set()
+    for node in ast.walk(root):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(value, ast.Call):
+                called = _resolved_name(value.func, aliases)
+                for target in targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    if called in {"fastapi.FastAPI", "fastapi.APIRouter"}:
+                        fastapi_routes.add(target.id)
+                    if called.startswith("sklearn.") and (
+                        called.rsplit(".", 1)[-1].endswith(("Classifier", "Regressor"))
+                        or called in {"sklearn.pipeline.Pipeline", "sklearn.pipeline.make_pipeline"}
+                    ):
+                        sklearn_estimators.add(target.id)
+
+    def is_fastapi_route(function: ast.AST) -> bool:
+        for decorator in getattr(function, "decorator_list", []):
+            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                continue
+            if decorator.func.attr not in {"get", "post", "put", "patch", "delete", "api_route"}:
+                continue
+            if isinstance(decorator.func.value, ast.Name) and decorator.func.value.id in fastapi_routes:
+                return True
+        return False
+
     result: list[tuple[int, int, str]] = []
     for node in ast.walk(root):
         name = ""
@@ -210,30 +277,56 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
                                and ast.unparse(node.exc.func) in {"ValueError", "TypeError", "KeyError"}),
             }[competency]
         elif skill_id == "fastapi":
-            decorators = getattr(node, "decorator_list", [])
-            decorator_names = [ast.unparse(item) for item in decorators]
-            validation_names = {"BaseModel", "Field", "Query", "Path", "Body", *pydantic_models}
+            resolved = _resolved_name(node.func, aliases) if isinstance(node, ast.Call) else ""
+            validation_names = {
+                "fastapi.Field", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+                "pydantic.Field", *pydantic_models,
+            }
             matched = {
-                "routes": any(re.search(r"\.(?:get|post|put|patch|delete|api_route)\s*\(", item)
-                              for item in decorator_names),
+                "routes": isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and is_fastapi_route(node),
                 "validation": any(
                     isinstance(part, (ast.Name, ast.Attribute))
-                    and ast.unparse(part).split(".")[-1] in validation_names
+                    and (_resolved_name(part, aliases) in validation_names
+                         or (isinstance(part, ast.Name) and part.id in pydantic_models))
                     for part in ast.walk(node)
-                ),
-                "dependencies": name == "Depends",
-                "errors": name == "HTTPException" or isinstance(node, ast.Try),
-                "async": isinstance(node, (ast.AsyncFunctionDef, ast.Await)),
+                ) or any(_resolved_name(base, aliases) == "pydantic.BaseModel"
+                         for base in getattr(node, "bases", [])),
+                "dependencies": isinstance(node, ast.Call) and resolved == "fastapi.Depends",
+                "errors": isinstance(node, ast.Call) and resolved == "fastapi.HTTPException",
+                "async": isinstance(node, ast.AsyncFunctionDef) and is_fastapi_route(node),
             }[competency]
         elif skill_id == "scikit-learn":
+            resolved = _resolved_name(node.func, aliases) if isinstance(node, ast.Call) else ""
+            sklearn_calls = {
+                "sklearn.model_selection.train_test_split", "sklearn.model_selection.cross_val_score",
+                "sklearn.model_selection.KFold", "sklearn.model_selection.StratifiedKFold",
+                "sklearn.model_selection.GridSearchCV", "sklearn.pipeline.Pipeline",
+                "sklearn.pipeline.make_pipeline", "sklearn.preprocessing.StandardScaler",
+                "sklearn.preprocessing.OneHotEncoder", "sklearn.preprocessing.LabelEncoder",
+                "sklearn.compose.ColumnTransformer", "sklearn.impute.SimpleImputer",
+                "sklearn.metrics.accuracy_score", "sklearn.metrics.f1_score",
+                "sklearn.metrics.roc_auc_score", "sklearn.metrics.mean_squared_error",
+                "sklearn.metrics.classification_report",
+            }
+            receiver = (node.func.value.id if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                        else None)
             matched = {
-                "estimator": name in {"fit", "predict"} or name.endswith(("Classifier", "Regressor")),
-                "split": name in {"train_test_split", "cross_val_score", "KFold", "StratifiedKFold"},
-                "preprocessing": name in {"StandardScaler", "OneHotEncoder", "ColumnTransformer",
-                                          "SimpleImputer", "get_dummies", "LabelEncoder"},
-                "pipeline": name in {"make_pipeline", "Pipeline", "GridSearchCV"},
-                "metrics": name in {"accuracy_score", "f1_score", "roc_auc_score",
-                                    "mean_squared_error", "classification_report"},
+                "estimator": (isinstance(node, ast.Call) and resolved.startswith("sklearn.")
+                              and resolved.rsplit(".", 1)[-1].endswith(("Classifier", "Regressor")))
+                             or (isinstance(node, ast.Call) and name in {"fit", "predict"}
+                                 and receiver in sklearn_estimators),
+                "split": isinstance(node, ast.Call) and resolved in {
+                    "sklearn.model_selection.train_test_split", "sklearn.model_selection.cross_val_score",
+                    "sklearn.model_selection.KFold", "sklearn.model_selection.StratifiedKFold"},
+                "preprocessing": isinstance(node, ast.Call) and resolved in {
+                    "sklearn.preprocessing.StandardScaler", "sklearn.preprocessing.OneHotEncoder",
+                    "sklearn.preprocessing.LabelEncoder", "sklearn.compose.ColumnTransformer",
+                    "sklearn.impute.SimpleImputer"},
+                "pipeline": isinstance(node, ast.Call) and resolved in {
+                    "sklearn.pipeline.make_pipeline", "sklearn.pipeline.Pipeline",
+                    "sklearn.model_selection.GridSearchCV"},
+                "metrics": isinstance(node, ast.Call) and resolved in sklearn_calls and resolved.startswith("sklearn.metrics."),
             }[competency]
         elif skill_id == "unit-testing":
             matched = {
@@ -348,6 +441,8 @@ def _package_has_react(text: str) -> bool:
 
 
 def _parse_ok(skill_id: str, path: str, text: str) -> bool:
+    if skill_id == "unit-testing" and PurePosixPath(path).suffix.lower() != ".py":
+        return False
     if path.endswith(".py") and skill_id in {"python", "fastapi", "scikit-learn", "unit-testing"}:
         try:
             ast.parse(text)
@@ -398,14 +493,16 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
             from app.services.github_ingest import is_test_path
             if not is_test_path(path):
                 continue
-        if skill_id == "fastapi" and not re.search(r"\b(?:FastAPI|Depends|HTTPException)\b|@\w+\.(?:get|post|put|patch|delete)\s*\(", text):
-            # A language file without framework context cannot establish absence of FastAPI patterns.
-            continue
-        if skill_id == "scikit-learn" and not re.search(r"\b(?:sklearn|train_test_split|Pipeline|StandardScaler|Classifier|Regressor)\b", text):
-            continue
-        if skill_id == "react" and not path.lower().endswith((".tsx", ".jsx")) and not re.search(r"\b(?:React|useState|useEffect|jsx)\b|<[A-Z]\w+[\s/>]", text):
-            continue
+        if skill_id in {"fastapi", "scikit-learn"}:
+            framework_root, _ = _python_framework_context(skill_id, text)
+            if framework_root is None:
+                continue
         if skill_id == "git":
+            continue
+        file_lines = source.get("lines") or text.splitlines()
+        attribution_complete, candidate_majority = _line_share(source, 1, max(1, len(file_lines)), username)
+        if not attribution_complete or not candidate_majority:
+            uncertain.update(row[0] for row in profile)
             continue
         for competency, _label, _weight, _foundation in profile:
             if skill_id == "docker" and competency == "compose":

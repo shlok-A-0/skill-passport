@@ -2,10 +2,10 @@ import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCi
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, skillLabel, type CustomRole, type OwnershipChallenge, type PassportJob, type Role } from "../api";
+import { createScoreNote } from "../sqlDepth";
 import { droppedSummary, effectiveTargetRole, extractionNote, JOB_DESCRIPTION_OPTION, jobDescriptionInputError } from "../customRole";
 import { sameGitHubUsername } from "../ownership";
 import { validatePassportForm } from "../passportForm";
-import { CREATE_SCORE_NOTE } from "../sqlDepth";
 
 const PROOF_REQUIRED = "Prove this GitHub account is yours first: get a verification code and publish it as a public gist.";
 
@@ -43,6 +43,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   const [customRolesEnabled, setCustomRolesEnabled] = useState(false);
   const [reportsEnabled, setReportsEnabled] = useState(false);
   const [sqlDepthEnabled, setSqlDepthEnabled] = useState(false);
+  const [skillDepthEnabled, setSkillDepthEnabled] = useState(false);
   const [reports, setReports] = useState<File[]>([]);
   const [portfolioUrl, setPortfolioUrl] = useState("");
   const [jdTitle, setJdTitle] = useState("");
@@ -138,10 +139,12 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       setCustomRolesEnabled(features.custom_roles);
       setReportsEnabled(features.reports);
       setSqlDepthEnabled(Boolean(features.sql_depth));
+      setSkillDepthEnabled(Boolean(features.skill_depth));
     }).catch(() => {
       setCustomRolesEnabled(false);
       setReportsEnabled(false);
       setSqlDepthEnabled(false);
+      setSkillDepthEnabled(false);
     });
   }, []);
 
@@ -358,7 +361,9 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             )}
           </section>
         )}
-        <p className="privacy-note">{sqlDepthEnabled ? CREATE_SCORE_NOTE : "No numeric skill scores."} Unverified resume claims stay separate and never count as a match.</p>
+        <p className="privacy-note">
+          {createScoreNote(sqlDepthEnabled, skillDepthEnabled)} Unverified resume claims stay separate and never count as a match.
+        </p>
       </section>
     </div>
   );

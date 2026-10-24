@@ -168,8 +168,9 @@ def _python_sql_strings(content: str) -> dict[str, Any]:
         elif isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
             assigned.setdefault(node.target.id, []).append(node.value)
 
-    # (value, first line, last line, lines of the calls that run it); a constant may be run by several calls.
-    strings: dict[tuple[int, int], tuple[str, int, int, list[int]]] = {}
+    # The final flag records whether decoded newlines map one-to-one to source lines.
+    # Python escape sequences and line continuations can make that mapping ambiguous.
+    strings: dict[tuple[int, int], tuple[str, int, int, list[int], bool]] = {}
     dynamic: list[tuple[int, int]] = []
     unresolved = 0
     for node in ast.walk(tree):
@@ -193,7 +194,12 @@ def _python_sql_strings(content: str) -> dict[str, Any]:
                 dynamic.append((start, end))
             continue
         if SQL_START.match(value):
-            strings.setdefault((argument.lineno, argument.col_offset), (value, start, end, []))[3].append(node.lineno)
+            source_literal = ast.get_source_segment(content, argument) or ""
+            line_mapping_exact = (end - start) == value.count("\n")
+            if "\\\n" in source_literal or "\\\r\n" in source_literal:
+                line_mapping_exact = False
+            strings.setdefault((argument.lineno, argument.col_offset),
+                               (value, start, end, [], line_mapping_exact))[3].append(node.lineno)
     return {"strings": list(strings.values()), "dynamic": dynamic, "unresolved": unresolved}
 
 
@@ -232,29 +238,32 @@ def _extract(path: str, source: dict[str, Any]) -> dict[str, Any]:
     skipped: list[tuple[int, int, str, str]] = []
     unresolved = 0
     if path.lower().endswith(".sql"):
-        pieces = [(content, 1, max(1, len(source.get("lines", []))), True, [])]
+        pieces = [(content, 1, max(1, len(source.get("lines", []))), True, [], True)]
     else:
         try:
             result = _python_sql_strings(content)
         except (SyntaxError, ValueError):
             return {"statements": [], "skipped": [], "unresolved": 0}
-        pieces = [(value, start, end, "\n" in value, calls) for value, start, end, calls in result["strings"]]
+        pieces = [(value, start, end, "\n" in value, calls, mapping_exact)
+                  for value, start, end, calls, mapping_exact in result["strings"]]
         skipped.extend(
             (start, end, "dynamic", "SQL built at runtime (f-string or concatenation with variables); not analysed.")
             for start, end in result["dynamic"]
         )
         unresolved = result["unresolved"]
-    for value, start, end, multiline, calls in pieces:
+    for value, start, end, multiline, calls, mapping_exact in pieces:
         try:
             statements = _statements(value)
         except SqlglotError:
             skipped.append((start, end, "unparseable", "SQL could not be read (unbalanced quotes or comments)."))
             continue
         for text, first, last in statements:
-            if multiline:
+            if multiline and mapping_exact:
                 # Value line k is file line start + k - 1 (triple-quoted strings and .sql files).
                 lines = max(start, min(end, start + first - 1)), max(start, min(end, start + last - 1))
             else:
+                # Escapes can suppress or introduce decoded newlines. Use the entire source
+                # literal as a safe citation and blame range when its exact line map is unknown.
                 lines = start, end
             found.append((text, *lines, calls))
     return {"statements": found, "skipped": skipped, "unresolved": unresolved}
@@ -385,13 +394,15 @@ def _join_pairs(expression: exp.Expression) -> set[tuple[str, str]]:
 # --- Application context (static only) --------------------------------------------------------
 
 
-def _python_index(repo: dict[str, Any]) -> dict[str, Any]:
+def _python_index(repo: dict[str, Any], excluded_paths: set[str] | None = None) -> dict[str, Any]:
     """Functions, call sites and string constants in the repo's analysed, non-test Python files."""
+    excluded_paths = excluded_paths or set()
     functions: dict[str, list[dict[str, Any]]] = {}
     calls: list[dict[str, Any]] = []
     strings: list[dict[str, Any]] = []
     for path, source in (repo.get("source_files") or {}).items():
-        if not path.endswith(".py") or is_test_path(path):
+        if (not path.endswith(".py") or is_test_path(path) or path in excluded_paths
+                or not source.get("authored_shas")):
             continue
         try:
             tree = ast.parse(source.get("content") or "\n".join(source.get("lines", [])))
@@ -601,7 +612,8 @@ def compute_sql_depth(ingestion: dict[str, Any], verified: dict[str, Any]) -> di
     skipped: list[dict[str, Any]] = []
     unresolved = 0
     for repo in repos:
-        index = _python_index(repo)
+        excluded_paths = {path for repo_name, path in earlier_source_files if repo_name == repo["name"]}
+        index = _python_index(repo, excluded_paths)
         for path, source in (repo.get("source_files") or {}).items():
             if is_test_path(path) or not (path.endswith(".py") or path.lower().endswith(".sql")):
                 continue
@@ -846,21 +858,23 @@ def _integration(
         for group in wired
     ]
     # A workflow: one table written and read (or changed in more than one way) by distinct queries.
-    operations: dict[str, set[str]] = {}
+    operations: dict[tuple[str, str], set[str]] = {}
     for group in distinct:
-        if group["statement"] == "select":
-            for table in group["tables"]:
-                operations.setdefault(table, set()).add("select")
-        elif group["target"]:
-            operations.setdefault(group["target"], set()).add(group["statement"])
-    workflows = sorted(table for table, ops in operations.items() if len(ops) >= 2)
+        for repo_name in {item["repo"] for item in group["occurrences"]}:
+            if group["statement"] == "select":
+                for table in group["tables"]:
+                    operations.setdefault((repo_name, table), set()).add("select")
+            elif group["target"]:
+                operations.setdefault((repo_name, group["target"]), set()).add(group["statement"])
+    workflows = sorted((repo, table) for (repo, table), ops in operations.items() if len(ops) >= 2)
     workflow_points = 0 if not workflows else 15 if len(workflows) == 1 else 30
     pairs = set().union(*(group["join_pairs"] for group in distinct), *(s["pairs"] for s in other_statements))
     relationship_points = 0 if not pairs else 15 if len(pairs) == 1 else 30
     parts = [f"{len(wired)} of {count} distinct queries are reached from application code ({round(wiring_points)}/40)"]
     parts.append(
         "connected workflows on " + ", ".join(
-            f"{table} ({'/'.join(sorted(operations[table]))})" for table in workflows
+            f"{repo}/{table} ({'/'.join(sorted(operations[(repo, table)]))})"
+            for repo, table in workflows
         ) + f" ({workflow_points}/30)" if workflows else "no table is both written and read by distinct queries (0/30)"
     )
     parts.append(

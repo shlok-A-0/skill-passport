@@ -3,7 +3,19 @@ import type { SqlDepth, SqlDepthPart, SqlDepthPartKey, SqlEvidence } from "./api
 export const SQL_DEPTH_NOTE = "Depth of SQL evidence in the analysed repositories, not a full measure of skill.";
 export const SQL_DEPTH_MISSING = "SQL evidence depth not recorded for this passport. Re-check to update.";
 export const SQL_DEPTH_UNAVAILABLE = "SQL evidence depth unavailable for this passport. Use Re-check to try again.";
-export const CREATE_SCORE_NOTE = "No scores for general skills. SQL depth is scored point by point, with the proof for each point.";
+
+export function createScoreNote(sqlDepthEnabled: boolean, skillDepthEnabled: boolean): string {
+  if (sqlDepthEnabled && skillDepthEnabled) {
+    return "Separate, provisional evidence scores summarize patterns for SQL and selected pilot skills; they are not proficiency ratings.";
+  }
+  if (skillDepthEnabled) {
+    return "Separate, provisional evidence scores summarize patterns for selected pilot skills; they are not proficiency ratings.";
+  }
+  if (sqlDepthEnabled) {
+    return "SQL evidence depth is scored point by point with cited proof; it is not a measure of overall proficiency.";
+  }
+  return "No numeric skill scores.";
+}
 
 /** The order the parts are weighted in: complexity, breadth, repetition, integration, authorship, testing. */
 export const PART_ORDER: SqlDepthPartKey[] = ["complexity", "breadth", "repetition", "integration", "authorship", "testing"];

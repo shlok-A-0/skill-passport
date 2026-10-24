@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  evidenceWhere, partPoints, partRows, PART_ORDER, SQL_DEPTH_NOTE, sqlDepthHeadline, sqlDepthWarnings,
+  createScoreNote, evidenceWhere, partPoints, partRows, PART_ORDER, SQL_DEPTH_NOTE, sqlDepthHeadline, sqlDepthWarnings,
 } from "../src/sqlDepth.ts";
 
 const part = (label: string, points: number, max_points: number) => ({
@@ -50,4 +50,11 @@ test("evidence locations name the repository, file and lines", () => {
 
 test("the disclaimer says it is not a full measure of skill", () => {
   assert.equal(SQL_DEPTH_NOTE, "Depth of SQL evidence in the analysed repositories, not a full measure of skill.");
+});
+
+test("passport creation copy reflects both depth feature flags", () => {
+  assert.match(createScoreNote(true, true), /SQL and selected pilot skills/);
+  assert.match(createScoreNote(false, true), /selected pilot skills/);
+  assert.match(createScoreNote(true, false), /SQL evidence depth/);
+  assert.equal(createScoreNote(false, false), "No numeric skill scores.");
 });

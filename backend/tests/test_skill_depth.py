@@ -150,6 +150,44 @@ def test_react_javascript_files_with_jsx_are_analyzed():
     assert components["evidence"][0]["file_path"] == "src/Widget.js"
 
 
+def test_react_project_context_allows_automatic_jsx_runtime():
+    data = repo({"src/Widget.js": "export function Widget() { return <button>Go</button>; }\n"})
+    data["dependency_contents"] = {"package.json": '{"dependencies":{"react":"^19"}}'}
+    result = run("react", data)
+    components = next(row for row in result["competencies"] if row["id"] == "components")
+    assert components["status"] == "observed"
+
+
+def test_javascript_unit_tests_are_insufficient_until_a_parser_exists():
+    code = "import { describe, it, expect } from 'vitest';\ndescribe('x', () => it('works', () => expect(1).toBe(1)));\n"
+    result = run("unit-testing", repo({"tests/example.test.js": code}))
+    assert result["score"] is None
+    assert all(row["status"] == "insufficient_evidence" for row in result["competencies"])
+
+
+def test_missing_line_blame_cannot_establish_zero_depth_or_coverage():
+    data = repo({"src/a.py": "x = 1\n"})
+    data["source_files"]["src/a.py"]["blame"] = None
+    result = run("python", data)
+    assert result["score"] is None
+    assert result["coverage"]["percent"] == 0
+    assert all(row["status"] == "insufficient_evidence" for row in result["competencies"])
+
+
+def test_fastapi_profile_ignores_flask_decorators_and_async_handlers():
+    code = "from flask import Flask\napp = Flask(__name__)\n@app.get('/')\nasync def route():\n    try:\n        return {}\n    except Exception:\n        return {}\n"
+    result = run("fastapi", repo({"app.py": code}))
+    assert result["score"] is None
+    assert not any(row["status"] == "observed" for row in result["competencies"])
+
+
+def test_scikit_profile_ignores_unrelated_classifier_and_fit_names():
+    code = "class Classifier:\n    def fit(self, values): return self\nmodel = Classifier()\nmodel.fit(data)\n"
+    result = run("scikit-learn", repo({"model.py": code}))
+    assert result["score"] is None
+    assert not any(row["status"] == "observed" for row in result["competencies"])
+
+
 def test_docker_compose_only_counts_when_authored():
     compose = "services:\n  app:\n    image: demo\n"
     data = repo({}, config={"compose.yaml": compose}, authored_paths={"compose.yaml": True})
@@ -214,9 +252,14 @@ def test_student_view_redacts_depth_advisories_without_mutating_stored_passport(
     assert "integrity" in saved["sql"]["competencies"][0]["evidence"][0]
     stored = {"id": "p", "skills": [], "rejected_claims": [], "interview_kit": [], "skill_depth": saved}
     assert "skill_depth" in main.student_view(stored)
+    monkeypatch.setattr(config, "ENABLE_SQL_DEPTH", False)
+    student = main.student_view(stored)
+    assert "sql" not in student["skill_depth"]
     monkeypatch.setattr(main, "list_review_requests", lambda _id: [])
     monkeypatch.setattr(main, "requirement_packets", lambda _passport: [])
-    assert "skill_depth" in main.review_view(stored)
+    recruiter = main.review_view(stored)
+    assert "sql" not in recruiter["skill_depth"]
+    assert "sql" in stored["skill_depth"]
     monkeypatch.setattr(config, "ENABLE_SKILL_DEPTH", False)
     assert "skill_depth" not in main.student_view(stored)
     assert "skill_depth" not in main.review_view(stored)

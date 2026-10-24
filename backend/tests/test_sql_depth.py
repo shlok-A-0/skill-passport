@@ -310,6 +310,14 @@ def test_extracts_execute_text_read_sql_and_sql_file_statements_with_lines() -> 
     assert snippet[-1].strip() == "ORDER BY t.created_at DESC"
 
 
+def test_backslash_suppressed_literal_newline_uses_safe_source_range() -> None:
+    code = "def run(conn):\n    conn.execute(\"\"\"\\\nSELECT id\nFROM users\nWHERE id = 1\n\"\"\")\n"
+    result = depth(repo("escaped", {"query.py": source(code)}))
+    query = result["distinct_queries"][0]["evidence"][0]
+    assert (query["start_line"], query["end_line"]) == (2, 6)
+    assert "SELECT id" in query["snippet"] and "WHERE id = 1" in query["snippet"]
+
+
 def test_text_from_other_libraries_and_non_sql_strings_are_ignored() -> None:
     code = """
     import streamlit as st
@@ -446,6 +454,17 @@ def test_earlier_source_exclusion_applies_to_every_query_in_the_file() -> None:
     assert depth(repo("r", {"q.py": source(QUERIES)}), rejected=rejected)["distinct_query_count"] == 0
 
 
+@pytest.mark.parametrize("caller_authored,excluded", [(False, False), (True, True)])
+def test_unattributed_or_excluded_python_files_cannot_wire_sql(caller_authored: bool, excluded: bool) -> None:
+    caller = source('def run():\n    return "query.sql"\n', authored=caller_authored)
+    rejected = ([{"kind": "earlier_source", "claim": {"repo": "r", "file_path": "app.py"}}]
+                if excluded else [])
+    result = depth(repo("r", {"query.sql": source("SELECT id FROM users;"), "app.py": caller}), rejected=rejected)
+    query = result["distinct_queries"][0]
+    assert query["wired"]["status"] == "none"
+    assert query["wired"]["evidence"] is None
+
+
 def test_advisory_copy_matches_are_recruiter_only() -> None:
     cited = {"type": "code", "repo": "r", "file_path": "q.py", "start_line": 2, "end_line": 2,
              "integrity": [{"id": "copy_match", "label": "Earlier public source", "status": "warn",
@@ -501,7 +520,17 @@ def test_a_workflow_needs_distinct_operations_on_one_table() -> None:
     """
     result = depth(repo("r", {"r.py": source(code)}))
     assert result["parts"]["integration"]["value"] == 40 + 15
-    assert "tasks (insert/select)" in result["parts"]["integration"]["reason"]
+    assert "r/tasks (insert/select)" in result["parts"]["integration"]["reason"]
+
+
+def test_same_table_operations_in_separate_repositories_are_not_a_workflow() -> None:
+    result = depth(
+        repo("writer", {"write.sql": source("INSERT INTO users (id) VALUES (1);")}),
+        repo("reader", {"read.sql": source("SELECT id FROM users;")}),
+    )
+    integration = result["parts"]["integration"]
+    assert integration["value"] == 0
+    assert "connected workflows" not in integration["reason"]
 
 
 # --- Tests -------------------------------------------------------------------------------------
