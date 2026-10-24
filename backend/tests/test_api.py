@@ -20,7 +20,6 @@ from app.services.jobs import complete_job
 def disable_legacy_depth_backfills(monkeypatch):
     monkeypatch.setattr(main_module.config, "ENABLE_SQL_DEPTH", False)
     monkeypatch.setattr(main_module.config, "ENABLE_SKILL_DEPTH", False)
-    monkeypatch.setattr(main_module, "_queue_depth_backfill", lambda *_args: None)
 
 
 def fake_passport(passport_id: str) -> dict:

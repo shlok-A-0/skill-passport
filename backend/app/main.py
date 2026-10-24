@@ -843,11 +843,12 @@ class ReviewRequestBody(BaseModel):
 def create_passport_review_request(
     passport_id: str,
     body: ReviewRequestBody,
+    background_tasks: BackgroundTasks,
     x_passport_token: str | None = Header(default=None),
 ) -> dict:
     """A student asks for a human look at an excluded citation. Never changes levels or exclusions."""
     _require_passport_access(passport_id, x_passport_token)
-    stored = _stored_passport(passport_id)
+    stored = _stored_passport(passport_id, background_tasks)
     if body.citation_key not in _excluded_keys(stored):
         raise HTTPException(status_code=422, detail="Reviews can only be requested for citations that were not counted.")
     result, reason = create_review_request(

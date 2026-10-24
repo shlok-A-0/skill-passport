@@ -42,7 +42,11 @@ def test_legacy_depth_backfill_uses_only_the_saved_repository_revision(monkeypat
         "id": "legacy", "created_at": "created", "updated_at": "version-1", "github_username": "alice",
         "skills": [{
             "skill_id": "python",
-            "evidence": [{"type": "code", "repo": "stable", "commit_sha": "same"}],
+            "evidence": [
+                {"type": "code", "repo": "stable", "commit_sha": "same"},
+                {"type": "config", "repo": "stable-config", "commit_sha": "config-revision"},
+                {"type": "dependency", "repo": "stable-dependency", "commit_sha": "dependency-revision"},
+            ],
         }],
         "rejected_claims": [{
             "kind": "earlier_source",
@@ -51,8 +55,13 @@ def test_legacy_depth_backfill_uses_only_the_saved_repository_revision(monkeypat
         }],
     }
     ingested = {
-        "repo_count": 2,
-        "repos": [{"name": "stable", "head_sha": "same"}, {"name": "changed", "head_sha": "new"}],
+        "repo_count": 4,
+        "repos": [
+            {"name": "stable", "head_sha": "same"},
+            {"name": "stable-config", "head_sha": "config-revision"},
+            {"name": "stable-dependency", "head_sha": "dependency-revision"},
+            {"name": "changed", "head_sha": "new"},
+        ],
     }
     monkeypatch.setattr(pipeline, "get_passport", lambda _id: passport)
     monkeypatch.setattr(pipeline.config, "ENABLE_SQL_DEPTH", True)
@@ -86,7 +95,11 @@ def test_legacy_depth_backfill_uses_only_the_saved_repository_revision(monkeypat
     pipeline.ensure_depth_analyzers("legacy")
 
     assert calls == [("alice", True)]
-    assert all([repo["name"] for repo in call[1]["repos"]] == ["stable"] for call in analyzed)
+    assert all(
+        [repo["name"] for repo in call[1]["repos"]]
+        == ["stable", "stable-config", "stable-dependency"]
+        for call in analyzed
+    )
     assert all(call[2]["rejected_claims"] == passport["rejected_claims"] for call in analyzed)
     assert saved[0][0:3] == ("legacy", "version-1", "created")
     assert "current revision" in saved[0][3]["skill_depth"]["python"]["coverage"]["notes"][-1]

@@ -346,9 +346,9 @@ def ensure_depth_analyzers(passport_id: str) -> None:
         source_shas: dict[str, set[str]] = {}
         for skill in passport.get("skills") or []:
             for evidence in skill.get("evidence") or []:
-                if evidence.get("type") == "code" and evidence.get("repo"):
+                if evidence.get("repo") and evidence.get("commit_sha"):
                     source_shas.setdefault(evidence["repo"], set()).add(
-                        evidence.get("commit_sha") or ""
+                        evidence["commit_sha"]
                     )
         for rejected in passport.get("rejected_claims") or []:
             claim = rejected.get("claim") or {}
