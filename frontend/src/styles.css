@@ -224,6 +224,27 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .req-quote { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .custom-role-note { margin: 4px 0 0; color: var(--ink-soft); font-size: 12px; }
 .reports-summary > .muted { margin: 8px 0 0; }
+.sql-depth-panel summary strong { font-size: 13px; }
+.sql-depth-note { margin: 8px 0 0; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
+.sql-depth-panel .unavailable-note { display: flex; align-items: center; gap: 5px; }
+.sql-parts { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.sql-parts li { padding-top: 9px; border-top: 1px solid var(--line); }
+.sql-part-head { display: flex; justify-content: space-between; gap: 8px; color: var(--ink); font-size: 11px; }
+.sql-part-head span { color: var(--ink-soft); font-weight: 700; white-space: nowrap; }
+.sql-part-bar { height: 4px; margin: 5px 0; border-radius: 2px; background: #eef1f4; overflow: hidden; }
+.sql-part-bar i { display: block; height: 100%; background: var(--accent); }
+.sql-parts p { margin: 0 0 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.sql-evidence-link { display: block; color: var(--accent); font-size: 10px; overflow-wrap: anywhere; }
+.sql-concepts h3 { margin: 12px 0 6px; font-size: 11px; }
+.sql-concepts ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.sql-concepts li .flag-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-size: 10px; font-weight: 700; }
+.sql-queries { margin-top: 10px; font-size: 11px; }
+.sql-queries > summary { cursor: pointer; color: var(--ink-soft); font-weight: 700; }
+.sql-query { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); display: grid; gap: 3px; }
+.sql-query code { color: var(--ink); font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sql-query small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.sql-query .flag-warn { display: inline-flex; align-items: center; gap: 3px; color: var(--warning); }
+.sql-depth-small { margin: 8px 0 0; color: var(--subtle); font-size: 9px; line-height: 1.5; }
 .report-entry { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 11px; overflow-wrap: anywhere; }
 .report-claims, .report-links { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 .report-claims li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }

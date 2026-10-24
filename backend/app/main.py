@@ -57,6 +57,7 @@ from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
 from app.services.pipeline import run_passport_job, run_recheck_job
 from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
+from app.services.sql_depth import student_sql_depth
 from app.services.storage import (
     check_storage_rate_limit,
     check_storage_ready,
@@ -347,7 +348,19 @@ def student_view(passport: dict[str, Any], requests: list[dict[str, Any]] | None
         for item in view.get("rejected_claims", [])
     ]
     view["check_labels"] = CHECK_LABELS
+    if "sql_depth" in view:
+        if config.ENABLE_SQL_DEPTH:
+            view["sql_depth"] = student_sql_depth(view["sql_depth"])
+        else:
+            view.pop("sql_depth")
     return view
+
+
+def _without_disabled_features(passport: dict[str, Any]) -> dict[str, Any]:
+    """Stored results of a feature that is now switched off are not returned."""
+    if config.ENABLE_SQL_DEPTH or "sql_depth" not in passport:
+        return passport
+    return {key: value for key, value in passport.items() if key != "sql_depth"}
 
 
 def _excluded_keys(passport: dict[str, Any]) -> set[str]:
@@ -361,7 +374,7 @@ def _excluded_keys(passport: dict[str, Any]) -> set[str]:
 def review_view(passport: dict[str, Any]) -> dict[str, Any]:
     """The full passport for recruiters, with the student's review requests."""
     return {
-        **passport,
+        **_without_disabled_features(passport),
         "check_labels": CHECK_LABELS,
         "review_requests": list_review_requests(passport["id"]),
         # Computed on read (deterministic, no LLM), so stored passports get it too.
@@ -473,7 +486,11 @@ def skills() -> list[dict[str, str]]:
 @app.get("/features")
 def features() -> dict[str, bool]:
     """Optional features the frontend shows only when enabled."""
-    return {"custom_roles": config.ENABLE_CUSTOM_ROLES, "reports": config.ENABLE_REPORTS}
+    return {
+        "custom_roles": config.ENABLE_CUSTOM_ROLES,
+        "reports": config.ENABLE_REPORTS,
+        "sql_depth": config.ENABLE_SQL_DEPTH,
+    }
 
 
 class JobDescriptionBody(BaseModel):
@@ -750,7 +767,7 @@ def review_passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0
     return {
         "items": [
             {
-                **item,
+                **_without_disabled_features(item),
                 "check_labels": CHECK_LABELS,
                 "review_requests": all_requests.get(item["id"], []),
                 "requirement_packets": requirement_packets(item),

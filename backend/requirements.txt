@@ -9,3 +9,4 @@ python-multipart>=0.0.9
 python-dotenv>=1,<2
 pytest>=8,<9
 truststore>=0.10
+sqlglot>=30,<31

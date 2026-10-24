@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from app import config
 from app.config import VERIFIER_VERSION
 from app.services.claim_proposer import propose_claims
 from app.services.copy_check import add_copy_signals
@@ -33,6 +34,7 @@ from app.services.jobs import (
 )
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
 from app.services.role_match import match_role
+from app.services.sql_depth import safe_sql_depth
 from app.services.storage import get_passport, save_passport
 from app.services.verifier import exclude_uncounted_citations, verify_claims
 
@@ -290,6 +292,9 @@ def build_passport(
         passport["sources"]["reports"] = len(reports)
     if portfolio:
         passport["portfolio"] = portfolio
+    if config.ENABLE_SQL_DEPTH:
+        # Read-only, after exclusion: uses the final evidence and never changes levels or the match.
+        passport["sql_depth"] = safe_sql_depth(ingestion, verified)
     if existing:
         # Union of old and new skills, after earlier sources were excluded; a skill
         # that is absent on one side counts as Claimed (no evidence).

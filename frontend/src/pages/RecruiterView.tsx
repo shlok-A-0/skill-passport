@@ -6,6 +6,7 @@ import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
 import ReportsPanel from "../components/ReportsPanel";
+import SqlDepthPanel from "../components/SqlDepthPanel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
@@ -177,6 +178,7 @@ export default function RecruiterView() {
             )) : <p className="muted">{kitUnavailable(passport) ? KIT_UNAVAILABLE : "Interview prompts will appear when verified code evidence is available."}</p>}
           </details>
           <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" />
+          <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
         </aside>
       </div>
       <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
