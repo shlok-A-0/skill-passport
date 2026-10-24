@@ -919,7 +919,7 @@ def targeting_test(
             # and actively exercise or reference the cited implementation/module.
             if content is not None:
                 if not content.strip() or not test_targets_implementation_with_assertions(
-                        content, path, stem or fallback):
+                        content, path, stem or fallback, cited_path):
                     return False
         return True
 

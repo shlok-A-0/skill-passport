@@ -196,6 +196,22 @@ def test_committed_javascript_test_can_assert_on_an_imported_symbol() -> None:
     assert targeting_test("src/db.js", repo, committed_only=True) is None
 
 
+def test_committed_javascript_test_does_not_mix_symbols_from_same_stem_modules() -> None:
+    from app.services.verifier import targeting_test
+
+    path = "src/db.test.js"
+    code = (
+        "import { connect } from './db';\n"
+        "import { query } from './legacy/db';\n"
+        "test('query', () => { expect(query()).toEqual([]); });"
+    )
+    repo = {"test_files": [path], "test_contents": {path: code}, "test_authored": {path: True}}
+    assert targeting_test("src/db.js", repo, committed_only=True) is None
+
+    repo["test_contents"][path] = code.replace("query()).toEqual", "connect()).toEqual")
+    assert targeting_test("src/db.js", repo, committed_only=True) == {"path": path, "match": "import"}
+
+
 def test_targeting_test_rejects_unrelated_assertions_in_matching_filename() -> None:
     from app.services.verifier import targeting_test
     # A test named test_engine.py that has assertions for an unrelated function calc()

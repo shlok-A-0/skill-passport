@@ -1,4 +1,5 @@
 import ast
+import posixpath
 import re
 from pathlib import PurePosixPath
 
@@ -308,7 +309,9 @@ def check_test_has_assertions(content: str, path: str) -> bool:
     return any(token in stripped for token in general_assertion_tokens)
 
 
-def test_targets_implementation_with_assertions(content: str, path: str, module_stem: str) -> bool:
+def test_targets_implementation_with_assertions(
+    content: str, path: str, module_stem: str, cited_path: str | None = None
+) -> bool:
     """Establish that the test file has a test function containing assertions that actually
     exercises or references the cited module/symbol, not merely an unrelated test in a file
     with a matching name.
@@ -377,7 +380,18 @@ def test_targets_implementation_with_assertions(content: str, path: str, module_
         )
         imports = list(import_pattern.finditer(content))
         for match in imports:
-            if PurePosixPath(match.group(3)).stem.lower() != stem_lower:
+            spec = match.group(3)
+            if not spec.startswith("."):
+                continue
+            imported_path = posixpath.normpath(posixpath.join(
+                str(PurePosixPath(path).parent), spec
+            ))
+            imported_module = PurePosixPath(imported_path).with_suffix("").as_posix()
+            if cited_path is not None:
+                cited_module = PurePosixPath(cited_path).with_suffix("").as_posix()
+                if imported_module != cited_module:
+                    continue
+            elif PurePosixPath(spec).stem.lower() != stem_lower:
                 continue
             clause = match.group(1).strip()
             named = re.search(r"\{([^}]*)\}", clause)
