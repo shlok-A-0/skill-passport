@@ -395,12 +395,16 @@ def test_sql_query_identifiers_ground_questions() -> None:
     # Quoted SQL names
     quoted = 'SELECT "amount_cents", "category" FROM "expenses"'
     assert _grounded("What is amount_cents in expenses?", quoted)
+    # Python and JavaScript identifiers (including count, update) remain valid
+    assert _grounded("Why is count incremented here?", "count += 1")
+    assert _grounded("What does update do?", "def update(item):\n    return item")
 
 
 def test_comment_and_string_words_do_not_ground_a_question() -> None:
     # Ordinary words in a comment or a string literal name no identifier, however suggestive.
     assert not _grounded("When should an application cache results?", "x = 1  # Cache results here")
     assert not _grounded("When should an application cache results?", 'message = "Cache results here"')
+    assert not _grounded("When should an application cache results?", 'message = "cache"')
     assert not _grounded("When should an application cache results?", "const ttl = 60; // cache results")
     assert not _grounded("When should an application cache results?", "/* cache results */\nconst ttl = 60;")
     assert not _grounded("When should an application cache results?", "SELECT 1; -- cache results")

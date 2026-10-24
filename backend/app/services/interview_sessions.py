@@ -415,15 +415,14 @@ def _extract_sql_identifiers(sql: str) -> list[str]:
 
 
 def _code_only(text: str) -> str:
-    """The snippet with comments and ordinary string contents removed, so only code tokens remain.
-
-    SQL identifiers from executable query strings (passed to text()/execute() or matching SQL statements)
-    and quoted SQL names are preserved, while ordinary text strings and comments are ignored.
+    """The snippet with comments and ordinary string contents removed, keeping code tokens,
+    SQL identifiers from executable query strings, and quoted SQL names.
     Newlines are preserved so tokens on different lines never merge."""
     out: list[str] = []
     i, n = 0, len(text)
     sql_call_depth = 0
     paren_depth = 0
+    is_snippet_sql = bool(_SQL_START.match(text))
 
     while i < n:
         ch = text[i]
@@ -469,17 +468,19 @@ def _code_only(text: str) -> str:
             newline_count = raw_chunk.count("\n")
             content_inner = text[i + len(quote) : j - len(quote)]
 
-            # Quoted SQL name: e.g. "amount_cents" or `expenses`
-            if quote in ('"', '`') and len(quote) == 1 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", content_inner):
-                if content_inner.lower() not in _STOP_WORDS and content_inner.lower() not in _SQL_KEYWORDS:
+            # Check if this string is in SQL context
+            is_in_sql = is_snippet_sql or (sql_call_depth > 0) or bool(_SQL_START.match(content_inner))
+
+            # Backticks quote identifiers in SQL or markdown
+            if quote == "`" and len(quote) == 1 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", content_inner):
+                if content_inner.lower() not in _STOP_WORDS:
                     out.append(f" {content_inner} ")
                     out.append("\n" * newline_count)
                     i = j
                     continue
 
-            # Executable SQL query string (inside text()/execute() or starts with SQL syntax)
-            is_sql_query = (sql_call_depth > 0) or bool(_SQL_START.match(content_inner))
-            if is_sql_query:
+            # In SQL context, extract SQL identifiers from queries or quoted names
+            if is_in_sql:
                 identifiers = _extract_sql_identifiers(content_inner)
                 if identifiers:
                     out.append(" " + " ".join(identifiers) + " ")
@@ -487,6 +488,7 @@ def _code_only(text: str) -> str:
                     i = j
                     continue
 
+            # Ordinary string literal in Python/JS (e.g. message = "cache", "invalid email")
             out.append("\n" * newline_count)
             i = j
             continue
@@ -498,7 +500,7 @@ def _code_only(text: str) -> str:
 def _identifiers(text: str) -> set[str]:
     return {
         word.lower() for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text)
-        if word.lower() not in _STOP_WORDS and word.lower() not in _SQL_KEYWORDS
+        if word.lower() not in _STOP_WORDS
     }
 
 
@@ -506,7 +508,7 @@ def _short_identifiers(text: str) -> set[str]:
     """2-3 character names (single letters never count)."""
     return {
         word for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{1,2}\b", text)
-        if word.lower() not in _SHORT_STOP_WORDS and word.lower() not in _SQL_KEYWORDS
+        if word.lower() not in _SHORT_STOP_WORDS
     }
 def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> bool:
     """The main question names an identifier from its focus lines. A file name, a line number or
