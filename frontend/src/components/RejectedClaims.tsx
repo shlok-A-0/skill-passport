@@ -152,7 +152,7 @@ export default function RejectedClaims({ claims, audience, passportId = "", requ
     const key = citationKey(item.claim ?? {});
     return [...requests].reverse().find((request) => request.citation_key === key);
   };
-  const title = audience === "student" ? "Claims not counted" : "Rejected and excluded claims";
+  const title = audience === "student" ? "Claims not counted" : "Rejected claims";
   return (
     <details className="panel rejected-panel" open={excluded.length > 0 || (audience === "recruiter" && listed.length > 0)}>
       <summary>{title} <span className="count-tag">{listed.length}</span></summary>
@@ -162,8 +162,8 @@ export default function RejectedClaims({ claims, audience, passportId = "", requ
         return audience === "student"
           ? <StudentExcluded item={item} passportId={passportId} key={key} />
           : <RecruiterExcluded item={item} request={latestRequest(item)} onChanged={onChanged} key={key} />;
-      }) : <p className="muted">No proposed claims failed verification in this run.</p>}
+      }) : <p className="muted">Nothing was rejected in this run.</p>}
       {claims.filter((item) => item.kind === "review").map((item) => <p className="muted review-summary" key="review">{item.reason}</p>)}
     </details>
   );
-}
+          }
