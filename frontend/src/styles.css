@@ -1747,3 +1747,18 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 
 /* Depth panels that only have an unavailable note still read as cards inside section columns. */
 .section-col > .unavailable-note { margin: 0; padding: 17px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sm); }
+
+.practice-collapsible > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
+.practice-collapsible > summary::-webkit-details-marker { display: none; }
+.practice-collapsible .practice-chevron { vertical-align: -2px; transition: transform .18s ease; }
+.practice-collapsible[open] .practice-chevron { transform: rotate(180deg); }
+.interview-how { margin: 0 0 10px; }
+.interview-how summary { cursor: pointer; color: var(--muted); font-size: 11px; font-weight: 600; }
+.interview-how p { margin: 6px 0 0; }
+.table-scroll-hint { display: none; margin: 8px 0 0; color: var(--muted); font-size: 9px; font-weight: 600; }
+@media (max-width: 700px) {
+  .ranking-scroll,.heatmap-scroll { max-height: none; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .ranking-table { min-width: 640px; }
+  .heatmap-table { min-width: 560px; }
+  .table-scroll-hint { display: block; }
+}
