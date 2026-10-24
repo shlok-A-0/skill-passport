@@ -22,11 +22,11 @@ const steps = [
 ];
 
 /** Per-letter spans for the home headline entrance; the h1 keeps a plain aria-label for screen readers. */
-function headlineLetters(text: string, start: number) {
+function headlineLetters(text: string, start: number, extraMs = 0) {
   let seen = 0;
   return [...text].map((char, index) => {
     if (char === " ") return " ";
-    const delay = (start + seen++) * 26;
+    const delay = (start + seen++) * 26 + extraMs;
     return <span className="headline-letter" style={{ animationDelay: `${delay}ms` }} key={index}>{char}</span>;
   });
 }
@@ -224,7 +224,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
           <span aria-hidden="true">
             {headlineLetters(HEADLINE_LINE_1, 0)}
             <br />
-            <em>{headlineLetters(HEADLINE_LINE_2, HEADLINE_LINE_1.replace(/ /g, "").length)}</em>
+            <em>{headlineLetters(HEADLINE_LINE_2, HEADLINE_LINE_1.replace(/ /g, "").length, 420)}</em>
           </span>
         </h1>
         <p>Create a skill profile from your GitHub work and resume, with links to the code behind each verified skill.</p>
