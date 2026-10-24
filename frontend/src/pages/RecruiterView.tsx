@@ -223,7 +223,7 @@ export default function RecruiterView() {
           ? <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" defaultOpen />
           : <div className="empty-state">No project reports or portfolio were attached to this passport.</div>
       )}
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Verified levels link to the candidate's own code. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
 }
