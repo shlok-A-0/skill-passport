@@ -129,6 +129,25 @@ def test_passport_and_job_completion_are_atomic_and_keep_owner_token(tmp_path, m
     assert storage.get_passport("must-roll-back") is None
 
 
+def test_depth_update_merges_fields_only_for_unchanged_passport_version(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "depth-merge.sqlite")
+    original = {
+        "id": "depth-merge", "created_at": "created", "updated_at": "version-1",
+        "github_username": "student", "target_role": "role", "skills": ["old"],
+    }
+    storage.save_passport(original)
+
+    latest = {**original, "updated_at": "version-2", "skills": ["new"], "level_changes": ["changed"]}
+    storage.save_passport(latest)
+    assert not storage.save_passport_depth("depth-merge", "version-1", "created", {"skill_depth": {"x": 1}})
+    assert storage.get_passport("depth-merge") == latest
+
+    assert storage.save_passport_depth("depth-merge", "version-2", "created", {"skill_depth": {"x": 1}})
+    saved = storage.get_passport("depth-merge")
+    assert saved["skills"] == ["new"] and saved["level_changes"] == ["changed"]
+    assert saved["skill_depth"] == {"x": 1}
+
+
 def test_job_reservation_prunes_old_history_and_uses_active_indexes(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "job-indexes.sqlite")
     storage.create_stored_job("old")

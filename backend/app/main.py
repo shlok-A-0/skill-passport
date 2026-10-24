@@ -5,9 +5,11 @@ import ipaddress
 import json
 import logging
 import secrets
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from threading import Lock
 from typing import Any
 
 from fastapi import (
@@ -55,7 +57,7 @@ from app.services.jobs import (
 )
 from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
-from app.services.pipeline import run_passport_job, run_recheck_job
+from app.services.pipeline import ensure_depth_analyzers, run_passport_job, run_recheck_job
 from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
 from app.services.sql_depth import student_sql_depth
 from app.services.skill_depth import student_skill_depth
@@ -751,21 +753,63 @@ def passport_job(
     }
 
 
-def _stored_passport(passport_id: str) -> dict:
+_depth_backfill_lock = Lock()
+_depth_backfills: set[str] = set()
+_depth_backfill_attempts: dict[str, tuple[str | None, str, float]] = {}
+
+
+def _run_depth_backfill(passport_id: str) -> None:
+    try:
+        ensure_depth_analyzers(passport_id)
+    finally:
+        with _depth_backfill_lock:
+            _depth_backfills.discard(passport_id)
+
+
+def _queue_depth_backfill(passport: dict[str, Any], background_tasks: BackgroundTasks) -> None:
+    passport_id = passport["id"]
+    version = passport.get("updated_at"), passport.get("created_at", "")
+    now = time.monotonic()
+    with _depth_backfill_lock:
+        previous = _depth_backfill_attempts.get(passport_id)
+        if passport_id in _depth_backfills or (
+            previous and previous[:2] == version and now - previous[2] < 300
+        ):
+            return
+        _depth_backfills.add(passport_id)
+        _depth_backfill_attempts[passport_id] = (*version, now)
+        background_tasks.add_task(_run_depth_backfill, passport_id)
+
+
+def _maybe_queue_depth_backfill(passport: dict, background_tasks: BackgroundTasks) -> None:
+    if (config.ENABLE_SQL_DEPTH and passport.get("sql_depth") is None) or (
+        config.ENABLE_SKILL_DEPTH and passport.get("skill_depth") is None
+    ):
+        _queue_depth_backfill(passport, background_tasks)
+
+
+def _stored_passport(
+    passport_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    queue_backfill: bool = True,
+) -> dict:
     result = get_passport(passport_id)
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
+    if queue_backfill:
+        _maybe_queue_depth_backfill(result, background_tasks)
     return result
 
 
 @app.get("/passport/{passport_id}")
-def passport(passport_id: str) -> dict:
-    return student_view(_stored_passport(passport_id), list_review_requests(passport_id))
+def passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
+    return student_view(_stored_passport(passport_id, background_tasks), list_review_requests(passport_id))
 
 
 @app.get("/passport/{passport_id}/review", dependencies=[Depends(require_recruiter)])
-def review_passport(passport_id: str) -> dict:
-    return review_view(_stored_passport(passport_id))
+def review_passport(passport_id: str, background_tasks: BackgroundTasks) -> dict:
+    return review_view(_stored_passport(passport_id, background_tasks))
 
 
 @app.get("/passports", dependencies=[Depends(require_recruiter)])
@@ -809,11 +853,12 @@ class ReviewRequestBody(BaseModel):
 def create_passport_review_request(
     passport_id: str,
     body: ReviewRequestBody,
+    background_tasks: BackgroundTasks,
     x_passport_token: str | None = Header(default=None),
 ) -> dict:
     """A student asks for a human look at an excluded citation. Never changes levels or exclusions."""
     _require_passport_access(passport_id, x_passport_token)
-    stored = _stored_passport(passport_id)
+    stored = _stored_passport(passport_id, background_tasks, queue_backfill=False)
     if body.citation_key not in _excluded_keys(stored):
         raise HTTPException(status_code=422, detail="Reviews can only be requested for citations that were not counted.")
     result, reason = create_review_request(
@@ -825,6 +870,7 @@ def create_passport_review_request(
         raise HTTPException(status_code=409, detail="A review is already requested for this citation.")
     if result is None:
         raise HTTPException(status_code=500, detail="Could not create review request.")
+    _maybe_queue_depth_backfill(stored, background_tasks)
     return result
 
 

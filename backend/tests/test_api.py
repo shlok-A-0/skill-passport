@@ -4,6 +4,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+from fastapi import BackgroundTasks
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
@@ -11,6 +14,12 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.services import storage
 from app.services.jobs import complete_job
+
+
+@pytest.fixture(autouse=True)
+def disable_legacy_depth_backfills(monkeypatch):
+    monkeypatch.setattr(main_module.config, "ENABLE_SQL_DEPTH", False)
+    monkeypatch.setattr(main_module.config, "ENABLE_SKILL_DEPTH", False)
 
 
 def fake_passport(passport_id: str) -> dict:
@@ -226,6 +235,71 @@ def _review_client(tmp_path, monkeypatch, recruiter_key: str = "") -> TestClient
     )
     storage.complete_stored_job("p-review", "p-review", [])
     return TestClient(main_module.app, headers={"X-Passport-Token": REVIEW_OWNER_TOKEN})
+
+
+def test_stored_passport_returns_saved_data_and_queues_backfill(monkeypatch) -> None:
+    saved = {"id": "legacy", "created_at": "created", "github_username": "student"}
+    queued = []
+    monkeypatch.setattr(main_module, "get_passport", lambda _passport_id: saved)
+    monkeypatch.setattr(main_module, "_queue_depth_backfill", lambda passport, tasks: queued.append((passport, tasks)))
+    monkeypatch.setattr(main_module.config, "ENABLE_SQL_DEPTH", True)
+    monkeypatch.setattr(main_module.config, "ENABLE_SKILL_DEPTH", True)
+
+    result = main_module._stored_passport("legacy", BackgroundTasks())
+
+    assert result is saved
+    assert len(queued) == 1 and queued[0][0] is saved
+
+
+@pytest.mark.parametrize(
+    ("citation_key", "request_result", "reason", "status_code"),
+    [
+        ("not-excluded", None, None, 422),
+        ("excluded", None, "duplicate", 409),
+        ("excluded", None, "limit", 429),
+    ],
+)
+def test_rejected_review_requests_do_not_queue_or_mark_depth_backfill(
+    monkeypatch, citation_key, request_result, reason, status_code
+) -> None:
+    passport = {"id": "legacy", "created_at": "created", "github_username": "student"}
+    queued = []
+    monkeypatch.setattr(main_module, "get_passport", lambda _passport_id: passport)
+    monkeypatch.setattr(main_module, "_require_passport_access", lambda *_args: None)
+    monkeypatch.setattr(main_module, "_excluded_keys", lambda _passport: {"excluded"})
+    monkeypatch.setattr(
+        main_module, "create_review_request", lambda *_args: (request_result, reason)
+    )
+    monkeypatch.setattr(main_module, "_queue_depth_backfill", lambda saved, _tasks: queued.append(saved))
+    monkeypatch.setattr(main_module.config, "ENABLE_SQL_DEPTH", True)
+    monkeypatch.setattr(main_module.config, "ENABLE_SKILL_DEPTH", True)
+    monkeypatch.setattr(main_module, "_depth_backfills", set())
+
+    with pytest.raises(main_module.HTTPException) as error:
+        main_module.create_passport_review_request(
+            "legacy",
+            main_module.ReviewRequestBody(citation_key=citation_key),
+            BackgroundTasks(),
+        )
+
+    assert error.value.status_code == status_code
+    assert queued == []
+    assert "legacy" not in main_module._depth_backfills
+
+
+def test_depth_backfill_is_deduplicated_per_passport_version(monkeypatch) -> None:
+    tasks = BackgroundTasks()
+    monkeypatch.setattr(main_module, "_depth_backfills", set())
+    monkeypatch.setattr(main_module, "_depth_backfill_attempts", {})
+    monkeypatch.setattr(main_module, "_run_depth_backfill", lambda _passport_id: None)
+    passport = {"id": "legacy", "created_at": "created", "updated_at": "version"}
+
+    main_module._queue_depth_backfill(passport, tasks)
+    main_module._queue_depth_backfill(passport, tasks)
+
+    assert len(tasks.tasks) == 1
+
+
 def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review").json(), *client.get("/passports").json()["items"]):

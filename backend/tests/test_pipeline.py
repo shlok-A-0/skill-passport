@@ -37,6 +37,75 @@ def test_public_job_errors_are_specific_without_exposing_details(monkeypatch) ->
     assert "uploaded certificate" in bad_certificate
 
 
+def test_legacy_depth_backfill_uses_only_the_saved_repository_revision(monkeypatch) -> None:
+    passport = {
+        "id": "legacy", "created_at": "created", "updated_at": "version-1", "github_username": "alice",
+        "skills": [{
+            "skill_id": "python",
+            "evidence": [
+                {"type": "code", "repo": "stable", "commit_sha": "same"},
+                {"type": "config", "repo": "stable-config", "commit_sha": "config-revision"},
+                {"type": "dependency", "repo": "stable-dependency", "commit_sha": "dependency-revision"},
+            ],
+        }],
+        "rejected_claims": [{
+            "kind": "earlier_source",
+            "claim": {"repo": "stable", "file_path": "old.py"},
+            "url": "https://github.com/alice/stable/blob/same/old.py#L1-L2",
+        }],
+    }
+    ingested = {
+        "repo_count": 4,
+        "repos": [
+            {"name": "stable", "head_sha": "same"},
+            {"name": "stable-config", "head_sha": "config-revision"},
+            {"name": "stable-dependency", "head_sha": "dependency-revision"},
+            {"name": "changed", "head_sha": "new"},
+        ],
+    }
+    monkeypatch.setattr(pipeline, "get_passport", lambda _id: passport)
+    monkeypatch.setattr(pipeline.config, "ENABLE_SQL_DEPTH", True)
+    monkeypatch.setattr(pipeline.config, "ENABLE_SKILL_DEPTH", True)
+    calls = []
+    monkeypatch.setattr(
+        pipeline,
+        "ingest_github",
+        lambda username, force_refresh=False: calls.append((username, force_refresh)) or ingested,
+    )
+    analyzed = []
+    monkeypatch.setattr(
+        pipeline,
+        "safe_sql_depth",
+        lambda ingestion, verified: analyzed.append(("sql", ingestion, verified)) or {"notes": []},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "compute_skill_depth",
+        lambda ingestion, verified, **_kw: analyzed.append(("skill", ingestion, verified))
+        or {"python": {"coverage": {"notes": []}}},
+    )
+    saved = []
+    monkeypatch.setattr(pipeline, "save_passport_depth", lambda *args: saved.append(args) or True)
+    monkeypatch.setattr(
+        pipeline,
+        "save_passport",
+        lambda _passport: (_ for _ in ()).throw(AssertionError("whole passport must not be saved")),
+    )
+
+    pipeline.ensure_depth_analyzers("legacy")
+
+    assert calls == [("alice", True)]
+    assert all(
+        [repo["name"] for repo in call[1]["repos"]]
+        == ["stable", "stable-config", "stable-dependency"]
+        for call in analyzed
+    )
+    assert all(call[2]["rejected_claims"] == passport["rejected_claims"] for call in analyzed)
+    assert saved[0][0:3] == ("legacy", "version-1", "created")
+    assert "current revision" in saved[0][3]["skill_depth"]["python"]["coverage"]["notes"][-1]
+    assert "current revision" in saved[0][3]["sql_depth"]["notes"][-1]
+
+
 def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatch) -> None:
     existing = {
         "id": "saved-passport",

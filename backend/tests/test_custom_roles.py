@@ -438,13 +438,47 @@ def test_nice_words_in_the_line_beat_the_section(monkeypatch) -> None:
 
 
 def test_headings_are_recognised_and_other_headings_reset_the_section() -> None:
+    # Plain text headings
     assert jd_parse._heading_section("Requirements:") == "requirements"
     assert jd_parse._heading_section("What you'll do") == "responsibilities"
     assert jd_parse._heading_section("Preferred qualifications") == "nice"
+    assert jd_parse._heading_section("Preferred qualifications:") == "nice"
+    assert jd_parse._heading_section("Preferred skills") == "nice"
+    assert jd_parse._heading_section("Nice to have") == "nice"
+    assert jd_parse._heading_section("Required qualifications") == "requirements"
+    assert jd_parse._heading_section("Required qualifications:") == "requirements"
+    assert jd_parse._heading_section("Required skills") == "requirements"
+    assert jd_parse._heading_section("Minimum requirements") == "requirements"
+    assert jd_parse._heading_section("Must-have skills") == "requirements"
+    assert jd_parse._heading_section("Responsibilities:") == "responsibilities"
+
+    # Markdown headings (# and ##) with and without trailing colons
+    assert jd_parse._heading_section("## Required qualifications") == "requirements"
+    assert jd_parse._heading_section("## Required qualifications:") == "requirements"
+    assert jd_parse._heading_section("## Required skills") == "requirements"
+    assert jd_parse._heading_section("## Minimum requirements") == "requirements"
+    assert jd_parse._heading_section("## Must-have skills") == "requirements"
+    assert jd_parse._heading_section("## Preferred qualifications") == "nice"
+    assert jd_parse._heading_section("## Preferred qualifications:") == "nice"
+    assert jd_parse._heading_section("## Preferred skills") == "nice"
+    assert jd_parse._heading_section("## Nice to have") == "nice"
+    assert jd_parse._heading_section("### Nice to have:") == "nice"
+    assert jd_parse._heading_section("# Responsibilities") == "responsibilities"
+    assert jd_parse._heading_section("## Responsibilities:") == "responsibilities"
+
+    # Non-section headings reset section to None
     assert jd_parse._heading_section("About the role") is None
+    assert jd_parse._heading_section("## About the role") is None
+
+    # Bullet lists and non-headings are False
     assert jd_parse._heading_section("- Strong Python skills are required.") is False
+    assert jd_parse._heading_section("* Python is required.") is False
+    assert jd_parse._heading_section("###") is False
+
     matches = jd_parse.strongest_exact_matches("Requirements\n- Docker\nAbout us\n- Redis")
     assert matches["docker"][1] == "must" and matches["redis"][1] == "nice"
+    md_matches = jd_parse.strongest_exact_matches("## Requirements\n- Docker\n## About us\n- Redis")
+    assert md_matches["docker"][1] == "must" and md_matches["redis"][1] == "nice"
 
 
 def test_plural_aliases_match_in_job_descriptions_only(monkeypatch) -> None:
@@ -714,3 +748,77 @@ def test_non_string_ai_skill_id_is_dropped_without_crashing(monkeypatch, bad_ski
     result = jd_parse.extract_requirements("Backend Engineer Intern", DESCRIPTION)
     assert "python" in _by_skill(result)
     assert any(item["reason"] == "Not a skill in the skill framework." for item in result["dropped"])
+
+
+ML_INTERN_JOB_DESCRIPTION = """# Machine Learning Engineer Intern
+
+## About the role
+Northwind AI is seeking a Machine Learning Engineer Intern to build and evaluate models on our data platform.
+
+## Responsibilities
+- Build and evaluate machine learning models for production workflows.
+- Clean, analyze, and preprocess tabular and unstructured datasets.
+- Collaborate with engineering teams to deploy services and maintain pipelines.
+
+## Required qualifications
+- Strong proficiency in Python for data analysis and software development.
+- Hands-on experience with pandas and scikit-learn for machine learning pipelines.
+- Solid SQL skills for querying and extracting data from relational databases.
+- Proficient with Git for version control and collaborative development.
+- Understanding of Linux and shell scripting.
+
+## Preferred qualifications
+- Experience with deep learning frameworks such as PyTorch or TensorFlow.
+- Familiarity with Docker for containerized application development.
+- Exposure to AWS or other cloud infrastructure.
+"""
+
+
+def test_machine_learning_engineer_intern_markdown_extraction(monkeypatch) -> None:
+    result = _exact_only(monkeypatch, "Machine Learning Engineer Intern", ML_INTERN_JOB_DESCRIPTION)
+    table = {item["skill_id"]: (item["importance"], item["min_level"], item["quote"]) for item in result["requirements"]}
+
+    # Required qualifications section -> must
+    assert table["python"][0] == "must"
+    assert table["pandas"][0] == "must"
+    assert table["scikit-learn"][0] == "must"
+    assert table["sql"][0] == "must"
+    assert table["git"][0] == "must"
+    assert table["linux-shell"][0] == "must"
+
+    # Preferred qualifications section -> nice
+    assert table["pytorch"][0] == "nice"
+    assert table["tensorflow"][0] == "nice"
+    assert table["docker"][0] == "nice"
+    assert table["aws"][0] == "nice"
+
+    # Quotes should be exact from the text
+    for skill_id, (_, _, quote) in table.items():
+        assert quote_in_text(quote, ML_INTERN_JOB_DESCRIPTION), f"Quote for {skill_id} not found in text: {quote}"
+
+
+def test_responsibilities_heading_and_signals(monkeypatch) -> None:
+    description = """# Platform Intern
+
+## Responsibilities
+- Build REST APIs with FastAPI for internal services.
+- Package applications with Docker containers.
+
+## Required qualifications
+- Strong Python skills are required.
+- Solid SQL knowledge.
+
+## Preferred qualifications
+- Exposure to Docker containerization.
+"""
+    result = _exact_only(monkeypatch, "Platform Intern", description)
+    table = {item["skill_id"]: item["importance"] for item in result["requirements"]}
+
+    # FastAPI is mentioned only in Responsibilities -> must
+    assert table["fastapi"] == "must"
+    # Python and SQL in Required qualifications -> must
+    assert table["python"] == "must"
+    assert table["sql"] == "must"
+    # Docker is in Responsibilities AND Preferred qualifications -> nice wins (preferred outranks responsibilities)
+    assert table["docker"] == "nice"
+
