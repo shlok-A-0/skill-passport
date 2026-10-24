@@ -346,19 +346,62 @@ def test_name_match_variants() -> None:
     assert targeting_test("pkg/engine.py", {"test_files": ["tests/test_reengine.py"]}) is None
 
 
-def test_generic_and_short_stems_never_match() -> None:
+def test_generic_and_short_stems_never_match_by_name() -> None:
     from app.services.verifier import targeting_test
 
     for cited, test_path, content in (
-        ("app.py", "tests/test_app.py", "from app import app"),
+        ("app.py", "tests/test_app.py", ""),
         ("src/index.js", "src/index.test.js", "import x from './index'"),
         ("pkg/__init__.py", "tests/test_init.py", "import pkg"),
         ("main.go", "main_test.go", ""),
-        ("lib/utils.py", "tests/test_utils.py", "from lib.utils import x"),
-        ("db.py", "tests/test_db.py", "import db"),
+        ("lib/utils.py", "tests/test_utils.py", "import pytest"),
+        ("db.py", "tests/test_db.py", "import sqlite3"),
     ):
         repo = {"test_files": [test_path], "test_contents": {test_path: content}}
         assert targeting_test(cited, repo) is None, cited
+
+
+def test_short_and_generic_stems_match_an_explicit_import_of_their_module() -> None:
+    from app.services.verifier import targeting_test
+
+    for cited, test_path, content in (
+        ("db.py", "tests/test_store.py", "import db"),
+        ("app/db.py", "tests/test_store.py", "from app.db import add_expense, monthly_totals"),
+        ("app/db.py", "tests/test_store.py", "import app.db"),
+        ("app/db.py", "tests/test_store.py", "from app import db"),
+        ("app.py", "tests/test_app.py", "from app import app"),
+        ("lib/utils.py", "tests/test_utils.py", "from lib.utils import x"),
+        ("src/db.ts", "src/db.test.ts", "import { query } from './db'"),
+        ("src/db.js", "test/store.test.js", "const db = require('../src/db.js')"),
+    ):
+        repo = {"test_files": [test_path], "test_contents": {test_path: content}}
+        assert targeting_test(cited, repo) == {"path": test_path, "match": "import"}, (cited, content)
+
+    for cited, content in (
+        ("app/db.py", "from other.db import x"),
+        ("app/db.py", "import dbutils"),
+        ("app/db.py", "from app.dbx import y"),
+        ("app/db.py", "import app.db.models"),
+        ("src/db.js", "import x from './lib/db'"),
+        ("src/db.js", "import x from 'db'"),
+    ):
+        repo = {"test_files": ["tests/test_x.py"], "test_contents": {"tests/test_x.py": content}}
+        assert targeting_test(cited, repo) is None, (cited, content)
+
+
+def test_short_stem_import_still_needs_a_committed_test_with_assertions() -> None:
+    from app.services.verifier import targeting_test
+
+    content = ("from app.db import add_expense\n\n"
+               "def test_add_expense_returns_new_id():\n    assert add_expense(1) == 1\n")
+    repo = {"test_files": ["tests/test_db.py"], "test_contents": {"tests/test_db.py": content},
+            "test_authored": {"tests/test_db.py": True}}
+    assert targeting_test("app/db.py", repo, committed_only=True) == {"path": "tests/test_db.py", "match": "import"}
+    repo["test_authored"] = {"tests/test_db.py": False}
+    assert targeting_test("app/db.py", repo, committed_only=True) is None
+    repo["test_authored"] = {"tests/test_db.py": True}
+    repo["test_contents"] = {"tests/test_db.py": "from app.db import add_expense\n\ndef test_nothing():\n    pass\n"}
+    assert targeting_test("app/db.py", repo, committed_only=True) is None
 
 
 def test_claim_proposal_schema_accepts_valid_json_and_rejects_unknown_skill() -> None:

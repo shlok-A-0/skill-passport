@@ -1,4 +1,5 @@
 import hashlib
+import posixpath
 import re
 import json
 from datetime import datetime, timedelta, timezone
@@ -847,6 +848,38 @@ def _imports_module(content: str, stem: str) -> bool:
     return bool(re.search(python, content) or re.search(javascript, content))
 
 
+# Package entry points: importing anything from the package would look like importing these.
+NO_IMPORT_FALLBACK_STEMS = {"__init__", "index"}
+JS_IMPORT_SPEC = re.compile(r"""(?:require\(\s*|import\s*\(\s*|from\s+|import\s+)['"]([^'"]+)['"]""")
+
+
+def _explicitly_imports(content: str, test_path: str, cited_path: str) -> bool:
+    """Whether a test imports the cited file by its own module path, for stems too short or
+    generic to match by name: `from app.db import x`, `import app.db`, `from app import db`,
+    `require('./db')`. A name merely containing the stem never matches."""
+    cited = PurePosixPath(cited_path)
+    if cited.suffix == ".py":
+        parts = cited.with_suffix("").parts
+        for start in range(len(parts)):
+            module = ".".join(parts[start:])
+            parent, _, name = module.rpartition(".")
+            patterns = [rf"(?m)^\s*from\s+{re.escape(module)}\s+import\b",
+                        rf"(?m)^\s*import\s+{re.escape(module)}\b(?!\.)"]
+            if parent:
+                patterns.append(rf"(?m)^\s*from\s+{re.escape(parent)}\s+import\s+[^\n]*\b{re.escape(name)}\b")
+            if any(re.search(pattern, content) for pattern in patterns):
+                return True
+        return False
+    target = str(cited.with_suffix(""))
+    for spec in JS_IMPORT_SPEC.findall(content):
+        if not spec.startswith("."):
+            continue
+        resolved = posixpath.normpath(posixpath.join(str(PurePosixPath(test_path).parent), spec))
+        if resolved in {target, cited_path}:
+            return True
+    return False
+
+
 def committed_to_test(repo: dict[str, Any], path: str) -> bool:
     """Whether the candidate committed to this test file; unknown (lookup failed or not read) is False."""
     authored = (repo.get("test_authored") or {}).get(path)
@@ -864,8 +897,11 @@ def targeting_test(
     With `committed_only`, only tests the candidate committed to count (the "Demonstrated" rule).
     """
     stem = module_stem(cited_path)
-    if not stem:
-        return None  # too short or generic (__init__, index, main, utils, app) to match safely
+    # Too short or generic (db, main, utils, app) to match by name; such a file can still be
+    # targeted by a test that explicitly imports its module path. Package entry points can't.
+    fallback = None if stem else PurePosixPath(cited_path).stem.lower()
+    if not stem and (not fallback or fallback in NO_IMPORT_FALLBACK_STEMS):
+        return None
 
     contents = dict(repo.get("test_contents") or {})
     for path, source in (repo.get("source_files") or {}).items():
@@ -885,10 +921,16 @@ def targeting_test(
             # Meaningful test check: if test content is available, it must contain executable assertions
             # and actively exercise or reference the cited implementation/module.
             if content is not None:
-                if not content.strip() or not test_targets_implementation_with_assertions(content, path, stem):
+                if not content.strip() or not test_targets_implementation_with_assertions(
+                        content, path, stem or fallback):
                     return False
         return True
 
+    if not stem:
+        for path, content in contents.items():
+            if eligible(path) and _explicitly_imports(content, path, cited_path):
+                return {"path": path, "match": "import"}
+        return None
     for path in repo.get("test_files", []):
         if eligible(path) and _name_targets(path, stem):
             return {"path": path, "match": "name"}
