@@ -12,7 +12,7 @@ import SqlDepthPanel from "../components/SqlDepthPanel";
 import SkillDepthPanel from "../components/SkillDepthPanel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
-import { skillName } from "../skillNames";
+import SkillName from "../components/SkillName";
 
 const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
 
@@ -163,7 +163,7 @@ export default function RecruiterView() {
             <div className="panel-list">
               {passport.role_match.requirements.map((requirement) => (
                 <div className="snapshot-row" key={requirement.skill_id}>
-                  <span>{skillLabel(requirement)}</span>
+                  <span><SkillName item={requirement} /></span>
                   <b>{requirement.status === "met" ? "Met" : "Not found"}</b>
                 </div>
               ))}
@@ -189,7 +189,7 @@ export default function RecruiterView() {
                     <span className="row-num">{String(index + 1).padStart(2, "0")}</span>
                     <button type="button" className="req-main" onClick={() => setExpanded(open ? null : requirement.skill_id)} aria-expanded={open}>
                       <div className="req-title row-name">
-                        {skillLabel(requirement)} <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span>
+                        <SkillName item={requirement} /> <span className={`importance importance-${requirement.importance}`}>{requirement.importance}</span>
                         {requirement.status === "missing"
                           ? <span className="status-not-found" title={NOT_FOUND_TOOLTIP}>Not found</span>
                           : <span className={`status-pill status-${requirement.status}`}>{packet?.status_label ?? requirement.status}</span>}
@@ -228,7 +228,7 @@ export default function RecruiterView() {
                   return (
                     <Link className="row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
                       <span className="row-num">{String(index + 1).padStart(2, "0")}</span>
-                      <span><span className="row-name">{skillLabel(skill)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</span><span className="row-detail">{where}</span></span>
+                      <span><span className="row-name"><SkillName item={skill} />{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</span><span className="row-detail">{where}</span></span>
                       <span className="row-meta"><LadderPill level={skill.level} /></span>
                     </Link>
                   );
@@ -240,7 +240,7 @@ export default function RecruiterView() {
               {claimedSkills.length ? (
                 <div className="disclosures">{claimedSkills.map((skill, index) => (
                   <details className="disclosure" key={skill.skill_id}>
-                    <summary><span className="row-num">{String(index + 1).padStart(2, "0")}</span><span>{skillLabel(skill)}</span><span className="plus" aria-hidden="true">+</span></summary>
+                    <summary><span className="row-num">{String(index + 1).padStart(2, "0")}</span><span><SkillName item={skill} /></span><span className="plus" aria-hidden="true">+</span></summary>
                     <div className="disclosure-body">From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted.</div>
                   </details>
                 ))}</div>
@@ -264,7 +264,7 @@ export default function RecruiterView() {
             <p className="muted">The candidate has seen these questions (without the answer notes). Use the private interview kit above for the interview itself.</p>
             {interviews.length ? interviews.map((entry) => (
               <article className="interview-entry" key={entry.skill_id}>
-                <strong>{skillName(entry.skill_id)}</strong>
+                <strong><SkillName item={{ skill_id: entry.skill_id }} /></strong>
                 {entry.questions.map((question, index) => (
                   <div className="question" key={question.q}><p>{index + 1}. {question.q}</p><small>Good answer mentions: {question.good_answer_mentions}</small></div>
                 ))}

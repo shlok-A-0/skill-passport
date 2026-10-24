@@ -22,6 +22,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
+import SkillName from "../components/SkillName";
 import LadderPill from "../components/LadderPill";
 import { sqlDepthHeadline } from "../sqlDepth";
 import { growthUnavailable, GROWTH_UNAVAILABLE } from "../passportNotes";
@@ -287,7 +288,7 @@ export default function StudentSummary() {
               <div className="summary-claimed-tags">
                 {claimedSkills.map((skill) => (
                   <span key={skill.skill_id} className="summary-claimed-tag">
-                    {skillLabel(skill)}
+                    <SkillName item={skill} />
                     {skill.certified && (
                       <span title="Skill mentioned in certificate text" className="certified-badge-wrap">
                         <FileCheck2 size={12} className="certified-icon" aria-label="Skill mentioned in certificate text" />
@@ -322,7 +323,7 @@ export default function StudentSummary() {
                     <li key={skill.skill_id} className="summary-credential-item">
                       <CheckCircle2 size={14} className="credential-check" />
                       <div>
-                        <strong>{skillLabel(skill)}</strong>
+                        <strong><SkillName item={skill} /></strong>
                         <span className="credential-meta">Name matched in certificate text; issuer and credential validity not verified.</span>
                       </div>
                     </li>
@@ -444,7 +445,7 @@ export default function StudentSummary() {
                     return (
                       <div key={name} className="summary-depth-profile-item">
                         <div className="summary-profile-top">
-                          <strong>{skillLabel({ skill_id: name })}</strong>
+                          <strong><SkillName item={{ skill_id: name }} /></strong>
                           <span className="depth-score-tag">
                             {depth.score !== null ? `${depth.score}/100 · ${depth.label}` : depth.label}
                           </span>
@@ -531,7 +532,7 @@ export default function StudentSummary() {
               {passport.growth_tasks.map((task, idx) => (
                 <div key={idx} className="summary-growth-item">
                   <div className="summary-growth-head">
-                    <span className="summary-growth-skill">{skillLabel({ skill_id: task.skill_id })}</span>
+                    <span className="summary-growth-skill"><SkillName item={{ skill_id: task.skill_id }} /></span>
                     <span className="summary-growth-target">Target Repo: <strong>{task.target_repo}</strong></span>
                   </div>
                   <p className="summary-growth-task">{task.task}</p>

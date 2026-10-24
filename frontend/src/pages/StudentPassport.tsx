@@ -1,7 +1,7 @@
 import { FileText, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
+import { api, isMissingJobError, type Passport, type PassportSkill } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
@@ -13,6 +13,7 @@ import SkillDepthPanel from "../components/SkillDepthPanel";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
+import SkillName from "../components/SkillName";
 import { MAX_CONSECUTIVE_POLL_FAILURES, nextJobPollDelay, pollJobAttempt } from "../jobPolling";
 
 const ladder = (["Claimed", "Used", "Applied", "Demonstrated"] as const).map(
@@ -173,7 +174,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             <h3>Next up</h3>
             <div className="panel-list">
               {passport.growth_tasks.length ? passport.growth_tasks.map((task) => (
-                <div className="snapshot-row" key={task.skill_id}><span>{skillName(task.skill_id)}</span><b>1 task</b></div>
+                <div className="snapshot-row" key={task.skill_id}><span><SkillName item={{ skill_id: task.skill_id }} /></span><b>1 task</b></div>
               )) : <div className="snapshot-row"><span>{growthUnavailable(passport) ? "Growth plan unavailable" : "No role gaps found"}</span><b>—</b></div>}
             </div>
           </section>
@@ -203,7 +204,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             {verified.length ? (
               <div className="skill-grid">{verified.map((skill) => (
                 <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
-                  <span className="skill-name">{skillLabel(skill)}</span><LadderPill level={skill.level} />
+                  <span className="skill-name"><SkillName item={skill} /></span><LadderPill level={skill.level} />
                   <small>{skill.evidence.length} evidence {skill.certified ? "· Certified" : ""}</small>
                 </button>
               ))}</div>
@@ -213,7 +214,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             <section className="panel claimed-panel">
               <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimed.length}</span></div>
               <div className="claimed-skills">{claimed.map((skill) => (
-                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
+                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span><SkillName item={skill} /></span><LadderPill level="Claimed" /></button>
               ))}</div>
               <p className="muted">From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted as met.</p>
             </section>
@@ -238,7 +239,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
               <p className="muted">Questions about your own cited code, to help you prepare. A recruiter may ask different questions about any of your work.</p>
               {passport.interview_kit.map((entry) => (
                 <article className="interview-entry" key={entry.skill_id}>
-                  <strong>{skillName(entry.skill_id)}</strong>
+                  <strong><SkillName item={{ skill_id: entry.skill_id }} /></strong>
                   {entry.questions.map((question, index) => <div className="question" key={question.q}><p>{index + 1}. {question.q}</p></div>)}
                 </article>
               ))}

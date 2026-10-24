@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, TrendingDown
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
+import SkillName from "../components/SkillName";
 import SectionTabs from "../components/SectionTabs";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, excludedCitations, excludedCitationsText, latestPerStudent, notWrittenText, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
@@ -289,7 +290,7 @@ export default function PlacementCell() {
           {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
               <table className="heatmap-table">
-                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillLabel(req)}</th>)}</tr></thead>
+                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}><SkillName item={req} /></th>)}</tr></thead>
                 <tbody>{rows.map(({ passport }) => (
                   <tr key={passport.id}>
                     <td><Link to={`/recruiter/${passport.id}`}>{passport.github_username}{passport.is_demo && <small>DEMO</small>}</Link></td>
@@ -316,7 +317,7 @@ export default function PlacementCell() {
               <div className="gap-bars-list">
                 {gaps.map((item) => (
                   <div key={item.skill} className="gap-bar-row">
-                    <span className="gap-bar-label" title={item.skill}>{item.skill}</span>
+                    <span className="gap-bar-label" title={item.skill}><SkillName item={{ skill_id: item.skill, name: item.skill }} /></span>
                     <div className="gap-bar-track">
                       <div
                         className="gap-bar-fill"
@@ -330,7 +331,7 @@ export default function PlacementCell() {
               </div>
             ) : <div className="empty-state">No role requirements to compare.</div>}
           </div>
-          {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: {topGap.skill}</strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
+          {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: <SkillName item={{ skill_id: topGap.skill, name: topGap.skill }} reserveSlot={false} /></strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
       </section>
       </div>
     </div>
