@@ -27,25 +27,25 @@ export default function SkillDepthPanel({ results }: {
     return () => { active = false; };
   }, [results]);
 
-  if (results === undefined) return enabled ? <p className="unavailable-note">Skill Evidence Depth is not recorded for this passport. Re-check it to analyze the pilot profiles.</p> : null;
+  if (results === undefined) return enabled ? <p className="unavailable-note">Skill depth is not recorded for this passport. Re-check to analyse it.</p> : null;
   const profiles = DISPLAY.map((id) => [id, results[id]] as const).filter((item) => item[1]);
   if (!profiles.length) return null;
   return (
     <section className="panel skill-depth-panel">
       <div className="panel-heading">
-        <div><div className="eyebrow">SEPARATE FROM EVIDENCE LEVELS</div><h2>Skill Evidence Depth</h2></div>
+        <div><h2>Skill depth (pilot)</h2></div>
         <Sparkles size={17} color="#c95118" />
       </div>
-      <p className="skill-depth-disclaimer">These cited patterns summarize the analyzed repository sample; they are not a measure of proficiency. Missing patterns do not mean a skill is absent.</p>
+      <p className="skill-depth-disclaimer">Patterns found in the analysed sample, separate from evidence levels. Not a proficiency score. Missing patterns do not mean a skill is absent.</p>
       {(profiles[0]?.[1]?.coverage.notes ?? []).map((note) => <p className="muted" key={note}>{note}</p>)}
       {profiles.map(([id, result]) => result && (
         <details className="skill-depth-profile" key={id}>
           <summary>
             <strong>{NAMES[id]}</strong>
-            <span>{result.score === null ? "Insufficient evidence" : String(result.score) + "/100 evidence score"}</span>
-            <small>{result.label} · {result.coverage.percent}% rubric coverage</small>
+            <span>{result.score === null ? "Insufficient evidence" : String(result.score) + "/100"}</span>
+            <small>{result.label} · {result.coverage.percent}% covered</small>
           </summary>
-          {result.coverage.percent < 100 && <p className="muted">Some rubric weight could not be assessed from attributable sampled files.</p>}
+          {result.coverage.percent < 100 && <p className="muted">Some criteria could not be checked in the sample.</p>}
           <ul>
             {result.competencies.map((item) => (
               <li key={item.id}>
@@ -61,7 +61,7 @@ export default function SkillDepthPanel({ results }: {
               </li>
             ))}
           </ul>
-          <small className="muted">Rubric {result.rubric_version}. Scores compare evidence only within the same skill.</small>
+          <small className="muted">Rubric {result.rubric_version}. Scores compare evidence within the same skill only.</small>
         </details>
       ))}
     </section>
