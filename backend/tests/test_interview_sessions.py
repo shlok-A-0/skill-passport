@@ -302,6 +302,17 @@ def test_selection_avoids_reusing_a_file() -> None:
     assert targets["sql"]["citation"]["file_path"] == "app/db.py"
 
 
+def test_a_skill_cited_only_in_an_already_chosen_file_is_skipped() -> None:
+    passport = passport_fixture()
+    # SQL's only citation is now in the file already chosen for Flask.
+    passport["skills"][1]["evidence"] = [_code("api", "app/routes.py", 13, "def list_users():\n    return query_users(limit=50)")]
+    targets = interview_sessions.select_interview_targets(passport)
+    files = [(t["citation"]["repo"], t["citation"]["file_path"]) for t in targets if t["citation"]]
+    assert len(files) == len(set(files))
+    assert "sql" not in [t["skill_id"] for t in targets]
+    assert [t["skill_id"] for t in targets] == ["flask", "docker", "python"]
+
+
 # --- Generation and validation ----------------------------------------------------------------------
 
 def _targets() -> list[dict]:
@@ -322,6 +333,9 @@ def test_valid_questions_are_accepted(monkeypatch) -> None:
     ({"file_path": "app/invented.py"}, "not the selected evidence"),
     ({"focus_start_line": 14, "focus_end_line": 40}, "outside the cited lines"),
     ({"question": "What is the difference between a list and a tuple in general?"}, "does not refer to the cited code"),
+    # A file name, a line number or a follow-up that names the code is not enough on its own.
+    ({"question": "What does routes.py do on line 15, in general terms?",
+      "follow_up": "Why does list_users call query_users here?"}, "does not refer to the cited code"),
 ])
 def test_invalid_questions_are_rejected(monkeypatch, change, reason) -> None:
     bad = {**json.loads(valid_reply())["questions"][1], **change}

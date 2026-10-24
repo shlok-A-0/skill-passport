@@ -133,6 +133,20 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
     return () => { active = false; };
   }, [passportId]);
 
+  // A set still generating (e.g. the page was reloaded mid-generation) appears once it's saved.
+  // Polling stops by itself: the server reports a set stuck for 5 minutes as failed.
+  const anyGenerating = Boolean(sessions?.some((item) => item.status === "generating"));
+  useEffect(() => {
+    if (!anyGenerating) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      api.interviewSessions(passportId)
+        .then(({ items }) => { if (active) setSessions(items); })
+        .catch(() => undefined);
+    }, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [anyGenerating, passportId]);
+
   async function generate() {
     if (generating) return;
     setGenerating(true);

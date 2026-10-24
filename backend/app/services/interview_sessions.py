@@ -124,13 +124,10 @@ def _usable_code(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return usable
 
 
-def _pick_citation(
-    code: list[dict[str, Any]], prefer_warned: bool, used_files: set[tuple[str, str]]
-) -> dict[str, Any]:
-    """Avoid a file already used; then the warned citation (attribution review) or the
-    candidate's own lines (deeper questions); then the longest range."""
+def _pick_citation(code: list[dict[str, Any]], prefer_warned: bool) -> dict[str, Any]:
+    """The warned citation (attribution review) or the candidate's own lines (deeper
+    questions); then the longest range."""
     return min(code, key=lambda item: (
-        (item["repo"], item["file_path"]) in used_files,
         (not _warning_labels(item)) if prefer_warned else bool(_warning_labels(item)),
         not _line_share_ok(item),
         -(item["end_line"] - item["start_line"]),
@@ -169,7 +166,8 @@ def select_interview_targets(passport: dict[str, Any]) -> list[dict[str, Any]]:
     otherwise as a recruiter-led discussion; (3) other attribution concerns; (4) strong verified
     evidence (Applied/Demonstrated) for deeper questions. Within a tier: must-haves, then
     nice-to-haves, then skills outside the role, in role-match order, then by skill id. Each
-    skill appears once, and files already used are avoided. Never reads or changes a level.
+    skill appears once and no file is cited twice (a skill cited only in files already chosen
+    is skipped). Never reads or changes a level.
     """
     requirements = (passport.get("role_match") or {}).get("requirements") or []
     req_index = {item["skill_id"]: index for index, item in enumerate(requirements)}
@@ -262,6 +260,13 @@ def select_interview_targets(passport: dict[str, Any]) -> list[dict[str, Any]]:
     for candidate in sorted(candidates, key=lambda item: item["sort"]):
         if len(targets) >= MAX_TARGETS or counts[candidate["kind"]] >= limits[candidate["kind"]]:
             continue
+        if candidate["kind"] == "code":
+            # Files are not reused: a skill cited only in files already chosen is skipped.
+            candidate["code"] = [
+                item for item in candidate["code"] if (item["repo"], item["file_path"]) not in used_files
+            ]
+            if not candidate["code"]:
+                continue
         counts[candidate["kind"]] += 1
         target = {
             key: candidate[key]
@@ -269,7 +274,7 @@ def select_interview_targets(passport: dict[str, Any]) -> list[dict[str, Any]]:
         }
         target["target_id"] = f"T{len(targets) + 1}"
         if candidate["kind"] == "code":
-            chosen = _pick_citation(candidate["code"], candidate["concern"], used_files)
+            chosen = _pick_citation(candidate["code"], candidate["concern"])
             used_files.add((chosen["repo"], chosen["file_path"]))
             target["citation"] = _citation(chosen)
         else:
@@ -368,21 +373,12 @@ def _identifiers(text: str) -> set[str]:
 
 
 def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> bool:
-    """The question (or its follow-up) names an identifier from the focus lines, the cited file,
-    or a line number inside the cited range."""
-    text = f"{question.question} {question.follow_up or ''}"
+    """The main question names an identifier from its focus lines. A file name, a line number or
+    a follow-up alone is not enough: any question could mention those."""
     lines = citation["snippet"].split("\n")
     first = question.focus_start_line - citation["snippet_start_line"]
     focus = "\n".join(lines[first:question.focus_end_line - citation["snippet_start_line"] + 1])
-    if _identifiers(focus) & _identifiers(text):
-        return True
-    basename = citation["file_path"].rsplit("/", 1)[-1].lower()
-    if basename and basename in text.lower():
-        return True
-    return any(
-        citation["start_line"] <= int(number) <= citation["end_line"]
-        for number in re.findall(r"\blines?\s+(\d+)", text, flags=re.IGNORECASE)
-    )
+    return bool(_identifiers(focus) & _identifiers(question.question))
 
 
 def validate_question(

@@ -519,21 +519,24 @@ function formatApiDetail(detail: unknown): string | null {
 // sign-in profile (localStorage); the server expires it after 8 hours and can revoke it.
 const RECRUITER_SESSION = "recruiter-session";
 let onAuthRequired: (() => void) | null = null;
+// Used when browser storage is blocked: the session then lasts until the page is reloaded.
+let memoryToken: string | null = null;
 
 function recruiterToken(): string | null {
   try {
-    return localStorage.getItem(RECRUITER_SESSION);
+    return localStorage.getItem(RECRUITER_SESSION) ?? memoryToken;
   } catch {
-    return null;
+    return memoryToken;
   }
 }
 
 function setRecruiterToken(token: string | null) {
+  memoryToken = token;
   try {
     if (token) localStorage.setItem(RECRUITER_SESSION, token);
     else localStorage.removeItem(RECRUITER_SESSION);
   } catch {
-    // storage unavailable: the session lasts until the page is reloaded
+    // storage unavailable: memoryToken keeps the session for this page
   }
 }
 
