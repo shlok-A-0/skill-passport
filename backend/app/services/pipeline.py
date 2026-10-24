@@ -323,6 +323,43 @@ def build_passport(
     return passport
 
 
+def ensure_depth_analyzers(passport: dict[str, Any], *, persist: bool = True) -> dict[str, Any]:
+    """Ensure pilot skill depth (and sql depth) are computed for legacy passports."""
+    needs_skill_depth = config.ENABLE_SKILL_DEPTH and (
+        "skill_depth" not in passport or passport.get("skill_depth") is None
+    )
+    needs_sql_depth = config.ENABLE_SQL_DEPTH and (
+        "sql_depth" not in passport or passport.get("sql_depth") is None
+    )
+    if not (needs_skill_depth or needs_sql_depth):
+        return passport
+
+    username = passport.get("github_username")
+    if not username:
+        return passport
+
+    try:
+        ingestion = ingest_github(username)
+        modified = False
+        if needs_sql_depth:
+            passport["sql_depth"] = safe_sql_depth(ingestion, passport)
+            modified = True
+        if needs_skill_depth:
+            passport["skill_depth"] = compute_skill_depth(
+                ingestion,
+                passport,
+                sql_result=passport.get("sql_depth"),
+                include_sql=config.ENABLE_SQL_DEPTH,
+            )
+            modified = True
+        if modified and persist:
+            save_passport(passport)
+    except Exception:
+        logger.exception("Failed to populate depth analyzers for passport %s", passport.get("id"))
+
+    return passport
+
+
 def recheck_passport(existing: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
     """Rebuild a stored passport from a fresh GitHub read and its stored resume/certificate mentions."""
     if "resume_skill_mentions" in existing:

@@ -55,7 +55,7 @@ from app.services.jobs import (
 )
 from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
-from app.services.pipeline import run_passport_job, run_recheck_job
+from app.services.pipeline import ensure_depth_analyzers, run_passport_job, run_recheck_job
 from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
 from app.services.sql_depth import student_sql_depth
 from app.services.skill_depth import student_skill_depth
@@ -755,6 +755,7 @@ def _stored_passport(passport_id: str) -> dict:
     result = get_passport(passport_id)
     if not result:
         raise HTTPException(status_code=404, detail="Passport not found.")
+    ensure_depth_analyzers(result)
     return result
 
 
