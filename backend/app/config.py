@@ -88,6 +88,8 @@ def _feature_flag(name: str) -> bool:
 ENABLE_CUSTOM_ROLES = _feature_flag("ENABLE_CUSTOM_ROLES")
 # Project reports and a portfolio URL as extra (claim-only) sources on /passport/create.
 ENABLE_REPORTS = _feature_flag("ENABLE_REPORTS")
+# SQL evidence depth: a read-only, point-by-point score of SQL evidence; never changes levels.
+ENABLE_SQL_DEPTH = _feature_flag("ENABLE_SQL_DEPTH")
 # Debug endpoints require explicit opt-in in every environment.
 ALLOW_DEBUG_ENDPOINTS = os.getenv("ALLOW_DEBUG_ENDPOINTS", "false").lower() in ("true", "1", "yes")
 CACHE_DIR = BASE_DIR / "cache"
