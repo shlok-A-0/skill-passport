@@ -261,7 +261,9 @@ def _react_matches(competency: str, text: str, path: str) -> list[tuple[int, int
     try:
         from tree_sitter import Language, Parser
         import tree_sitter_typescript as ts
-        grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx")) else ts.language_typescript()
+        # JavaScript projects commonly keep JSX in `.js` files (not only `.jsx`).
+        # The TSX grammar accepts ordinary JavaScript too and is required to parse JSX.
+        grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx", ".js")) else ts.language_typescript()
         parser = Parser(Language(grammar))
         tree = parser.parse(text.encode("utf-8"))
     except (ImportError, TypeError, AttributeError):
@@ -356,7 +358,7 @@ def _parse_ok(skill_id: str, path: str, text: str) -> bool:
             from tree_sitter import Language, Parser
             import tree_sitter_typescript as ts
 
-            grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx")) else ts.language_typescript()
+            grammar = ts.language_tsx() if path.lower().endswith((".tsx", ".jsx", ".js")) else ts.language_typescript()
             parser = Parser(Language(grammar))
             tree = parser.parse(text.encode("utf-8"))
             return not tree.root_node.has_error

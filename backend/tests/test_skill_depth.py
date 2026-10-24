@@ -142,6 +142,14 @@ def test_react_profile_requires_react_project_context():
     assert all(row["status"] == "insufficient_evidence" for row in result["competencies"])
 
 
+def test_react_javascript_files_with_jsx_are_analyzed():
+    code = "import React from 'react';\nexport function Widget() { return <button onClick={() => {}}>Go</button>; }\n"
+    result = run("react", repo({"src/Widget.js": code}))
+    components = next(row for row in result["competencies"] if row["id"] == "components")
+    assert components["status"] == "observed"
+    assert components["evidence"][0]["file_path"] == "src/Widget.js"
+
+
 def test_docker_compose_only_counts_when_authored():
     compose = "services:\n  app:\n    image: demo\n"
     data = repo({}, config={"compose.yaml": compose}, authored_paths={"compose.yaml": True})
