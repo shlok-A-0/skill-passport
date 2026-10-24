@@ -90,9 +90,9 @@ export default function LoginModal() {
             <ShieldCheck size={28} />
           </div>
           <span className="eyebrow">PROOF, NOT CLAIMS</span>
-          <h2 id="auth-modal-title">Sign In to Skill Passport</h2>
+          <h2 id="auth-modal-title">Demo Sign-In</h2>
           <p className="auth-modal-subtitle">
-            Enter credentials below or choose a demo profile to test role-based access.
+            This demo switches between sample Student and Recruiter views. It does not authenticate real accounts or secure backend data.
           </p>
         </div>
 

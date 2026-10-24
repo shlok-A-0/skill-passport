@@ -217,6 +217,102 @@ export type Passport = {
   reports?: ProjectReport[];
   /** Never fetched; ownership is only recognised for <username>.github.io. */
   portfolio?: Portfolio;
+  /** Absent on passports built before the feature or while it is off; null when it couldn't be computed. */
+  sql_depth?: SqlDepth | null;
+  /** Skill-specific, cited evidence summaries; never a proficiency estimate. */
+  skill_depth?: Record<string, SkillDepth | null>;
+};
+
+export type SkillDepthEvidence = {
+  repo: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  commit_sha: string;
+  url: string;
+  snippet: string;
+  explanation?: string;
+};
+export type SkillDepthCompetency = {
+  id: string;
+  label: string;
+  weight: number;
+  points: number;
+  status: "observed" | "not_observed" | "not_applicable" | "insufficient_evidence";
+  explanation: string;
+  evidence: SkillDepthEvidence[];
+};
+export type SkillDepth = {
+  rubric_version: string;
+  score: number | null;
+  label: string;
+  coverage: {
+    percent: number;
+    assessable_weight: number;
+    applicable_weight: number;
+    assessable_competencies: number;
+    total_competencies: number;
+    source_files_read?: number;
+    source_files_total?: number;
+    notes?: string[];
+  };
+  competencies: SkillDepthCompetency[];
+  disclaimer: string;
+};
+
+/** One cited range of SQL (or the line that calls or tests it), linking to the exact GitHub lines. */
+export type SqlEvidence = {
+  repo: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  url: string;
+  snippet: string;
+  detail?: string;
+  lines_written?: LinesWritten | null;
+  /** Review endpoints only. */
+  copy_check?: "no_match" | "advisory_match" | "not_checked";
+  advisory?: { id: string; label: string; detail: string }[];
+};
+export type SqlDepthPartKey = "complexity" | "breadth" | "repetition" | "integration" | "authorship" | "testing";
+export type SqlDepthPart = {
+  label: string;
+  value: number;
+  weight: number;
+  points: number;
+  max_points: number;
+  reason: string;
+  evidence: SqlEvidence[];
+};
+export type SqlDepthQuery = {
+  shape: string;
+  statement: string;
+  level: number;
+  level_label: string;
+  concepts: string[];
+  tables: string[];
+  occurrence_count: number;
+  evidence: SqlEvidence[];
+  lines_written: LinesWritten | null;
+  wired: { status: "route" | "caller" | "loaded" | "none"; detail: string; evidence: SqlEvidence | null };
+  test: { path: string; match: "name" | "import"; ci: "passed" | "not_recorded" } | null;
+  correctness: "unverified";
+};
+/** SQL evidence depth: scored point by point from the analysed files; never changes a level. */
+export type SqlDepth = {
+  score: number;
+  label: "Limited evidence" | "Basic" | "Developing" | "Solid" | "Strong";
+  cap_reason: string | null;
+  parts: Record<SqlDepthPartKey, SqlDepthPart>;
+  concepts_found: { id: string; label: string; evidence: SqlEvidence[] }[];
+  concepts_missing: { id: string; label: string }[];
+  distinct_query_count: number;
+  distinct_queries: SqlDepthQuery[];
+  skipped: (SqlEvidence & { kind: string; reason: string })[];
+  skipped_total: number;
+  notes: string[];
+  note: string;
+  weights_note: string;
 };
 
 /** A requirement extracted from a job description: quote checked against the text, level set by fixed rules. */
@@ -232,7 +328,13 @@ export type CustomRole = {
   mode?: "ai" | "exact_only";
   note?: string | null;
 };
-export type Features = { custom_roles: boolean; reports: boolean };
+export type Features = {
+  custom_roles: boolean;
+  reports: boolean;
+  sql_depth?: boolean;
+  skill_depth?: boolean;
+  skill_depth_profiles?: string[];
+};
 
 /** A skill a project report says was used, checked against code evidence. Never raises a level. */
 export type ReportClaim = {

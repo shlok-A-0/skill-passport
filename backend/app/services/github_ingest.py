@@ -57,7 +57,7 @@ CI_FILES = {
 }
 HISTORY_PAGE_SIZE = 100
 # Cache files written before the current schema lack newer fields, so they are refetched.
-CACHE_SCHEMA_VERSION = 11
+CACHE_SCHEMA_VERSION = 12
 MAX_REPOS = 5  # the most recently pushed non-fork public repos are analysed
 MAX_REPO_LIST_PAGES = 10
 GITHUB_REPOS_PER_PAGE = 100
@@ -260,7 +260,23 @@ def _ordered_candidates(tree: list[str], recent: list[str]) -> list[str]:
         (path for path in candidates if not is_test_path(path)),
         key=lambda path: (recency(path), _candidate_priority(path)),
     )
-    return tests + others
+    # Spread the bounded source slots across pilot language families. Python also serves the
+    # FastAPI and scikit-learn analyzers; TSX/JSX are needed by React. Keep family order by
+    # recency, then round-robin so a large Python repo cannot consume all six source slots.
+    extension_order = [".py", ".tsx", ".jsx", ".ts", ".js", ".sql", ".java", ".go", ".cpp", ".cc", ".sh"]
+    buckets: dict[str, list[str]] = {}
+    for path in others:
+        buckets.setdefault(Path(path).suffix.lower(), []).append(path)
+    balanced: list[str] = []
+    while any(buckets.values()):
+        for extension in extension_order:
+            group = buckets.get(extension, [])
+            if group:
+                balanced.append(group.pop(0))
+        for extension in tuple(buckets):
+            if extension not in extension_order and buckets[extension]:
+                balanced.append(buckets[extension].pop(0))
+    return tests + balanced
 
 
 def _select_source_files(

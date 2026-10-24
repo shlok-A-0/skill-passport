@@ -7,6 +7,7 @@ import EvidencePanel from "../components/EvidencePanel";
 import IdentityChecks from "../components/IdentityChecks";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims from "../components/RejectedClaims";
+import SqlDepthPanel from "../components/SqlDepthPanel";
 import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
 
 const levelOrder: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -77,6 +78,7 @@ export default function RecruiterEvidence() {
               })}</div>
             ) : <div className="empty-state">No skills were found in this passport.</div>}
           </section>
+          <SqlDepthPanel result={passport.sql_depth} audience="recruiter" />
           <RejectedClaims claims={passport.rejected_claims} audience="recruiter" passportId={passport.id}
             requests={passport.review_requests} labels={passport.check_labels}
             onChanged={() => {
