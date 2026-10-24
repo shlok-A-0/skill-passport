@@ -372,6 +372,46 @@ def build_prompt(targets: list[dict[str, Any]], role_name: str, previous: list[s
     )
 
 
+def _code_only(text: str) -> str:
+    """The snippet with comments and string contents removed, so only code tokens remain.
+
+    Words inside `# ...`, `// ...`, `-- ...` and `/* ... */` comments or inside string literals
+    name no identifier; a question overlapping only those words does not refer to the code.
+    Newlines are preserved so tokens on different lines never merge."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if ch == "#" or (ch == "/" and nxt == "/") or (ch == "-" and nxt == "-" and (i + 2 >= n or text[i + 2] in " \t")):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            chunk = text[i:] if end == -1 else text[i:end + 2]
+            out.append("\n" * chunk.count("\n"))
+            i = n if end == -1 else end + 2
+            continue
+        if ch in "'\"`":
+            quote = ch * 3 if text.startswith(ch * 3, i) else ch
+            j = i + len(quote)
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text.startswith(quote, j):
+                    j += len(quote)
+                    break
+                j += 1
+            out.append("\n" * text[i:j].count("\n"))
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _identifiers(text: str) -> set[str]:
     return {
         word.lower() for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text)
@@ -398,10 +438,11 @@ def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> boo
     first = question.focus_start_line - citation["snippet_start_line"]
     focus = "\n".join(lines[first:question.focus_end_line - citation["snippet_start_line"] + 1])
     text = question.question
-    long_names = _identifiers(focus)
+    code = _code_only(focus)
+    long_names = _identifiers(code)
     if long_names & _identifiers(text):
         return True
-    for name in _short_identifiers(focus):
+    for name in _short_identifiers(code):
         escaped = re.escape(name)
         if re.search(rf"`{escaped}`|\b{escaped}\s*\(|\.{escaped}\b", text):
             return True
@@ -690,4 +731,4 @@ def session_view(session: dict[str, Any], passport: dict[str, Any] | None) -> di
         "questions": questions,
         "summary": session_summary(session.get("questions", []), session.get("assessments", {})),
         "outcome_labels": OUTCOMES,
-    }
+   }
