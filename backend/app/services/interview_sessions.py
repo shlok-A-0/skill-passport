@@ -73,6 +73,13 @@ _STOP_WORDS = {
     "dict", "new", "public", "private", "static", "void", "null", "undefined", "export", "default",
     "type", "value", "data", "result", "error", "code", "file", "line", "lines", "test", "tests",
 }
+# Short words and keywords that are not evidence of naming the cited code.
+_SHORT_STOP_WORDS = {
+    "if", "in", "is", "or", "as", "do", "of", "to", "on", "by", "at", "it", "be", "an", "we", "my",
+    "no", "up", "so", "the", "and", "for", "not", "def", "let", "var", "int", "str", "new", "try",
+    "fn", "pub", "use", "mod", "end", "nil", "has", "are", "was", "can", "you", "how", "why", "who",
+    "all", "any", "one", "two", "its", "but", "out", "get", "set",
+}
 
 
 class InterviewGenerationError(RuntimeError):
@@ -372,13 +379,35 @@ def _identifiers(text: str) -> set[str]:
     }
 
 
+def _short_identifiers(text: str) -> set[str]:
+    """2-3 character names (single letters never count)."""
+    return {
+        word for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{1,2}\b", text)
+        if word.lower() not in _SHORT_STOP_WORDS
+    }
+
+
 def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> bool:
     """The main question names an identifier from its focus lines. A file name, a line number or
-    a follow-up alone is not enough: any question could mention those."""
+    a follow-up alone is not enough: any question could mention those.
+
+    A short name (`add`, `id`) counts when the question writes it as code: in backticks, as a
+    call `add(` or as an attribute `.add`. When the focus lines have no longer names at all, a
+    short name also counts as a plain word."""
     lines = citation["snippet"].split("\n")
     first = question.focus_start_line - citation["snippet_start_line"]
     focus = "\n".join(lines[first:question.focus_end_line - citation["snippet_start_line"] + 1])
-    return bool(_identifiers(focus) & _identifiers(question.question))
+    text = question.question
+    long_names = _identifiers(focus)
+    if long_names & _identifiers(text):
+        return True
+    for name in _short_identifiers(focus):
+        escaped = re.escape(name)
+        if re.search(rf"`{escaped}`|\b{escaped}\s*\(|\.{escaped}\b", text):
+            return True
+        if not long_names and re.search(rf"\b{escaped}\b", text):
+            return True
+    return False
 
 
 def validate_question(

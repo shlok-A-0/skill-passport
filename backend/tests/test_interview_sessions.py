@@ -346,6 +346,31 @@ def test_invalid_questions_are_rejected(monkeypatch, change, reason) -> None:
     assert len(dropped) == 1 and reason in dropped[0]["reason"].lower()
 
 
+def _grounded(question: str, snippet: str, start: int = 1) -> bool:
+    lines = snippet.split("\n")
+    citation = {"snippet": snippet, "snippet_start_line": start, "start_line": start,
+                "end_line": start + len(lines) - 1, "file_path": "calc/math_utils.py"}
+    proposed = interview_sessions.ProposedQuestion(
+        anchor_id="T1", skill_id="python", file_path="calc/math_utils.py", question_type="explain",
+        focus_start_line=start, focus_end_line=start + len(lines) - 1, question=question,
+        follow_up="Which line would you change first?", answer_points=["x"],
+    )
+    return interview_sessions._refers_to_code(proposed, citation)
+
+
+def test_short_names_in_the_cited_code_can_ground_a_question() -> None:
+    short = "def add(a, b):\n    return a + b"
+    assert _grounded("What does add return when one argument is None?", short)
+    assert _grounded("Why does `add` take two arguments?", short)
+    # Single letters, file names and line numbers never count.
+    assert not _grounded("What is a in this function on line 2 of math_utils.py?", short)
+    # With longer names present, a short name must be written as code to count.
+    mixed = "def add(total, amount):\n    return total + amount"
+    assert _grounded("What happens in add( ) when amount is negative?", mixed)
+    assert _grounded("Why is add(...) a pure function?", mixed)
+    assert not _grounded("How would you add logging here?", mixed)
+
+
 def test_malformed_output_is_retried_then_fails_safely(monkeypatch) -> None:
     sent = fake_gemini(monkeypatch, ["not json", valid_reply()])
     questions, _ = interview_sessions.generate_questions(_targets(), "Backend", [])
