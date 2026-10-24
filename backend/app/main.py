@@ -771,6 +771,9 @@ def _queue_depth_backfill(passport: dict[str, Any], background_tasks: Background
     version = passport.get("updated_at"), passport.get("created_at", "")
     now = time.monotonic()
     with _depth_backfill_lock:
+        for attempted_id, attempt in list(_depth_backfill_attempts.items()):
+            if now - attempt[2] >= 300:
+                del _depth_backfill_attempts[attempted_id]
         previous = _depth_backfill_attempts.get(passport_id)
         if passport_id in _depth_backfills or (
             previous and previous[:2] == version and now - previous[2] < 300

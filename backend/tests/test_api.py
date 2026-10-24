@@ -300,6 +300,22 @@ def test_depth_backfill_is_deduplicated_per_passport_version(monkeypatch) -> Non
     assert len(tasks.tasks) == 1
 
 
+def test_depth_backfill_attempts_expire(monkeypatch) -> None:
+    tasks = BackgroundTasks()
+    monkeypatch.setattr(main_module, "_depth_backfills", set())
+    monkeypatch.setattr(main_module, "_depth_backfill_attempts", {
+        "expired": (None, "old", main_module.time.monotonic() - 301),
+    })
+    monkeypatch.setattr(main_module, "_run_depth_backfill", lambda _passport_id: None)
+
+    main_module._queue_depth_backfill(
+        {"id": "fresh", "created_at": "created", "updated_at": "version"}, tasks
+    )
+
+    assert "expired" not in main_module._depth_backfill_attempts
+    assert "fresh" in main_module._depth_backfill_attempts
+
+
 def test_student_view_lists_excluded_citations_without_advisory_signals(tmp_path, monkeypatch) -> None:
     client = _review_client(tmp_path, monkeypatch)
     for body in (client.get("/passport/p-review").json(), *client.get("/passports").json()["items"]):

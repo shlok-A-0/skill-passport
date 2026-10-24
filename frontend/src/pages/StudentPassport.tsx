@@ -1,4 +1,4 @@
-import { Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { FileText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
@@ -150,20 +150,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     }
   }
 
-  async function downloadBadge() {
-    try {
-      const credential = await api.badge(id);
-      const blob = new Blob([JSON.stringify(credential, null, 2)], { type: "application/ld+json" });
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      link.href = url;
-      link.download = `skill-passport-${id}.json`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not download the credential.");
-    }
-  }
+
 
   if (error && (!passport || passport.id !== id)) return <div className="page-message notice-error">{error}</div>;
   if (!passport || passport.id !== id) return <div className="page-message"><span className="spin"><RefreshCw size={18} /></span> Loading evidence…</div>;
@@ -179,7 +166,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
         </div>
         <div className="passport-actions">
           <Link className="button button-light" to={`/placement?preferredRole=${encodeURIComponent(passport.target_role)}`}>View cohort for this role</Link>
-          <button className="button button-light" onClick={downloadBadge}><Download size={15} /> Download credential</button>
+          <Link className="button button-light" to={`/passport/${passport.id}/summary`} target="_blank" rel="noopener noreferrer"><FileText size={15} /> Show summary</Link>
         </div>
       </header>
       {error && <div className="notice notice-error">{error}</div>}

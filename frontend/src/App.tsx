@@ -18,6 +18,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import { nextJobPollDelay } from "./jobPolling";
 import CreatePassport from "./pages/CreatePassport";
 import StudentPassport from "./pages/StudentPassport";
+import StudentSummary from "./pages/StudentSummary";
 import RecruiterView from "./pages/RecruiterView";
 import RecruiterEvidence from "./pages/RecruiterEvidence";
 
@@ -245,6 +246,7 @@ function AppContent() {
           />
           <Route path="/student" element={<LatestPassportRedirect view="passport" />} />
           <Route path="/passport/:id" element={<StudentPassport />} />
+          <Route path="/passport/:id/summary" element={<StudentSummary />} />
 
           {/* Recruiter-only protected routes */}
           <Route
