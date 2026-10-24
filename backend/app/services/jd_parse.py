@@ -36,10 +36,15 @@ NICE_WORDS = re.compile(
     r"\b(?:nice[ -]to[ -]have|plus|bonus|preferred|familiarity|exposure)\b", re.IGNORECASE
 )
 HEADING_SECTIONS = (  # checked in this order: "Preferred qualifications" is nice, not requirements
-    ("nice", ("nice to have", "nice-to-have", "bonus", "preferred")),
+    ("nice", (
+        "nice to have", "nice-to-have", "bonus", "preferred",
+        "preferred qualifications", "preferred skills",
+    )),
     ("requirements", (
-        "requirements", "must have", "must-have", "must haves", "must-haves", "qualifications",
-        "minimum qualifications", "what you need", "what you'll need", "what you will need",
+        "requirements", "required qualifications", "required skills", "minimum requirements",
+        "minimum qualifications", "must-have skills", "must have skills", "must have", "must-have",
+        "must haves", "must-haves", "qualifications",
+        "what you need", "what you'll need", "what you will need",
     )),
     ("responsibilities", (
         "what you will do", "what you'll do", "responsibilities", "key responsibilities", "you will",
@@ -114,12 +119,18 @@ def _heading_section(line: str) -> str | None | bool:
     """The section a heading line starts ("nice", "requirements", "responsibilities"), None for
     any other heading (e.g. "About the role"), or False when the line is not a heading."""
     stripped = line.strip()
+    if not stripped or stripped[0] in "-*•·–":
+        return False
+    normalized = stripped.lstrip("#").strip().rstrip(":").strip()
     if (
-        not stripped or stripped[0] in "-*•·–" or len(stripped) > 60
-        or stripped.endswith((".", ";", "!", "?")) or len(stripped.rstrip(":").split()) > 6
+        not normalized
+        or normalized[0] in "-*•·–"
+        or len(normalized) > 60
+        or normalized.endswith((".", ";", "!", "?"))
+        or len(normalized.split()) > 6
     ):
         return False
-    key = " ".join(stripped.rstrip(":").replace("’", "'").lower().split())
+    key = " ".join(normalized.replace("’", "'").lower().split())
     for section, phrases in HEADING_SECTIONS:
         if any(key == phrase or key.startswith(phrase + " ") for phrase in phrases):
             return section
