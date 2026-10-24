@@ -5,6 +5,7 @@ import ipaddress
 import json
 import logging
 import secrets
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -94,6 +95,7 @@ from app.services.storage import (
     save_custom_role,
     save_interview_assessment,
     start_interview_session,
+    touch_interview_session,
 )
 from app.services.verifier import (
     CHECK_LABELS,
@@ -434,6 +436,10 @@ def _recruiter_id_for_key(key: str | None) -> str | None:
 
 # A signed-in recruiter session lasts one working day; signing in again issues a new token.
 RECRUITER_SESSION_SECONDS = 8 * 3600
+
+# How often a running interview generation renews its reservation (see storage.py: the
+# interruption timeout counts from the last renewal, well above this cadence).
+INTERVIEW_SESSION_HEARTBEAT_SECONDS = 60
 
 
 def _bearer_token(authorization: str | None) -> str | None:
@@ -1091,6 +1097,19 @@ def create_interview_session(
         for item in list_interview_sessions(passport_id, recruiter_id)
         for question in item.get("questions", [])
     ]
+    # Renew the reservation while generation runs: storage's interruption window counts from
+    # the last heartbeat, so a slow-but-alive request is never reported as failed or replaced.
+    heartbeat_stop = threading.Event()
+
+    def renew_reservation() -> None:
+        while not heartbeat_stop.wait(INTERVIEW_SESSION_HEARTBEAT_SECONDS):
+            try:
+                touch_interview_session(session["id"])
+            except Exception:  # a storage hiccup ends renewal, not the generation itself
+                return
+
+    heartbeat = threading.Thread(target=renew_reservation, daemon=True)
+    heartbeat.start()
     try:
         payload, questions = build_interview_set(passport, previous)
         complete_interview_session(session["id"], payload, questions)
@@ -1101,6 +1120,8 @@ def create_interview_session(
         logging.getLogger(__name__).error("Interview generation failed: %s", exc.__class__.__name__)
         fail_interview_session(session["id"], "Interview generation failed unexpectedly. Try again.")
         raise HTTPException(status_code=500, detail="Interview generation failed unexpectedly. Try again.") from exc
+    finally:
+        heartbeat_stop.set()
     return _session_response(_owned_session(session["id"], recruiter_id))
 
 
