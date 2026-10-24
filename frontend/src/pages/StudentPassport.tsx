@@ -8,6 +8,8 @@ import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import ReportsPanel from "../components/ReportsPanel";
+import SqlDepthPanel from "../components/SqlDepthPanel";
+import SkillDepthPanel from "../components/SkillDepthPanel";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
 import { GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { skillName } from "../skillNames";
@@ -214,6 +216,8 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             </section>
           )}
           <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience={audience} />
+          <SkillDepthPanel results={passport.skill_depth} />
+          <SqlDepthPanel result={passport.sql_depth} audience={audience} />
           <section className="panel growth-panel">
             <div className="panel-heading"><div><div className="eyebrow">GROWTH LOOP</div><h2>Turn gaps into proof</h2></div></div>
             <p className="muted">Complete a task in your repo, then re-ingest GitHub to check for new evidence.</p>

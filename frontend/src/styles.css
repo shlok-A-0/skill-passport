@@ -224,6 +224,27 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .req-quote { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .custom-role-note { margin: 4px 0 0; color: var(--ink-soft); font-size: 12px; }
 .reports-summary > .muted { margin: 8px 0 0; }
+.sql-depth-panel summary strong { font-size: 13px; }
+.sql-depth-note { margin: 8px 0 0; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
+.sql-depth-panel .unavailable-note { display: flex; align-items: center; gap: 5px; }
+.sql-parts { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.sql-parts li { padding-top: 9px; border-top: 1px solid var(--line); }
+.sql-part-head { display: flex; justify-content: space-between; gap: 8px; color: var(--ink); font-size: 11px; }
+.sql-part-head span { color: var(--ink-soft); font-weight: 700; white-space: nowrap; }
+.sql-part-bar { height: 4px; margin: 5px 0; border-radius: 2px; background: #eef1f4; overflow: hidden; }
+.sql-part-bar i { display: block; height: 100%; background: var(--accent); }
+.sql-parts p { margin: 0 0 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.sql-evidence-link { display: block; color: var(--accent); font-size: 10px; overflow-wrap: anywhere; }
+.sql-concepts h3 { margin: 12px 0 6px; font-size: 11px; }
+.sql-concepts ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.sql-concepts li .flag-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-size: 10px; font-weight: 700; }
+.sql-queries { margin-top: 10px; font-size: 11px; }
+.sql-queries > summary { cursor: pointer; color: var(--ink-soft); font-weight: 700; }
+.sql-query { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); display: grid; gap: 3px; }
+.sql-query code { color: var(--ink); font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sql-query small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.sql-query .flag-warn { display: inline-flex; align-items: center; gap: 3px; color: var(--warning); }
+.sql-depth-small { margin: 8px 0 0; color: var(--subtle); font-size: 9px; line-height: 1.5; }
 .report-entry { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 11px; overflow-wrap: anywhere; }
 .report-claims, .report-links { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 .report-claims li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
@@ -244,3 +265,16 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 @media (max-width: 700px) { .topbar { height: auto; min-height: 64px; padding: 10px 18px; align-items: flex-start; }.topbar nav { gap: 2px; flex-wrap: wrap; justify-content: flex-end; }.topbar nav a { padding: 7px 6px; font-size: 10px; }.topbar nav a:last-child { display: none; } footer { padding: 12px; flex-wrap: wrap; } footer span { margin-left: 8px; }.create-layout,.passport-page,.recruiter-page,.placement-page { margin-left: 18px; margin-right: 18px; }.legend-items { grid-template-columns: repeat(2,1fr); }.legend-title { flex-wrap: wrap; }.legend-title small { flex-basis: 100%; }.skill-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.passport-heading h1,.recruiter-heading h1 { font-size: 27px; }.source-summary { display: block; margin: 6px 0 0; border: 0; padding: 0; }.passport-actions,.recruiter-actions { flex-wrap: wrap; }.verification-list { grid-template-columns: 1fr; }.packet { grid-template-columns: 1fr; margin-left: 0; }.requirement-row { grid-template-columns: 18px minmax(0,1fr) auto; padding: 7px 0; }.requirement-row > .ladder-pill { grid-column: 2; justify-self: start; }.view-evidence-link { grid-column: 3; grid-row: 1; }.req-main p { white-space: normal; }.placement-stats { grid-template-columns: 1fr; }.workshop-card { grid-column: auto; }.placement-heading h1 { font-size: 27px; } }
 .topbar nav a:last-child { display: inline-block; }
 @media (max-width: 480px) { .create-intro h1 { font-size: 38px; }.skill-grid { grid-template-columns: 1fr; }.passport-page,.recruiter-page,.placement-page { margin-left: 12px; margin-right: 12px; }.legend-items { grid-template-columns: 1fr 1fr; }.match-total { width: 100%; }.recruiter-actions .button { flex: 1; }.ranking-panel .panel-heading { align-items: flex-start; flex-direction: column; }.gap-bar-label { width: 88px; font-size: 10px; } }
+/* Skill Evidence Depth stays visibly separate from the four-level evidence ladder. */
+.skill-depth-panel { display: grid; gap: 12px; }
+.skill-depth-disclaimer { margin: 0; color: var(--muted, #667085); font-size: .88rem; line-height: 1.5; }
+.skill-depth-profile { border-top: 1px solid var(--line, #e5e7eb); padding-top: 10px; }
+.skill-depth-profile > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; cursor: pointer; }
+.skill-depth-profile > summary span { font-weight: 650; }
+.skill-depth-profile > summary small { margin-left: auto; color: var(--muted, #667085); }
+.skill-depth-profile ul { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 12px; }
+.skill-depth-profile li { border-left: 2px solid var(--line, #e5e7eb); padding-left: 10px; }
+.skill-depth-profile li > div { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.skill-depth-profile li p { margin: 4px 0; color: var(--muted, #667085); font-size: .86rem; }
+.skill-depth-status { font-size: .75rem; color: var(--muted, #667085); }
+.skill-depth-citation { display: inline-flex; gap: 4px; align-items: center; margin: 3px 8px 3px 0; font-size: .78rem; }

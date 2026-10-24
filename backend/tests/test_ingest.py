@@ -16,6 +16,23 @@ from app.services.github_ingest import GitHubIngestError, GitHubRateLimitError
 API = github_ingest.API_ROOT
 
 
+def test_bounded_source_selection_spreads_slots_across_pilot_language_families():
+    paths = [
+        "tests/test_app.py",
+        "src/a.py", "src/b.py", "src/c.py", "src/d.py", "src/e.py", "src/f.py",
+        "src/App.tsx", "src/Widget.jsx", "src/types.ts", "src/client.js",
+    ]
+    selected_order = github_ingest._ordered_candidates(paths, [])
+    selected = github_ingest._select_source_files(
+        selected_order,
+        {path: 100 for path in paths},
+        lambda path: "content\n" * 20,
+    )
+    assert list(selected)[:1] == ["tests/test_app.py"]
+    extensions = {Path(path).suffix for path in list(selected)[1:]}
+    assert {".py", ".tsx", ".jsx", ".ts", ".js"} <= extensions
+
+
 class FakeResponse:
     def __init__(self, data: Any) -> None:
         self._data = data
