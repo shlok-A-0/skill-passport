@@ -1489,6 +1489,14 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
   color: var(--muted);
 }
 
+.summary-depth-citations {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 /* Coverage */
 .summary-coverage-box {
   background: var(--surface-soft);
@@ -1695,9 +1703,6 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
     text-decoration: none !important;
   }
 
-  .citation-link {
-    display: none !important;
-  }
 }
 
 

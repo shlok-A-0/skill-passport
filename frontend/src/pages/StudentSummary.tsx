@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Code2,
   Database,
+  Download,
   ExternalLink,
   FileCheck2,
   FolderGit2,
@@ -23,12 +24,16 @@ import {
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
 import LadderPill from "../components/LadderPill";
 import { sqlDepthHeadline } from "../sqlDepth";
+import { growthUnavailable, GROWTH_UNAVAILABLE } from "../passportNotes";
+import { showsNotCountedNote } from "../evidencePanel";
 
 export default function StudentSummary() {
   const { id = "" } = useParams();
   const [passport, setPassport] = useState<Passport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
+  const paperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -40,7 +45,27 @@ export default function StudentSummary() {
   }, [id]);
 
   const handlePrint = () => {
-    window.print();
+    const details = [...(paperRef.current?.querySelectorAll<HTMLDetailsElement>("details.summary-evidence-details") ?? [])];
+    const previous = details.map((item) => item.open);
+    details.forEach((item) => { item.open = true; });
+    const restore = () => details.forEach((item, index) => { item.open = previous[index]; });
+    window.addEventListener("afterprint", restore, { once: true });
+    window.requestAnimationFrame(() => window.print());
+  };
+
+  const downloadBadge = async () => {
+    try {
+      const credential = await api.badge(id);
+      const blob = new Blob([JSON.stringify(credential, null, 2)], { type: "application/ld+json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `skill-passport-${id}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setDownloadError(reason instanceof Error ? reason.message : "Could not download the credential.");
+    }
   };
 
   if (loading) {
@@ -72,6 +97,7 @@ export default function StudentSummary() {
   );
 
   const evidencedCount = demonstratedSkills.length + appliedSkills.length + usedSkills.length;
+  const codeBackedCount = demonstratedSkills.length + appliedSkills.length;
   const certifiedSkills = passport.skills.filter((s) => s.certified);
 
   // Synthesize top demonstrated strengths narrative
@@ -80,7 +106,7 @@ export default function StudentSummary() {
     .map((s) => skillLabel(s));
 
   const strengthsOverview = topEvidencedNames.length > 0
-    ? `Candidate has verified code evidence across ${evidencedCount} technical competencies, with proven execution in ${topEvidencedNames.join(", ")}. Evidence was verified deterministically from commit histories, source files, and test coverage.`
+    ? `Observed evidence is available for ${evidencedCount} technical skills, including code-backed evidence for ${codeBackedCount}; stronger sampled examples include ${topEvidencedNames.join(", ")}. Levels describe evidence of use in the analysed sample, not overall ability.`
     : `Candidate profile has been analysed across GitHub repositories and documents. Detailed evidence breakdown is listed below.`;
 
   const reportDateFormatted = new Date(passport.created_at).toLocaleDateString("en-US", {
@@ -98,6 +124,10 @@ export default function StudentSummary() {
           <span>Back to Live Passport</span>
         </Link>
         <div className="summary-action-buttons">
+          <button type="button" className="button button-light" onClick={downloadBadge}>
+            <Download size={16} />
+            <span>Download credential JSON</span>
+          </button>
           <button
             type="button"
             className="button summary-print-button"
@@ -110,7 +140,7 @@ export default function StudentSummary() {
         </div>
       </div>
 
-      <div className="summary-paper">
+      <div className="summary-paper" ref={paperRef}>
         {/* 1. Header */}
         <header className="summary-header">
           <div className="summary-header-top">
@@ -180,10 +210,10 @@ export default function StudentSummary() {
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">
-                {passport.sources.certificates ?? certifiedSkills.length}
+                {passport.sources.certificates ?? 0}
               </span>
               <span className="summary-metric-label">Certificates</span>
-              <small>Verified credentials</small>
+              <small>Uploaded certificate documents</small>
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">
@@ -201,6 +231,7 @@ export default function StudentSummary() {
             </div>
           </div>
 
+          {downloadError && <div className="notice notice-error no-print">{downloadError}</div>}
           <div className="summary-overview-box">
             <p className="summary-overview-text">
               <strong>Demonstrated Strengths: </strong>
@@ -292,8 +323,8 @@ export default function StudentSummary() {
                   <span key={skill.skill_id} className="summary-claimed-tag">
                     {skillLabel(skill)}
                     {skill.certified && (
-                      <span title="Certified" className="certified-badge-wrap">
-                        <Award size={12} className="certified-icon" />
+                      <span title="Skill mentioned in certificate text" className="certified-badge-wrap">
+                        <FileCheck2 size={12} className="certified-icon" aria-label="Skill mentioned in certificate text" />
                       </span>
                     )}
                   </span>
@@ -317,7 +348,7 @@ export default function StudentSummary() {
             <div className="summary-subcard">
               <div className="summary-subcard-title">
                 <FileCheck2 size={16} />
-                <span>Verified Certificates ({certifiedSkills.length})</span>
+                <span>Skills mentioned in certificates ({certifiedSkills.length})</span>
               </div>
               {certifiedSkills.length > 0 ? (
                 <ul className="summary-credentials-list">
@@ -326,14 +357,16 @@ export default function StudentSummary() {
                       <CheckCircle2 size={14} className="credential-check" />
                       <div>
                         <strong>{skillLabel(skill)}</strong>
-                        <span className="credential-meta">Verified certificate credential attached to profile</span>
+                        <span className="credential-meta">Skill name matched in uploaded certificate text; issuer and credential validity were not independently verified.</span>
                       </div>
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="summary-empty-note">
-                  No certificate credentials were provided or verified for this passport.
+                  {passport.sources.certificates > 0
+                    ? "No skills were matched in uploaded certificate text."
+                    : "No certificate documents were uploaded."}
                 </p>
               )}
             </div>
@@ -409,12 +442,17 @@ export default function StudentSummary() {
                 </div>
                 <p className="summary-depth-desc">
                   Structured query analysis evaluated {passport.sql_depth.distinct_query_count} distinct SQL statements in candidate code.
-                  Key concepts verified include:{" "}
+                  {passport.sql_depth.concepts_found.length > 0 ? "Observed SQL concepts include: " : "No SQL concepts were found in the analysed sample."}{" "}
                   {passport.sql_depth.concepts_found.length > 0
                     ? passport.sql_depth.concepts_found.map((c) => c.label).join(", ")
-                    : "basic data operations"}
-                  .
+                    : null}
                 </p>
+                <p className="summary-depth-desc">{passport.sql_depth.note}</p>
+                <ul className="summary-depth-citations">
+                  {[...new Map(Object.values(passport.sql_depth.parts).flatMap((part) => part.evidence).map((item) => [item.url, item])).values()].map((item) => (
+                    <li key={item.url}><a href={item.url} target="_blank" rel="noreferrer">{item.repo}/{item.file_path}:{item.start_line}–{item.end_line}</a></li>
+                  ))}
+                </ul>
                 {passport.sql_depth.cap_reason && (
                   <div className="summary-depth-note">
                     <AlertCircle size={13} />
@@ -446,8 +484,14 @@ export default function StudentSummary() {
                           </span>
                         </div>
                         <p className="depth-profile-obs">
-                          {observed.length} observed competencies out of {depth.competencies.length} evaluated.
+                          {observed.length} observed competencies out of {depth.competencies.length} evaluated · {depth.coverage.percent}% coverage.
                         </p>
+                        <p className="summary-depth-desc">{depth.disclaimer}</p>
+                        <ul className="summary-depth-citations">
+                          {depth.competencies.flatMap((competency) => competency.evidence.map((item) => ({ competency, item }))).map(({ competency, item }) => (
+                            <li key={`${item.url}-${competency.id}`}><strong>{competency.label}:</strong> <a href={item.url} target="_blank" rel="noreferrer">{item.repo}/{item.file_path}:{item.start_line}–{item.end_line}</a></li>
+                          ))}
+                        </ul>
                       </div>
                     );
                   })}
@@ -531,6 +575,8 @@ export default function StudentSummary() {
                 </div>
               ))}
             </div>
+          ) : growthUnavailable(passport) ? (
+            <div className="summary-empty-note">{GROWTH_UNAVAILABLE}</div>
           ) : (
             <div className="summary-empty-note">
               No immediate role gaps were flagged for the target role: <strong>{passport.target_role}</strong>. Continue building and re-check when publishing new repositories.
@@ -560,8 +606,8 @@ function SkillEvidenceCard({ skill }: { skill: PassportSkill }) {
         <div className="summary-skill-name-row">
           <span className="summary-skill-name">{displayName}</span>
           {skill.certified && (
-            <span className="summary-cert-badge" title="Certified skill">
-              <Award size={12} /> Certified
+            <span className="summary-cert-badge" title="Skill mentioned in certificate text">
+              <FileCheck2 size={12} /> Certificate mention
             </span>
           )}
         </div>
@@ -571,7 +617,7 @@ function SkillEvidenceCard({ skill }: { skill: PassportSkill }) {
       </div>
 
       {skill.evidence.length > 0 && (
-        <details className="summary-evidence-details" open={false}>
+        <details className="summary-evidence-details">
           <summary className="summary-evidence-toggle">
             <span>View code citations ({skill.evidence.length})</span>
             <ChevronDown size={14} className="details-chevron" />
@@ -592,6 +638,9 @@ function SkillEvidenceCard({ skill }: { skill: PassportSkill }) {
                     <span>Inspect GitHub lines</span>
                     <ExternalLink size={10} />
                   </a>
+                )}
+                {showsNotCountedNote(ev) && (
+                  <p className="not-counted-note">Found in a file you did not commit to; not counted toward the skill level.</p>
                 )}
               </div>
             ))}
