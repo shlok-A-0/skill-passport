@@ -1,4 +1,4 @@
-import { AlertTriangle, ChevronDown, Clipboard, ExternalLink, FileSearch, FileText, Layers, ListChecks, MessagesSquare, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ChevronDown, Clipboard, ExternalLink, FileSearch, FileText, Github, Layers, ListChecks, MessagesSquare, ShieldCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
@@ -15,6 +15,16 @@ import { earlierSourcesText, notWrittenText, verifiability } from "../verifiabil
 import { skillName } from "../skillNames";
 
 const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
+
+/** Candidate avatar from the passport's own GitHub username; falls back to a neutral icon when the image is missing. */
+function CandidateAvatar({ username }: { username: string }) {
+  const [ok, setOk] = useState(true);
+  return (
+    <span className="candidate-avatar" aria-hidden="true">
+      {ok ? <img src={`https://github.com/${username}.png`} alt="" loading="lazy" onError={() => setOk(false)} /> : <Github size={22} />}
+    </span>
+  );
+}
 
 /** The four questions for one requirement: support, attribution, uncertainty, what to ask next. */
 function PacketDetails({ packet, reason }: { packet: RequirementPacket; reason: string }) {
@@ -123,7 +133,10 @@ export default function RecruiterView() {
       <header className="hero">
         <div className="hero-copy">
           <div className="hero-eyebrow">Recruiter view{passport.updated_at ? ` · Updated ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
-          <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
+          <div className="hero-title-row">
+            <CandidateAvatar key={passport.github_username} username={passport.github_username} />
+            <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
+          </div>
           <p className="hero-sub"><span className="lead">{met} of {total} requirements met for {passport.target_role}.</span> {gap ? `The gap is ${skillLabel(gap)}.` : "All requirements met."}</p>
           <p className="hero-sub hero-meta-line">
             <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>
@@ -132,9 +145,14 @@ export default function RecruiterView() {
             {openRequests > 0 && <Link className="open-requests" to={`/recruiter/${passport.id}/evidence`}>{openRequests} open review request{openRequests === 1 ? "" : "s"}</Link>}
           </p>
           {passport.custom_role && <p className="custom-role-note">Custom role from job description: <strong>{passport.custom_role.title}</strong></p>}
-          <CoverageSummary coverage={passport.coverage} />
-          <IdentityChecks signals={passport.identity} />
-          {growthUnavailable(passport) && <p className="unavailable-note">{GROWTH_UNAVAILABLE}</p>}
+          <details className="account-checks">
+            <summary><ShieldCheck size={14} /> Account checks <ChevronDown size={14} className="account-checks-chev" /></summary>
+            <div className="account-checks-body">
+              <CoverageSummary coverage={passport.coverage} />
+              <IdentityChecks signals={passport.identity} />
+              {growthUnavailable(passport) && <p className="unavailable-note">{GROWTH_UNAVAILABLE}</p>}
+            </div>
+          </details>
           <div className="hero-actions">
             <button className="button button-light" onClick={copyLink}><Clipboard size={14} /> {copied ? "Link copied" : "Copy share link"}</button>
           </div>

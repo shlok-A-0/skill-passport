@@ -126,20 +126,29 @@ h2 { margin: 6px 0 0; font: 500 18px/1.2 var(--font-sans); letter-spacing: -.02e
 .input-wrap { height: 44px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--subtle); background: var(--ground); transition: border .16s ease, box-shadow .16s ease; }
 .input-wrap:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
 .input-wrap input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; }
-.create-form select, .cert-upload input { height: 43px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--ink-soft); background: var(--ground); }
-.create-form select:focus, .cert-upload input:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
+.create-form select, .cert-upload input[type="url"] { height: 43px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--ink-soft); background: var(--ground); }
+.create-form select:focus, .cert-upload input[type="url"]:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
 .upload-box { min-height: 116px; border: 1px dashed var(--line-strong); border-radius: 10px; display: flex !important; flex-direction: column; justify-content: center; align-items: center; gap: 6px !important; background: var(--surface); cursor: pointer; transition: border .16s ease, background .16s ease; }
 .upload-box:hover { border-color: var(--subtle); background: var(--surface-soft); }
 .upload-box:focus-within { outline: 2px solid var(--ink); outline-offset: 3px; border-color: var(--ink); }
 .upload-box input { width: 1px; height: 1px; overflow: hidden; opacity: 0; position: absolute; }
 .upload-icon { color: var(--subtle); }
 .upload-box small { color: var(--subtle); font-weight: 500; }
-.cert-upload { display: flex !important; align-items: center; gap: 8px !important; flex-wrap: wrap; }
-.cert-upload input { flex-basis: 100%; width: 100%; min-width: 0; box-sizing: border-box; padding-top: 8px; }
-.certificate-list { list-style: none; margin: -8px 0 4px; padding: 0; display: grid; gap: 6px; }
-.certificate-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink-soft); font-size: 13px; }
-.certificate-list li span { overflow-wrap: anywhere; }
-.certificate-list button { border: 0; padding: 4px 8px; color: var(--danger); background: transparent; cursor: pointer; }
+.cert-upload { display: grid !important; gap: 8px !important; font-size: 13px; font-weight: 500; color: var(--ink); }
+.cert-upload .muted { font-size: 12px; font-weight: 400; }
+.cert-upload input[type="url"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.file-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.file-input-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.file-trigger { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.file-trigger:hover { border-color: var(--subtle); background: var(--surface-soft); }
+.file-field:focus-within .file-trigger { outline: 2px solid var(--ink); outline-offset: 2px; }
+.file-trigger[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.file-chosen { font-size: 12px; font-weight: 400; color: var(--subtle); }
+.certificate-list { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 6px; }
+.certificate-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-soft); font-size: 12px; }
+.certificate-list li span { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
+.certificate-list button { border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 10px; color: var(--danger); background: transparent; cursor: pointer; font-size: 11px; }
+.certificate-list button:hover { border-color: var(--danger); }
 .jd-box { display: grid; gap: 12px; margin-top: -6px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .jd-box > label { display: grid; gap: 7px; color: var(--ink-soft); font-size: 12px; font-weight: 600; }
 .jd-box .privacy-note { margin: 0; text-align: left; }
@@ -692,14 +701,33 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .ladder-legend > summary { cursor: pointer; font-weight: 500; font-size: 14px; }
 .ladder-legend[open] > summary { margin-bottom: 16px; }
 
-.optional-uploads { border: 1px solid var(--line); border-radius: 10px; padding: 13px; }
+.optional-uploads { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .optional-uploads > summary { cursor: pointer; color: var(--ink-soft); font-size: 13px; font-weight: 500; }
-.optional-uploads[open] > summary { margin-bottom: 16px; }
-.optional-uploads .cert-upload { display: grid; gap: 8px; margin-top: 16px; }
+.optional-uploads > summary:hover { color: var(--ink); }
+.optional-uploads[open] > summary { margin-bottom: 14px; }
+.optional-uploads .cert-upload { display: grid; gap: 8px; margin-top: 14px; }
 .sql-depth-summary-note { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 5px; }
 .evidence-context, .verification-list span, .commit-label { font-size: 12px; }
 .code-snippet { font-size: 12px; }
 .practice-panel > .muted { margin: 8px 0 0; }
+
+.hero-title-row { display: flex; align-items: center; gap: 14px; }
+.candidate-avatar { width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface); display: grid; place-items: center; overflow: hidden; flex: none; color: var(--subtle); }
+.candidate-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.account-checks { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.account-checks > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--ink); list-style: none; }
+.account-checks > summary::-webkit-details-marker { display: none; }
+.account-checks > summary:hover { color: var(--ink); }
+.account-checks-chev { margin-left: auto; color: var(--subtle); transition: transform .15s ease; }
+.account-checks[open] .account-checks-chev { transform: rotate(180deg); }
+.account-checks-body { padding: 2px 14px 14px; display: grid; gap: 12px; }
+.account-checks-body .integrity-list { border: 0; padding: 0; background: transparent; }
+.account-checks-body .integrity-title { display: none; }
+
+/* Home headline entrance: quick fade-up, suppressed for reduced motion. */
+@keyframes hero-fade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.create-intro h1 { animation: hero-fade .55s cubic-bezier(.2, .7, .3, 1) both; }
+@media (prefers-reduced-motion: reduce) { .create-intro h1 { animation: none; } }
 
 /* Recruiter interview kit */
 .interview-workspace { margin-top: 14px; padding: 20px; box-shadow: var(--shadow-md); }
@@ -785,7 +813,7 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 
 /* Hero: columns top-anchor (R1) so whitespace can never open above copy. */
 .hero { display: grid; grid-template-columns: repeat(12, 1fr); gap: 28px; align-items: start; margin-bottom: 0; position: relative; }
-.hero::before { content: ""; position: absolute; inset: -120px -28px auto; height: 420px; pointer-events: none; background: radial-gradient(ellipse 60% 55% at 28% 18%, rgba(255, 255, 255, .05), transparent 70%); }
+.hero::before { content: ""; position: absolute; inset: -120px 0 auto; height: 420px; pointer-events: none; background: radial-gradient(ellipse 60% 55% at 28% 18%, rgba(255, 255, 255, .05), transparent 70%); }
 .hero-copy { grid-column: 1 / 8; position: relative; min-width: 0; }
 .hero-side { grid-column: 8 / 13; position: relative; min-width: 0; display: grid; gap: 12px; }
 .hero h1 { font-size: clamp(30px, 3.4vw, 44px); line-height: 1.05; letter-spacing: -.045em; font-weight: 450; max-width: none; margin: 10px 0 0; overflow-wrap: anywhere; }
