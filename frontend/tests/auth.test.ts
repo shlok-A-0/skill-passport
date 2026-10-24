@@ -1,6 +1,6 @@
 ﻿import assert from "node:assert/strict";
 import test from "node:test";
-import { DEMO_PROFILES, canAccessRoute } from "../src/authTypes.ts";
+import { DEMO_PROFILES, canAccessRoute, parseStoredUser } from "../src/authTypes.ts";
 
 test("demo profiles configure recruiter and student credentials correctly", () => {
   assert.equal(DEMO_PROFILES.recruiter.user.role, "recruiter");
@@ -31,4 +31,12 @@ test("recruiters have access to all application routes", () => {
   assert.equal(canAccessRoute("/recruiter/xyz-123", "recruiter"), true);
   assert.equal(canAccessRoute("/recruiter/xyz-123/evidence", "recruiter"), true);
   assert.equal(canAccessRoute("/placement", "recruiter"), true);
+});
+
+test("invalid persisted profiles are discarded", () => {
+  assert.equal(parseStoredUser(null), null);
+  assert.equal(parseStoredUser("{"), null);
+  assert.equal(parseStoredUser("{}"), null);
+  assert.equal(parseStoredUser(JSON.stringify({ ...DEMO_PROFILES.student.user, role: "admin" })), null);
+  assert.deepEqual(parseStoredUser(JSON.stringify(DEMO_PROFILES.student.user)), DEMO_PROFILES.student.user);
 });

@@ -5,6 +5,7 @@ import {
   type User,
   type UserRole,
   canAccessRoute,
+  parseStoredUser,
 } from "./authTypes";
 
 export type { DemoProfile, User, UserRole };
@@ -28,24 +29,16 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
+  const [initialSession] = useState(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved) as User;
+      const user = parseStoredUser(localStorage.getItem(STORAGE_KEY));
+      return { user, isLoginModalOpen: !user };
     } catch {
-      // ignore JSON parse error
-    }
-    return null;
-  });
-
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(() => {
-    // If no user is logged in initially, open the modal
-    try {
-      return !localStorage.getItem(STORAGE_KEY);
-    } catch {
-      return true;
+      return { user: null, isLoginModalOpen: true };
     }
   });
+  const [user, setUser] = useState<User | null>(initialSession.user);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(initialSession.isLoginModalOpen);
 
   useEffect(() => {
     try {

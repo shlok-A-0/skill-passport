@@ -54,3 +54,19 @@ export function canAccessRoute(pathname: string, role: UserRole | null): boolean
   }
   return true;
 }
+
+export function parseStoredUser(value: string | null): User | null {
+  if (!value) return null;
+  try {
+    const user: unknown = JSON.parse(value);
+    if (!user || typeof user !== "object") return null;
+    const saved = user as Partial<User>;
+    return typeof saved.id === "string" && typeof saved.name === "string" &&
+      typeof saved.email === "string" && (saved.role === "student" || saved.role === "recruiter") &&
+      typeof saved.title === "string" && typeof saved.organization === "string"
+      ? saved as User
+      : null;
+  } catch {
+    return null;
+  }
+}

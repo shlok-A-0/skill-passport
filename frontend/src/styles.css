@@ -789,4 +789,12 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
   100% { transform: scale(1); opacity: 1; }
 }
 
+@media (max-width: 700px) {
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .topbar-left { min-width: 0; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
+  .topbar-left nav { justify-content: flex-start; }
+  .topbar-auth { width: 100%; justify-content: flex-end; }
+  .auth-user-controls { flex-wrap: wrap; justify-content: flex-end; }
+}
+
 

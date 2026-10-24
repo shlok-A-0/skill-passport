@@ -249,7 +249,7 @@ function AppContent() {
           <Route
             path="/recruiter"
             element={
-              <ProtectedRoute allowedRoles={["recruiter"]}>
+              <ProtectedRoute>
                 <LatestPassportRedirect view="recruiter" />
               </ProtectedRoute>
             }
@@ -257,7 +257,7 @@ function AppContent() {
           <Route
             path="/recruiter/:id"
             element={
-              <ProtectedRoute allowedRoles={["recruiter"]}>
+              <ProtectedRoute>
                 <RecruiterView />
               </ProtectedRoute>
             }
@@ -265,7 +265,7 @@ function AppContent() {
           <Route
             path="/recruiter/:id/evidence"
             element={
-              <ProtectedRoute allowedRoles={["recruiter"]}>
+              <ProtectedRoute>
                 <RecruiterEvidence />
               </ProtectedRoute>
             }
@@ -273,7 +273,7 @@ function AppContent() {
           <Route
             path="/placement"
             element={
-              <ProtectedRoute allowedRoles={["recruiter"]}>
+              <ProtectedRoute>
                 <Suspense fallback={<div className="page-message">Loading placement insights…</div>}>
                   <PlacementCell />
                 </Suspense>

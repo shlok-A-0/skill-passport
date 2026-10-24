@@ -1,15 +1,15 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ArrowLeft, BriefcaseBusiness, Lock, ShieldAlert, Sparkles } from "lucide-react";
-import { useAuth, type UserRole } from "../auth";
+import { canAccessRoute, useAuth } from "../auth";
 
 interface ProtectedRouteProps {
-  allowedRoles: UserRole[];
   children: React.ReactNode;
 }
 
-export default function ProtectedRoute({ allowedRoles, children }: ProtectedRouteProps) {
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, isAuthenticated, switchRole, openLoginModal } = useAuth();
+  const { pathname } = useLocation();
 
   if (!isAuthenticated) {
     return (
@@ -31,7 +31,7 @@ export default function ProtectedRoute({ allowedRoles, children }: ProtectedRout
     );
   }
 
-  if (user && !allowedRoles.includes(user.role)) {
+  if (user && !canAccessRoute(pathname, user.role)) {
     return (
       <section className="access-denied-panel" role="alert">
         <div className="access-denied-icon-wrap alert">
