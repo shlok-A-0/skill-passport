@@ -1,7 +1,8 @@
-import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, TrendingDown, Users, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
+import SectionTabs from "../components/SectionTabs";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, excludedCitations, excludedCitationsText, latestPerStudent, notWrittenText, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
@@ -25,7 +26,7 @@ export default function PlacementCell() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [roleId, setRoleId] = useState("");
   const [preferredRole, setPreferredRole] = useState("");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [retryLoadMore, setRetryLoadMore] = useState(false);
@@ -56,6 +57,16 @@ export default function PlacementCell() {
   useEffect(() => {
     setPreferredRole(searchParams.get("preferredRole") ?? "");
   }, [searchParams]);
+
+  const section = searchParams.get("section") ?? "candidates";
+  function setSection(next: string) {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (next === "candidates") params.delete("section");
+      else params.set("section", next);
+      return params;
+    }, { replace: true });
+  }
 
   async function loadMore() {
     if (loadingMore) return;
@@ -102,6 +113,11 @@ export default function PlacementCell() {
   }).sort((left, right) => right.percent - left.percent);
   const topGap = gaps.find((gap) => gap.percent > 0);
   const demoPresent = visiblePassports.some((passport) => passport.is_demo);
+
+  const tabs = [
+    { id: "candidates", label: "Candidates", icon: Users, count: ranked.length },
+    { id: "gaps", label: "Skill gaps", icon: TrendingDown, count: gaps.filter((gap) => gap.percent > 0).length },
+  ];
 
   const downloadCohortCsv = () => {
     if (!ranked.length) return;
@@ -171,6 +187,9 @@ export default function PlacementCell() {
         <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>Avg. requirements met</small><strong>{avgMet} <i>of {requirements.length}</i></strong></div></section>
         <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>Suggested workshop</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `No evidence found for ${topGap.percent}% of this group.` : "The highest shared gap appears here."}</p></div></section>
       </div>
+      <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Cohort sections" />
+      {section === "candidates" && (
+        <>
       <section className="panel ranking-panel">
         <div className="panel-heading">
           <div><h2>Candidate ranking · {role?.name ?? "Role"}</h2></div>
@@ -186,7 +205,6 @@ export default function PlacementCell() {
                 <Download size={13} /> Export shown CSV
               </button>
             )}
-            <span className="muted">Ranked by must-haves met, then total met, then authorship checks</span>
           </div>
         </div>
         {!loading && !error && !ranked.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to rank candidates."}</div> : ranked.length > 0 ? (
@@ -200,7 +218,7 @@ export default function PlacementCell() {
                   <p>
                     Meets {best.mustMet} of {best.mustTotal} must-have and {best.met} of {requirements.length} total requirements; {best.codeMet} with code evidence (Applied or Demonstrated).{" "}
                     {best.verify.tier === "Not checked"
-                      ? "Authorship checks have not run on this passport yet; use Re-check."
+                      ? "Authorship checks have not run on this passport yet."
                       : best.verify.warnings.length
                         ? `${best.verify.warnings.length} authorship signal(s) need a human look.`
                         : excludedCitations(best.verify)
@@ -224,7 +242,7 @@ export default function PlacementCell() {
                     <td>{row.met} of {requirements.length}</td>
                     <td><VerifyPill verify={row.verify} />{row.verify.earlierSources > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(row.verify.earlierSources)}</div>}{row.verify.notWritten > 0 && <div className="earlier-sources"><AlertTriangle size={11} /> {notWrittenText(row.verify.notWritten)}</div>}</td>
                     <td className="rank-flags">
-                      {row.verify.tier === "Not checked" ? <span className="muted">Run Re-check to collect signals</span>
+                      {row.verify.tier === "Not checked" ? <span className="muted">Not checked yet</span>
                         : row.verify.warnings.length === 0 && !excludedCitations(row.verify) ? <span className="flag-ok"><ShieldCheck size={12} /> None</span>
                           : <>
                             {excludedCitations(row.verify) > 0 && <span className="flag-warn"><AlertTriangle size={11} /> {excludedCitationsText(excludedCitations(row.verify))}</span>}
@@ -239,13 +257,13 @@ export default function PlacementCell() {
                 ))}</tbody>
               </table>
             </div>
-            <p className="ranking-note">Authorship warnings are prompts to look, not findings. Unverified claims never count towards requirements.</p>
+            <p className="table-scroll-hint">Swipe sideways to see every column.</p>
+            <p className="ranking-note">Warnings are prompts to look, not findings. Unverified claims never count.</p>
           </>
         ) : null}
         {!loading && loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
       </section>
-      <div className="placement-grid">
-        <section className="panel heatmap-panel">
+      <section className="panel heatmap-panel">
           <div className="panel-heading"><div><h2>Requirements by student</h2></div><span className="muted">Select a row to open a passport</span></div>
           {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
@@ -268,7 +286,10 @@ export default function PlacementCell() {
             <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span>
           </div>
         </section>
-        <section className="panel gaps-panel">
+        </>
+      )}
+      {section === "gaps" && (
+      <section className="panel gaps-panel">
           <div className="panel-heading"><div><h2>Most common gaps</h2></div></div>
           <div className="gap-chart">
             {gaps.length ? (
@@ -290,8 +311,8 @@ export default function PlacementCell() {
             ) : <div className="empty-state">No role requirements to compare.</div>}
           </div>
           {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: {topGap.skill}</strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
-        </section>
-      </div>
+      </section>
+      )}
     </div>
   );
-               }
+}
