@@ -160,27 +160,23 @@ export default function StudentSummary() {
             </div>
           </div>
 
-          <div className="summary-candidate-banner">
-            <div className="summary-candidate-primary">
-              <span className="eyebrow">VERIFIED CANDIDATE PROFILE</span>
-              <h1 className="summary-candidate-name">
+          <div className="hero summary-hero">
+            <div className="hero-copy">
+              <p className="hero-eyebrow">Verified candidate profile</p>
+              <h1 className="hero-title">
                 <a
                   href={`https://github.com/${passport.github_username}`}
                   target="_blank"
                   rel="noreferrer"
                   className="summary-github-link"
                 >
-                  <Github size={24} />
+                  <Github size={30} />
                   <span>@{passport.github_username}</span>
                 </a>
               </h1>
-              <div className="summary-role-pill">
-                <strong>Target Role:</strong> {passport.target_role}
-              </div>
-            </div>
-            <div className="summary-passport-id-box">
-              <span className="summary-id-label">PASSPORT ID</span>
-              <code className="summary-id-val">{passport.id}</code>
+              <p className="hero-sub">
+                Target role: {passport.target_role} · Passport <code>{passport.id}</code> · Generated {reportDateFormatted}
+              </p>
             </div>
           </div>
         </header>
@@ -192,43 +188,13 @@ export default function StudentSummary() {
             <h2>At-a-Glance Summary</h2>
           </div>
 
-          <div className="summary-metrics-grid">
-            <div className="summary-metric-card highlighted">
-              <span className="summary-metric-num">{evidencedCount}</span>
-              <span className="summary-metric-label">Evidenced skills</span>
-              <small>Demonstrated, Applied and Used</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">{demonstratedSkills.length}</span>
-              <span className="summary-metric-label">Demonstrated</span>
-              <small>Used in code, covered by tests</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">{appliedSkills.length}</span>
-              <span className="summary-metric-label">Applied</span>
-              <small>Used in committed code</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.sources.certificates ?? 0}
-              </span>
-              <span className="summary-metric-label">Certificates</span>
-              <small>Uploaded documents</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.sources.reports ?? passport.reports ? (Array.isArray(passport.reports) ? passport.reports.length : (passport.sources.reports || 0)) : 0}
-              </span>
-              <span className="summary-metric-label">Project reports</span>
-              <small>Cross-checked with code</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.coverage?.repos_analysed ?? passport.sources.repos}
-              </span>
-              <span className="summary-metric-label">Repositories</span>
-              <small>Analysed on GitHub</small>
-            </div>
+          <div className="facts">
+            <div className="fact"><span>Evidenced skills</span><b>{evidencedCount}</b></div>
+            <div className="fact"><span>Demonstrated</span><b>{demonstratedSkills.length} · covered by tests</b></div>
+            <div className="fact"><span>Applied</span><b>{appliedSkills.length} · in committed code</b></div>
+            <div className="fact"><span>Certificates</span><b>{passport.sources.certificates ?? 0}</b></div>
+            <div className="fact"><span>Project reports</span><b>{passport.sources.reports ?? passport.reports ? (Array.isArray(passport.reports) ? passport.reports.length : (passport.sources.reports || 0)) : 0}</b></div>
+            <div className="fact"><span>Repositories analysed</span><b>{passport.coverage?.repos_analysed ?? passport.sources.repos}</b></div>
           </div>
 
           {downloadError && <div className="notice notice-error no-print">{downloadError}</div>}

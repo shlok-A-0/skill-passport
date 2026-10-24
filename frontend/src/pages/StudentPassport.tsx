@@ -157,18 +157,34 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
 
   return (
     <div className="passport-page">
-      <header className="passport-heading">
-        <div>
-          <div className="eyebrow">CREATED {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · UPDATED ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
+      <header className="hero">
+        <div className="hero-copy">
+          <div className="hero-eyebrow">Student passport · Created {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · Updated ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
           <h1>@{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
-          <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates{passport.sources.reports ? ` · ${passport.sources.reports} project report${passport.sources.reports === 1 ? "" : "s"}` : ""}</span></p>
+          <p className="hero-sub"><span className="lead">Target role: {passport.target_role}.</span> GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates{passport.sources.reports ? ` · ${passport.sources.reports} project report${passport.sources.reports === 1 ? "" : "s"}` : ""}.</p>
           <CoverageSummary coverage={passport.coverage} />
+          <div className="hero-actions">
+            <Link className="button button-light" to={`/placement?preferredRole=${encodeURIComponent(passport.target_role)}`}>View cohort for this role</Link>
+            <Link className="button button-light" to={`/passport/${passport.id}/summary`} target="_blank" rel="noopener noreferrer"><FileText size={15} /> Show summary</Link>
+          </div>
         </div>
-        <div className="passport-actions">
-          <Link className="button button-light" to={`/placement?preferredRole=${encodeURIComponent(passport.target_role)}`}>View cohort for this role</Link>
-          <Link className="button button-light" to={`/passport/${passport.id}/summary`} target="_blank" rel="noopener noreferrer"><FileText size={15} /> Show summary</Link>
+        <div className="hero-side">
+          <section className="panel">
+            <h3>Next up</h3>
+            <div className="panel-list">
+              {passport.growth_tasks.length ? passport.growth_tasks.map((task) => (
+                <div className="snapshot-row" key={task.skill_id}><span>{skillName(task.skill_id)}</span><b>1 task</b></div>
+              )) : <div className="snapshot-row"><span>{growthUnavailable(passport) ? "Growth plan unavailable" : "No role gaps found"}</span><b>—</b></div>}
+            </div>
+          </section>
         </div>
       </header>
+      <div className="facts">
+        <div className="fact"><span>Target role</span><b>{passport.target_role}</b></div>
+        <div className="fact"><span>Evidence levels</span><b>{verified.filter((sk) => sk.level === "Demonstrated").length} Demonstrated · {verified.filter((sk) => sk.level === "Applied").length} Applied · {verified.filter((sk) => sk.level === "Used").length} Used</b></div>
+        <div className="fact"><span>Code-backed skills</span><b>{verified.length}</b></div>
+        <div className="fact"><span>Unverified claims</span><b>{claimed.length}, never counted</b></div>
+      </div>
       {error && <div className="notice notice-error">{error}</div>}
       {changes.length > 0 && (
         <div className="upgrade-banner"><Sparkles size={18} /><div><strong>Evidence updated after re-check</strong><p>{changes.map((change) => `${skillName(change.skill_id)}: ${change.from} → ${change.to}`).join(" · ")}</p></div></div>

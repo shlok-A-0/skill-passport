@@ -45,23 +45,37 @@ export default function RecruiterEvidence() {
   const verify = verifiability(passport);
   return (
     <div className="passport-page">
-      <header className="passport-heading">
-        <div>
-          <div className="eyebrow">EVIDENCE REVIEW · NOT SHOWN TO THE CANDIDATE</div>
+      <header className="hero">
+        <div className="hero-copy">
+          <div className="hero-eyebrow">Evidence review · Not shown to the candidate</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
-          <p>
-            Candidate for <strong>{passport.target_role}</strong> ·{" "}
+          <p className="hero-sub"><span className="lead">Candidate for {passport.target_role}.</span>{" "}
             <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>
             {verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}
             {verify.notWritten > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {notWrittenText(verify.notWritten)}</span>}
           </p>
           <CoverageSummary coverage={passport.coverage} />
-          <IdentityChecks signals={passport.identity} />
+          <div className="hero-actions">
+            <Link className="button button-light" to={`/recruiter/${passport.id}`}><ArrowLeft size={15} /> Recruiter summary</Link>
+          </div>
         </div>
-        <div className="passport-actions">
-          <Link className="button button-light" to={`/recruiter/${passport.id}`}><ArrowLeft size={15} /> Recruiter summary</Link>
+        <div className="hero-side">
+          <section className="panel">
+            <h3>Account checks</h3>
+            <div className="panel-list">
+              {passport.identity?.length
+                ? <IdentityChecks signals={passport.identity} />
+                : <div className="snapshot-row"><span>No account checks recorded</span><b>—</b></div>}
+            </div>
+          </section>
         </div>
       </header>
+      <div className="facts">
+        <div className="fact"><span>Target role</span><b>{passport.target_role}</b></div>
+        <div className="fact"><span>Skills</span><b>{passport.skills.length}</b></div>
+        <div className="fact"><span>Evidence records</span><b>{passport.skills.reduce((sum, skill) => sum + skill.evidence.length, 0)}</b></div>
+        <div className="fact"><span>Verifiability</span><b>{verify.tier === "Not checked" ? "Not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked}`}</b></div>
+      </div>
       <div className="passport-grid">
         <div className="skill-column">
           <section className="panel skill-panel">

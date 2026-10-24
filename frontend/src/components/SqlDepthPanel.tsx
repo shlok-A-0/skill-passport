@@ -48,7 +48,7 @@ export default function SqlDepthPanel({ result, audience, compact = false }: {
     <details className="panel interview-summary sql-depth-panel" open={!compact}>
       <summary>
         <span><strong>{sqlDepthHeadline(result)}</strong><small className="sql-depth-summary-note">Patterns in sampled files, not overall skill.</small></span>
-        <Database size={17} color="#c95118" />
+        <Database size={17} className="muted" />
       </summary>
       <p className="sql-depth-note">{SQL_DEPTH_NOTE}</p>
       {warnings.map((warning) => <p className="unavailable-note" key={warning}><AlertTriangle size={11} /> {warning}</p>)}

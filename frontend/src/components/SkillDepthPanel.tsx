@@ -34,7 +34,7 @@ export default function SkillDepthPanel({ results }: {
     <section className="panel skill-depth-panel">
       <div className="panel-heading">
         <div><h2>Skill depth (pilot)</h2></div>
-        <Sparkles size={17} color="#c95118" />
+        <Sparkles size={17} className="muted" />
       </div>
       <p className="skill-depth-disclaimer">Patterns found in the analysed sample, separate from evidence levels. Not a proficiency score. Missing patterns do not mean a skill is absent.</p>
       {(profiles[0]?.[1]?.coverage.notes ?? []).map((note) => <p className="muted" key={note}>{note}</p>)}
