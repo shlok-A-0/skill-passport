@@ -74,9 +74,9 @@ def _public_job_error(job_id: str, exc: Exception) -> str:
             return "We couldn’t read text in an uploaded certificate. Try a clearer image or PDF, or remove it and try again."
         return "We couldn’t read an uploaded certificate. Check that it is a PDF, PNG, or JPEG and try again."
     if step == "Reading certificates" and isinstance(exc, RuntimeError):
-        if "not configured" in str(exc).lower():
-            return "Image certificate reading is not configured on this server. Please contact the site administrator."
-        return "Hosted OCR could not read an uploaded certificate. Try a clearer image or PDF, or contact the site administrator."
+        if "available on path" in str(exc).lower():
+            return "Local image reading is unavailable on this server. Please contact the site administrator."
+        return "Local OCR could not read an uploaded certificate. Try a clearer image or PDF, or contact the site administrator."
     if step == "Reading certificates":
         return "An uploaded certificate couldn’t be processed. Check the file and try again."
     if step == "Reading reports" and isinstance(exc, ValueError):
@@ -87,9 +87,9 @@ def _public_job_error(job_id: str, exc: Exception) -> str:
             return "We couldn’t read text in an uploaded project report. Try a clearer image or PDF, or remove it and try again."
         return "We couldn’t read an uploaded project report. Check that it is a PDF, PNG, or JPEG and try again."
     if step == "Reading reports" and isinstance(exc, RuntimeError):
-        if "not configured" in str(exc).lower():
-            return "Scanned report reading is not configured on this server. Please contact the site administrator."
-        return "Hosted OCR could not read an uploaded project report. Try a clearer image or PDF, or contact the site administrator."
+        if "available on path" in str(exc).lower():
+            return "Local report image reading is unavailable on this server. Please contact the site administrator."
+        return "Local OCR could not read an uploaded project report. Try a clearer image or PDF, or contact the site administrator."
     if step == "Reading reports":
         return "An uploaded project report couldn’t be processed. Check the file and try again."
     return (

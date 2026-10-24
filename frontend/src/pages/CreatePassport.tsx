@@ -301,7 +301,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
               </label>
             </>
           )}
-          <p className="privacy-note">Text PDFs are read locally. Scanned PDFs and certificate{reportsEnabled ? " or report" : ""} images are sent to Google Cloud Vision for text extraction.{reportsEnabled ? " Report text is sent to the AI (personal details removed) to suggest skill claims; it is not stored." : ""}</p>
+          <p className="privacy-note">Text PDFs are read locally; scanned PDFs and certificate{reportsEnabled ? " or report" : ""} images use local OCR on the backend.{reportsEnabled ? " Report text is sent to the AI (personal details removed) to suggest skill claims; it is not stored." : ""}</p>
           {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
             {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
               <span>{certificate.name}</span>

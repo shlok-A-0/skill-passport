@@ -1,6 +1,7 @@
 import io
 import math
 import re
+import subprocess
 from typing import Any
 
 import pdfplumber
@@ -171,7 +172,7 @@ def parse_resume(pdf_bytes: bytes) -> dict[str, Any]:
 
 
 def extract_certificate_text(pdf_bytes: bytes) -> str:
-    """Text of a PDF (hosted OCR for scanned pages) or a PNG/JPEG image (hosted OCR).
+    """Text of a PDF or image, using local Tesseract for scanned content.
 
     Also used for project reports, which accept the same file types.
     """
@@ -191,40 +192,29 @@ def parse_certificate(pdf_bytes: bytes) -> list[dict[str, str]]:
     return match_resume_skills(extract_certificate_text(pdf_bytes))
 
 
-def _vision_client():
-    """Create the hosted OCR client lazily so text PDFs don't need cloud credentials."""
+def _document_ocr(image_bytes: bytes) -> str:
     try:
-        from google.cloud import vision
-
-        return vision.ImageAnnotatorClient()
+        image = fitz.Pixmap(image_bytes)
+        if image.width * image.height > MAX_CERTIFICATE_OCR_PIXELS or max(image.width, image.height) > MAX_CERTIFICATE_OCR_SIDE:
+            raise ValueError("Certificate image is too large for OCR.")
+        result = subprocess.run(
+            ["tesseract", "stdin", "stdout"],
+            input=image_bytes,
+            capture_output=True,
+            timeout=60,
+            check=True,
+        )
+        return result.stdout.decode("utf-8")
+    except ValueError:
+        raise
     except Exception as exc:
         raise RuntimeError(
-            "Hosted certificate OCR is not configured. Set up Google Cloud Vision credentials."
+            "Local Tesseract OCR could not process this image. Confirm Tesseract is installed and available on PATH."
         ) from exc
 
 
-_VISION_CLIENT = None
-
-
-def _document_ocr(image_bytes: bytes) -> str:
-    global _VISION_CLIENT
-    if _VISION_CLIENT is None:
-        _VISION_CLIENT = _vision_client()
-    from google.cloud import vision
-
-    try:
-        response = _VISION_CLIENT.document_text_detection(
-            image=vision.Image(content=image_bytes), image_context=None
-        )
-    except Exception as exc:
-        raise RuntimeError("Google Cloud Vision could not process a certificate image.") from exc
-    if response.error.message:
-        raise RuntimeError("Google Cloud Vision could not process a certificate image.")
-    return response.full_text_annotation.text or ""
-
-
 def _extract_certificate_pdf_text(pdf_bytes: bytes) -> str:
-    """Extract embedded text locally, using hosted OCR only for image-only PDF pages."""
+    """Extract embedded text locally, using Tesseract for image-only PDF pages."""
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             if len(pdf.pages) > MAX_PDF_PAGES:
