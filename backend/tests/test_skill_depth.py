@@ -181,11 +181,46 @@ def test_fastapi_profile_ignores_flask_decorators_and_async_handlers():
     assert not any(row["status"] == "observed" for row in result["competencies"])
 
 
+@pytest.mark.parametrize("module_import", ["import fastapi", "import fastapi as fa"])
+def test_fastapi_module_import_forms_are_recognized(module_import):
+    namespace = "fastapi" if module_import == "import fastapi" else "fa"
+    code = f"{module_import}\napp = {namespace}.FastAPI()\n@app.get('/')\ndef route(): return {{}}\n"
+    result = run("fastapi", repo({"app.py": code}))
+    routes = next(row for row in result["competencies"] if row["id"] == "routes")
+    assert routes["status"] == "observed"
+
+
 def test_scikit_profile_ignores_unrelated_classifier_and_fit_names():
     code = "class Classifier:\n    def fit(self, values): return self\nmodel = Classifier()\nmodel.fit(data)\n"
     result = run("scikit-learn", repo({"model.py": code}))
     assert result["score"] is None
     assert not any(row["status"] == "observed" for row in result["competencies"])
+
+
+@pytest.mark.parametrize("code", [
+    "from sklearn.linear_model import LogisticRegression as Model\nmodel = Model()\nmodel.fit(X, y)\nmodel.predict(X)\n",
+    "import sklearn.linear_model\nmodel = sklearn.linear_model.LinearRegression()\nmodel.fit(X, y)\nmodel.predict(X)\n",
+    "from sklearn.svm import SVC\nmodel = SVC()\nmodel.fit(X, y)\nmodel.predict(X)\n",
+])
+def test_common_sklearn_estimators_are_resolved_by_import_path(code):
+    result = run("scikit-learn", repo({"model.py": code}))
+    estimator = next(row for row in result["competencies"] if row["id"] == "estimator")
+    assert estimator["status"] == "observed"
+
+
+def test_fully_authored_signal_counts_inside_a_shared_file():
+    code = "".join("# shared context\n" for _ in range(5))
+    code += "def transform(items):\n    for item in items:\n        yield item.strip()\n"
+    code += "".join("# surrounding collaborator code\n" for _ in range(8))
+    data = repo({"src/shared.py": code})
+    line_count = len(data["source_files"]["src/shared.py"]["lines"])
+    data["source_files"]["src/shared.py"]["blame"] = [
+        [1, 5, "collaborator"], [6, 8, "student"], [9, line_count, "collaborator"],
+    ]
+    result = run("python", data)
+    structure = next(row for row in result["competencies"] if row["id"] == "structure")
+    assert structure["status"] == "observed"
+    assert structure["evidence"][0]["start_line"] == 6
 
 
 def test_docker_compose_only_counts_when_authored():

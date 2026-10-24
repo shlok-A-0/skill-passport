@@ -122,6 +122,22 @@ PATTERNS: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
+SKLEARN_ESTIMATOR_NAMES = {
+    "LogisticRegression", "LogisticRegressionCV", "LinearRegression", "Ridge", "RidgeCV",
+    "RidgeClassifier", "RidgeClassifierCV", "Lasso", "LassoCV", "LassoLars", "ElasticNet",
+    "ElasticNetCV", "SGDClassifier", "SGDRegressor", "PassiveAggressiveClassifier",
+    "PassiveAggressiveRegressor", "Perceptron", "BayesianRidge", "ARDRegression",
+    "HuberRegressor", "RANSACRegressor", "TheilSenRegressor", "PoissonRegressor",
+    "GammaRegressor", "TweedieRegressor", "SVC", "NuSVC", "LinearSVC", "SVR", "NuSVR",
+    "LinearSVR", "OneClassSVM", "KMeans", "MiniBatchKMeans", "DBSCAN", "PCA",
+    "TruncatedSVD", "GaussianNB", "MultinomialNB", "BernoulliNB", "ComplementNB",
+    "DecisionTreeClassifier", "DecisionTreeRegressor", "RandomForestClassifier",
+    "RandomForestRegressor", "ExtraTreesClassifier", "ExtraTreesRegressor",
+    "GradientBoostingClassifier", "GradientBoostingRegressor", "HistGradientBoostingClassifier",
+    "HistGradientBoostingRegressor", "AdaBoostClassifier", "AdaBoostRegressor",
+    "KNeighborsClassifier", "KNeighborsRegressor", "MLPClassifier", "MLPRegressor",
+}
+
 
 def _line_share(source: dict[str, Any], start: int, end: int, username: str) -> tuple[bool, bool]:
     """Return whether line history is complete and whether the candidate owns at least half."""
@@ -193,8 +209,8 @@ def _python_framework_context(skill_id: str, text: str) -> tuple[ast.AST | None,
     except (SyntaxError, ValueError):
         return None, {}
     aliases = _python_import_aliases(root)
-    prefix = {"fastapi": "fastapi.", "scikit-learn": "sklearn."}.get(skill_id)
-    if prefix and not any(value.startswith(prefix) for value in aliases.values()):
+    module = {"fastapi": "fastapi", "scikit-learn": "sklearn"}.get(skill_id)
+    if module and not any(value == module or value.startswith(module + ".") for value in aliases.values()):
         return None, aliases
     return root, aliases
 
@@ -238,7 +254,8 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
                     if called in {"fastapi.FastAPI", "fastapi.APIRouter"}:
                         fastapi_routes.add(target.id)
                     if called.startswith("sklearn.") and (
-                        called.rsplit(".", 1)[-1].endswith(("Classifier", "Regressor"))
+                        called.rsplit(".", 1)[-1] in SKLEARN_ESTIMATOR_NAMES
+                        or called.rsplit(".", 1)[-1].endswith(("Classifier", "Regressor"))
                         or called in {"sklearn.pipeline.Pipeline", "sklearn.pipeline.make_pipeline"}
                     ):
                         sklearn_estimators.add(target.id)
@@ -500,8 +517,8 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
         if skill_id == "git":
             continue
         file_lines = source.get("lines") or text.splitlines()
-        attribution_complete, candidate_majority = _line_share(source, 1, max(1, len(file_lines)), username)
-        if not attribution_complete or not candidate_majority:
+        attribution_complete, _candidate_majority = _line_share(source, 1, max(1, len(file_lines)), username)
+        if not attribution_complete:
             uncertain.update(row[0] for row in profile)
             continue
         for competency, _label, _weight, _foundation in profile:
