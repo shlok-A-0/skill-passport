@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { api, setAuthRequiredHandler } from "./api";
 import {
   type DemoProfile,
   DEMO_PROFILES,
@@ -13,26 +14,48 @@ export type { DemoProfile, User, UserRole };
 export { DEMO_PROFILES, canAccessRoute };
 
 const STORAGE_KEY = "skill_passport_auth_session";
+const SESSION_ENDED = "Your recruiter session has ended. Sign in again to continue.";
 
 interface AuthContextType {
   user: User | null;
   role: UserRole | null;
   isAuthenticated: boolean;
   isLoginModalOpen: boolean;
+  /** Why the last recruiter sign-in or session failed (shown in the sign-in modal). */
+  authError: string;
   openLoginModal: () => void;
   closeLoginModal: () => void;
-  login: (email: string, password: string) => { success: boolean; error?: string };
-  quickLogin: (role: UserRole) => void;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  quickLogin: (role: UserRole) => Promise<void>;
   logout: () => void;
-  switchRole: (role: UserRole) => void;
+  switchRole: (role: UserRole) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * The recruiter role comes only from the server: the password is exchanged at
+ * /auth/recruiter/login for a session token, which every recruiter endpoint checks.
+ * Returns an error message, or null on success.
+ */
+async function recruiterSignIn(password: string): Promise<string | null> {
+  try {
+    await api.recruiterLogin(password);
+    return null;
+  } catch (reason) {
+    // A development server with no recruiter key configured leaves recruiter routes open.
+    const open = await api.me().catch(() => null);
+    if (open && !open.auth_required) return null;
+    return reason instanceof Error ? reason.message : "Recruiter sign-in failed.";
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initialSession] = useState(() => {
     try {
-      const user = parseStoredUser(localStorage.getItem(STORAGE_KEY));
+      const stored = parseStoredUser(localStorage.getItem(STORAGE_KEY));
+      // A stored recruiter profile without a server session is not a recruiter.
+      const user = stored?.role === "recruiter" && !api.hasRecruiterSession() ? null : stored;
       return { user, isLoginModalOpen: !user };
     } catch {
       return { user: null, isLoginModalOpen: true };
@@ -40,6 +63,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [user, setUser] = useState<User | null>(initialSession.user);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(initialSession.isLoginModalOpen);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    const endRecruiterSession = () => {
+      setUser((current) => (current?.role === "recruiter" ? null : current));
+      setAuthError(SESSION_ENDED);
+      setIsLoginModalOpen(true);
+    };
+    setAuthRequiredHandler(endRecruiterSession);
+    // Re-check a restored recruiter session with the server (it may have expired or been revoked).
+    if (initialSession.user?.role === "recruiter") {
+      api.me().then((identity) => { if (!identity) endRecruiterSession(); }).catch(() => undefined);
+    }
+    return () => setAuthRequiredHandler(null);
+  }, [initialSession]);
 
   useEffect(() => {
     try {
@@ -53,7 +91,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  const login = (email: string, password: string): { success: boolean; error?: string } => {
+  /** Signing in as a student ends any recruiter session in this browser. */
+  const setStudent = (student: User) => {
+    void api.recruiterLogout();
+    setAuthError("");
+    setUser(student);
+    setIsLoginModalOpen(false);
+  };
+
+  const setRecruiter = (recruiter: User) => {
+    setAuthError("");
+    setUser(recruiter);
+    setIsLoginModalOpen(false);
+  };
+
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPass = password.trim();
 
@@ -69,12 +121,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       trimmedEmail === DEMO_PROFILES.recruiter.user.email.toLowerCase() ||
       trimmedEmail.includes("recruiter")
     ) {
+      const error = await recruiterSignIn(trimmedPass);
+      if (error) return { success: false, error };
       const authenticatedUser = { ...DEMO_PROFILES.recruiter.user };
       if (!trimmedEmail.includes("@techcorp.com") && trimmedEmail.includes("@")) {
         authenticatedUser.email = trimmedEmail;
       }
-      setUser(authenticatedUser);
-      setIsLoginModalOpen(false);
+      setRecruiter(authenticatedUser);
       return { success: true };
     }
 
@@ -87,8 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!trimmedEmail.includes("@university.edu") && trimmedEmail.includes("@")) {
         authenticatedUser.email = trimmedEmail;
       }
-      setUser(authenticatedUser);
-      setIsLoginModalOpen(false);
+      setStudent(authenticatedUser);
       return { success: true };
     }
 
@@ -101,24 +153,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       title: "Student Candidate",
       organization: "Applicant",
     };
-    setUser(genericUser);
-    setIsLoginModalOpen(false);
+    setStudent(genericUser);
     return { success: true };
   };
 
-  const quickLogin = (selectedRole: UserRole) => {
-    const profile = DEMO_PROFILES[selectedRole];
-    setUser(profile.user);
-    setIsLoginModalOpen(false);
+  /** One click: the recruiter profile signs in with the demo password; it only takes effect if the server accepts it. */
+  const switchRole = async (newRole: UserRole) => {
+    const profile = DEMO_PROFILES[newRole];
+    if (newRole !== "recruiter") {
+      setStudent(profile.user);
+      return;
+    }
+    const error = await recruiterSignIn(profile.passwordHint);
+    if (error) {
+      setAuthError(error);
+      setIsLoginModalOpen(true);
+      return;
+    }
+    setRecruiter(profile.user);
   };
 
-  const switchRole = (newRole: UserRole) => {
-    const profile = DEMO_PROFILES[newRole];
-    setUser(profile.user);
-    setIsLoginModalOpen(false);
-  };
+  const quickLogin = switchRole;
 
   const logout = () => {
+    void api.recruiterLogout();
+    setAuthError("");
     setUser(null);
     setIsLoginModalOpen(true);
   };
@@ -130,6 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         role: user?.role ?? null,
         isAuthenticated: !!user,
         isLoginModalOpen,
+        authError,
         openLoginModal: () => setIsLoginModalOpen(true),
         closeLoginModal: () => {
           if (user) setIsLoginModalOpen(false);

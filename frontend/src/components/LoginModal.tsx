@@ -16,11 +16,12 @@ import {
 import { DEMO_PROFILES, useAuth, type UserRole } from "../auth";
 
 export default function LoginModal() {
-  const { user, isLoginModalOpen, closeLoginModal, login } = useAuth();
+  const { user, isLoginModalOpen, closeLoginModal, login, authError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [lastAutoFilledRole, setLastAutoFilledRole] = useState<UserRole | null>(null);
   const [isPulsing, setIsPulsing] = useState(false);
 
@@ -70,20 +71,24 @@ export default function LoginModal() {
         setEmail("");
         setPassword("");
       }
-      setErrorMessage("");
+      setErrorMessage(authError);
       setLastAutoFilledRole(null);
     }
-  }, [isLoginModalOpen, user]);
+  }, [isLoginModalOpen, user, authError]);
 
   if (!isLoginModalOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage("");
-
-    const res = login(email, password);
-    if (!res.success) {
-      setErrorMessage(res.error || "Authentication failed. Please verify your credentials.");
+    setSubmitting(true);
+    try {
+      const res = await login(email, password);
+      if (!res.success) {
+        setErrorMessage(res.error || "Authentication failed. Please verify your credentials.");
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -125,7 +130,7 @@ export default function LoginModal() {
           <span className="eyebrow">PROOF, NOT CLAIMS</span>
           <h2 id="auth-modal-title">Demo Sign-In</h2>
           <p className="auth-modal-subtitle">
-            This demo switches between sample Student and Recruiter views. It does not authenticate real accounts or secure backend data.
+            This demo switches between sample Student and Recruiter views. Recruiter sign-in is checked by the server; student profiles are samples, not real accounts.
           </p>
         </div>
 
@@ -199,6 +204,7 @@ export default function LoginModal() {
             type="submit"
             className="button auth-submit-button"
             id="auth-submit-btn"
+            disabled={submitting}
           >
             <span>Sign In / Enter</span>
             <ArrowRight size={16} />

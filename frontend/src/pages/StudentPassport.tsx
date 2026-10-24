@@ -216,6 +216,18 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             {pollingPaused && <button className="button button-light" onClick={() => { setError(""); setPollingPaused(false); }}>Retry status check</button>}
             <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy && !pollingPaused ? "spin" : ""} /> {busy ? (pollingPaused ? "Re-check pending" : "Re-checking GitHub…") : "Re-check GitHub now"}</button>
           </section>
+          {audience === "student" && passport.interview_kit.length > 0 && (
+            <section className="panel practice-panel">
+              <div className="panel-heading"><div><div className="eyebrow">DEFEND YOUR WORK</div><h2>Practice questions</h2></div><span className="count-tag">{passport.interview_kit.length} skills</span></div>
+              <p className="muted">Questions about your own cited code, to help you prepare. A recruiter may ask different questions about any of your work.</p>
+              {passport.interview_kit.map((entry) => (
+                <article className="interview-entry" key={entry.skill_id}>
+                  <strong>{skillName(entry.skill_id)}</strong>
+                  {entry.questions.map((question, index) => <div className="question" key={question.q}><p>{index + 1}. {question.q}</p></div>)}
+                </article>
+              ))}
+            </section>
+          )}
           <RejectedClaims claims={passport.rejected_claims} audience={audience} passportId={passport.id}
             requests={passport.review_requests} labels={passport.check_labels} onChanged={() => { load().catch((reason: Error) => setError(reason.message)); }} />
         </div>

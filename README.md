@@ -64,6 +64,18 @@ Three fictional resume PDFs for local demonstrations are in `samples/`. Each inc
 - **Evidence record (recruiter evidence page and badge):** the commit, path, lines, SHA-256 of the cited lines, retrieval time, verifier version, checks and the rules that set the level.
 - **Students** see every citation that wasn't counted, with links to their lines and the earlier source, and can **Request review**. They don't see the advisory signals or their thresholds. A review request never changes levels; a recruiter marks it reviewed.
 
+## Recruiter sign-in and interview kit
+
+The sign-in modal's recruiter profile is checked by the server. The password (the modal's demo password, or a recruiter key) goes to `POST /auth/recruiter/login`, and only a successful sign-in gives the recruiter role. **Switch to Recruiter Profile** stays one click: it sends the demo password itself. For local demos, set `RECRUITER_KEY=recruiter2026` in `backend/.env` (development only; production uses `RECRUITER_ACCOUNTS` keys of 32+ characters, so the demo password won't work there). The browser keeps an 8-hour session token, never the password. An expired or revoked session reopens the sign-in modal. If no recruiter key is configured in development, recruiter routes stay open as before. Student sign-in is unchanged, and a student's passport, **Practice questions** and Re-check work from the browser session that created the passport.
+
+On a recruiter view, **Interview kit** (header button, or scroll down) shows the private interview workspace:
+
+1. **Generate interview set.** The set picks job-critical requirements whose attribution needs a look first, then must-haves below their required level, then strong evidence. It makes one Gemini call. Each question appears beside its cited code, with the focus lines highlighted, and has passed a check against that file and those lines. A requirement with no code citation becomes a recruiter-led discussion.
+2. **Show answer guidance** reveals the points a good answer covers. A modification question may include a five-minute code-change task; nothing is run on the server.
+3. Record **Explained well / Partly explained / Couldn't explain** and an optional note per question. The summary ("Interview check: 3 of 5 questions explained well · 1 not yet assessed") is computed from the saved outcomes.
+
+Sets are saved: reopening the page never generates new questions, and **Generate another set** starts a separate one. Each recruiter sees only their own sets. Outcomes are observations: they never change levels, role match or depth scores. After a Re-check, questions about citations that changed are marked outdated.
+
 ## Regenerate all passports
 
 After changing verification rules, rebuild every stored passport with a fresh GitHub read. This is the same as pressing Re-check on each one, and it reuses each passport's stored resume and certificate mentions. From the project root:
