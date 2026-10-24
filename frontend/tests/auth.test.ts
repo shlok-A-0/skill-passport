@@ -37,6 +37,7 @@ test("invalid persisted profiles are discarded", () => {
   assert.equal(parseStoredUser(null), null);
   assert.equal(parseStoredUser("{"), null);
   assert.equal(parseStoredUser("{}"), null);
+  assert.equal(parseStoredUser(JSON.stringify({ ...DEMO_PROFILES.student.user, name: "" })), null);
   assert.equal(parseStoredUser(JSON.stringify({ ...DEMO_PROFILES.student.user, role: "admin" })), null);
   assert.deepEqual(parseStoredUser(JSON.stringify(DEMO_PROFILES.student.user)), DEMO_PROFILES.student.user);
 });

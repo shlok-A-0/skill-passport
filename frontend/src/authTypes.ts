@@ -61,9 +61,12 @@ export function parseStoredUser(value: string | null): User | null {
     const user: unknown = JSON.parse(value);
     if (!user || typeof user !== "object") return null;
     const saved = user as Partial<User>;
-    return typeof saved.id === "string" && typeof saved.name === "string" &&
-      typeof saved.email === "string" && (saved.role === "student" || saved.role === "recruiter") &&
-      typeof saved.title === "string" && typeof saved.organization === "string"
+    return typeof saved.id === "string" && !!saved.id.trim() &&
+      typeof saved.name === "string" && !!saved.name.trim() &&
+      typeof saved.email === "string" && !!saved.email.trim() &&
+      (saved.role === "student" || saved.role === "recruiter") &&
+      typeof saved.title === "string" && !!saved.title.trim() &&
+      typeof saved.organization === "string" && !!saved.organization.trim()
       ? saved as User
       : null;
   } catch {
