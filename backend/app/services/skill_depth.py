@@ -211,7 +211,59 @@ def _resolved_name(node: ast.AST, aliases: dict[str, str]) -> str:
     if isinstance(node, ast.Attribute):
         parent = _resolved_name(node.value, aliases)
         return f"{parent}.{node.attr}" if parent else node.attr
+    if isinstance(node, ast.Subscript):
+        return _resolved_name(node.value, aliases)
     return ""
+
+
+def _has_decorator(node: ast.AST, suffixes: tuple[str, ...], aliases: dict[str, str]) -> bool:
+    return any(_resolved_name(decorator.func if isinstance(decorator, ast.Call) else decorator, aliases)
+               .endswith(suffixes) for decorator in getattr(node, "decorator_list", []))
+
+
+def _fixture_decorator(node: ast.AST, aliases: dict[str, str]) -> ast.AST | None:
+    """The @pytest.fixture / @fixture decorator (with or without arguments) on a function."""
+    for decorator in getattr(node, "decorator_list", []):
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if _resolved_name(target, aliases) in {"pytest.fixture", "fixture"}:
+            return decorator
+    return None
+
+
+def _imports_own_module(node: ast.AST, own_modules: set[str]) -> bool:
+    """An import of one of the candidate's analyzed source modules (not pytest, stdlib or packages)."""
+    if isinstance(node, ast.Import):
+        return any(alias.name in own_modules for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        if node.module and node.module in own_modules:
+            return True
+        prefix = node.module + "." if node.module else ""
+        return any(prefix + alias.name in own_modules for alias in node.names)
+    return False
+
+
+def _own_python_modules(repo: dict[str, Any]) -> set[str]:
+    """Module paths of the candidate's analyzed, non-test Python files: `app/db.py` -> app.db, db."""
+    from app.services.github_ingest import is_test_path
+    modules: set[str] = set()
+    for path, source in (repo.get("source_files") or {}).items():
+        pure = PurePosixPath(path)
+        if pure.suffix != ".py" or is_test_path(path) or not source.get("authored_shas"):
+            continue
+        parts = list(pure.with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        modules.update(".".join(parts[start:]) for start in range(len(parts)))
+    return modules
+
+
+# Vite's generated entry point: createRoot(...).render(<StrictMode><App /></StrictMode>).
+VITE_SCAFFOLD_SIGNAL = re.compile(r"^(?:<(?:React\.)?StrictMode>\s*<App\s*/>\s*</(?:React\.)?StrictMode>|<App\s*/>)$")
+
+
+def _is_vite_scaffold(path: str, text: str, signal: str) -> bool:
+    return (PurePosixPath(path).name.lower() in {"main.tsx", "main.jsx"} and "createRoot(" in text
+            and bool(VITE_SCAFFOLD_SIGNAL.match(signal.strip())))
 
 
 def _python_framework_context(skill_id: str, text: str) -> tuple[ast.AST | None, dict[str, str]]:
@@ -236,11 +288,18 @@ def _eligible_sources(ingestion: dict[str, Any], verified: dict[str, Any]):
             if (repo.get("name"), path) in excluded or not source.get("authored_shas"):
                 continue
             lines = source.get("lines") or []
-            if lines:
+            if any(line.strip() for line in lines):  # empty files never yield citations
                 yield repo, path, source, "\n".join(lines)
 
 
-def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, int, str]]:
+def _content_span(lines: list[str]) -> tuple[int, int] | None:
+    """First and last non-blank line, or None for an empty file."""
+    filled = [index for index, line in enumerate(lines, 1) if line.strip()]
+    return (filled[0], filled[-1]) if filled else None
+
+
+def _ast_matches(skill_id: str, competency: str, text: str,
+                 own_modules: set[str] | None = None) -> list[tuple[int, int, str]]:
     try:
         root = ast.parse(text)
     except (SyntaxError, ValueError):
@@ -290,17 +349,24 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
             elif isinstance(node.func, ast.Attribute):
                 name = node.func.attr
         matched = False
+        span: ast.AST = node
         if skill_id == "python":
             matched = {
                 "structure": isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
-                "data": isinstance(node, (ast.For, ast.AsyncFor, ast.Yield, ast.YieldFrom))
-                        or name in {"map", "filter", "groupby", "sort_values", "apply"},
+                "data": isinstance(node, (ast.For, ast.AsyncFor, ast.While, ast.Yield, ast.YieldFrom,
+                                          ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp))
+                        or name in {"map", "filter", "groupby", "sort_values", "apply", "sorted"},
                 "errors": isinstance(node, (ast.Try, ast.Raise)),
-                "interfaces": isinstance(node, ast.ClassDef) or
-                              (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                               and any(ast.unparse(decorator).split("(")[0].endswith(("dataclass", "property"))
-                                       for decorator in node.decorator_list)),
-                "robustness": isinstance(node, ast.Assert) or name == "isinstance" or
+                # A class counts only with behavior (a method) or as an explicit interface;
+                # a field-only model or an empty exception subclass is not an abstraction.
+                "interfaces": (isinstance(node, ast.ClassDef) and (
+                                   any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) for item in node.body)
+                                   or any(_resolved_name(base, aliases) in {
+                                       "typing.Protocol", "typing_extensions.Protocol", "abc.ABC"}
+                                          for base in node.bases)))
+                              or (isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                                  and _has_decorator(node, ("dataclass", "property"), aliases)),
+                "robustness": name == "isinstance" or
                               (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
                                and ast.unparse(node.exc.func) in {"ValueError", "TypeError", "KeyError"}),
             }[competency]
@@ -357,6 +423,9 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
                 "metrics": isinstance(node, ast.Call) and resolved in sklearn_calls and resolved.startswith("sklearn.metrics."),
             }[competency]
         elif skill_id == "unit-testing":
+            fixture = (_fixture_decorator(node, aliases)
+                       if competency == "isolation" and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                       else None)
             matched = {
                 "behavior": isinstance(node, ast.Assert) or name in {"assertEqual", "assertThat", "expect"},
                 "cases": (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"))
@@ -364,15 +433,17 @@ def _ast_matches(skill_id: str, competency: str, text: str) -> list[tuple[int, i
                 "negative": name in {"raises", "assertRaises", "toThrow"} or
                             (isinstance(node, ast.Constant) and isinstance(node.value, str)
                              and any(word in node.value.lower() for word in ("invalid", "empty", "missing", "boundary", "limit"))),
-                "isolation": name in {"monkeypatch", "Mock", "patch", "fixture", "setUp"},
-                "targeting": isinstance(node, (ast.Import, ast.ImportFrom)),
+                "isolation": name in {"monkeypatch", "Mock", "patch", "fixture", "setUp"} or fixture is not None,
+                "targeting": _imports_own_module(node, own_modules or set()),
             }[competency]
+            if fixture is not None:
+                span = fixture  # cite the decorator, not the whole fixture function
         else:
             matched = False
-        if matched and getattr(node, "lineno", None):
-            line = node.lineno
-            label = ast.unparse(node)[:120]
-            result.append((line, getattr(node, "end_lineno", line) or line, label))
+        if matched and getattr(span, "lineno", None):
+            line = span.lineno
+            label = ast.unparse(span)[:120]
+            result.append((line, getattr(span, "end_lineno", line) or line, label))
             if len(result) >= 3:
                 break
     return result
@@ -420,9 +491,10 @@ def _react_matches(competency: str, text: str, path: str) -> list[tuple[int, int
     return found
 
 
-def _matches(skill_id: str, competency: str, text: str, path: str = "") -> list[tuple[int, int, str]]:
+def _matches(skill_id: str, competency: str, text: str, path: str = "",
+             own_modules: set[str] | None = None) -> list[tuple[int, int, str]]:
     if skill_id in {"python", "fastapi", "scikit-learn", "unit-testing"}:
-        return _ast_matches(skill_id, competency, text)
+        return _ast_matches(skill_id, competency, text, own_modules)
     if skill_id == "react":
         return _react_matches(competency, text, path)
     if skill_id == "docker":
@@ -532,28 +604,20 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
         if not attribution_complete or not _has_candidate_authored_lines(source, username, len(file_lines)):
             uncertain.update(row[0] for row in profile)
             continue
+        own_modules = _own_python_modules(repo) if skill_id == "unit-testing" else None
+        cited_spans: dict[str, tuple[int, int]] = {}
         for competency, _label, _weight, _foundation in profile:
             if skill_id == "docker" and competency == "compose":
                 continue
             if not _parse_ok(skill_id, path, text):
                 continue
             assessable.add(competency)
-            for start, end, signal in _matches(skill_id, competency, text, path):
-                if skill_id == "unit-testing" and competency == "targeting":
-                    from app.services.github_ingest import is_test_path
-                    target_stems = {
-                        PurePosixPath(other).stem.removesuffix("_test").removesuffix("_spec")
-                        for other in (repo.get("source_files") or {})
-                        if not is_test_path(other) and len(PurePosixPath(other).stem) >= 3
-                    }
-                    target_stems.update(
-                        PurePosixPath(other).stem.removeprefix("test_").removesuffix("_test").removesuffix("_spec")
-                        for other in (repo.get("source_files") or {})
-                        if is_test_path(other) and other != path
-                    )
-                    if not any(re.search(r"\b" + re.escape(stem) + r"\b", text, re.I)
-                               for stem in target_stems):
-                        continue
+            for start, end, signal in _matches(skill_id, competency, text, path, own_modules):
+                if skill_id == "react" and _is_vite_scaffold(path, text, signal):
+                    continue
+                # One raise statement is evidence for error handling or validation, not both.
+                if skill_id == "python" and competency == "robustness" and cited_spans.get("errors") == (start, end):
+                    continue
                 known, authored = _line_share(source, start, end, username)
                 if not known or not authored:
                     uncertain.add(competency)
@@ -561,6 +625,7 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
                 evidence[competency].append(_citation(
                     repo, path, source, start, end, f"Observed {signal} in an attributable source file."
                 ))
+                cited_spans[competency] = (start, end)
                 break
 
     # Dockerfiles and Compose files come from the bounded structured config reader. Existing
@@ -595,20 +660,23 @@ def _generic_profile(skill_id: str, ingestion: dict[str, Any], verified: dict[st
         for repo in ingestion.get("repos", []):
             if repo.get("is_fork"):
                 continue
-            authored = [(path, src) for path, src in (repo.get("source_files") or {}).items()
-                        if src.get("authored_shas") and (repo.get("name"), path) not in _excluded_files(verified)]
+            # Cite each file's content, never a placeholder line 1; empty files and files whose only
+            # content is line 1 are left out.
+            authored = [(path, src, span) for path, src in (repo.get("source_files") or {}).items()
+                        if src.get("authored_shas") and (repo.get("name"), path) not in _excluded_files(verified)
+                        and (span := _content_span(src.get("lines") or [])) and span != (1, 1)]
             commits = repo.get("user_commits") or []
             if authored and commits:
                 assessable.update({"authored", "breadth", "history"})
-                for path, src in authored[:2]:
-                    ref = _citation(repo, path, src, 1, 1,
+                for path, src, (start, end) in authored[:2]:
+                    ref = _citation(repo, path, src, start, end,
                                     "Candidate-authored file linked to GitHub commit history; commit count is not scored.")
                     evidence["authored"].append(ref)
                 if len(authored) >= 2:
                     evidence["breadth"].extend(
-                        _citation(repo, path, src, 1, 1,
+                        _citation(repo, path, src, start, end,
                                   "A second candidate-authored project file shows repository change breadth.")
-                        for path, src in authored[:2]
+                        for path, src, (start, end) in authored[:2]
                     )
                 evidence["history"].append(evidence["authored"][0])
             gitignore = (repo.get("config_contents") or {}).get(".gitignore")

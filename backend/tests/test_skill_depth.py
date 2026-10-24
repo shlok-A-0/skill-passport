@@ -78,6 +78,16 @@ def test_each_non_sql_pilot_has_cited_observations(skill_id, fixture):
     assert result["disclaimer"]
 
 
+@pytest.mark.parametrize("code", [
+    "from dataclasses import dataclass as dc\n@dc\nclass Record:\n    value: int\n",
+    "from typing import Protocol, TypeVar\nT = TypeVar('T')\nclass Reader(Protocol[T]):\n    value: T\n",
+])
+def test_python_depth_recognizes_aliased_dataclasses_and_generic_protocols(code):
+    result = run("python", repo({"src/interfaces.py": code}))
+    interfaces = next(item for item in result["competencies"] if item["id"] == "interfaces")
+    assert interfaces["status"] == "observed"
+
+
 def test_all_rubrics_total_100_and_foundational_competencies_are_declared():
     assert set(PROFILES) == {"python", "react", "fastapi", "docker", "git", "unit-testing", "scikit-learn"}
     for profile in PROFILES.values():
@@ -250,6 +260,121 @@ def test_unit_testing_targeting_requires_a_reference_to_an_analyzed_source():
     targeting = next(row for row in result["competencies"] if row["id"] == "targeting")
     assert targeting["status"] == "observed"
     assert targeting["evidence"][0]["file_path"] == "tests/test_calc.py"
+
+
+def row(result: dict, competency: str) -> dict:
+    return next(item for item in result["competencies"] if item["id"] == competency)
+
+
+@pytest.mark.parametrize("code", [
+    "def totals(rows):\n    return {row.id: row.total for row in rows}\n",
+    "def ids(rows):\n    return [row.id for row in rows]\n",
+    "def tags(rows):\n    return {row.tag for row in rows}\n",
+    "def total(rows):\n    return sum(row.total for row in rows)\n",
+    "def digits(number):\n    while number:\n        number //= 10\n",
+    "def ranked(rows):\n    return sorted(rows, key=len)\n",
+])
+def test_python_data_handling_includes_comprehensions_while_and_sorted(code):
+    data = row(run("python", repo({"src/a.py": code})), "data")
+    assert data["status"] == "observed"
+    assert data["evidence"][0]["start_line"] == 2
+
+
+@pytest.mark.parametrize("code,observed", [
+    ("from pydantic import BaseModel\n\nclass Request(BaseModel):\n    url: str\n", False),
+    ("class ShortenerError(ValueError):\n    \"\"\"Raised when a URL can't be shortened.\"\"\"\n", False),
+    ("class Store:\n    def add(self, item):\n        return item\n", True),
+    ("from typing import Protocol\n\nclass Reader(Protocol):\n    name: str\n", True),
+    ("import abc\n\nclass Base(abc.ABC):\n    name: str\n", True),
+    ("from dataclasses import dataclass\n\n@dataclass\nclass Point:\n    x: int\n", True),
+])
+def test_python_interfaces_need_a_method_or_an_explicit_interface(code, observed):
+    interfaces = row(run("python", repo({"src/a.py": code})), "interfaces")
+    assert (interfaces["status"] == "observed") is observed
+
+
+def test_python_robustness_ignores_asserts_and_never_reuses_the_error_handling_raise():
+    asserts = "def check(value):\n    assert value > 0\n    return value\n"
+    assert row(run("python", repo({"src/a.py": asserts})), "robustness")["status"] == "not_observed"
+
+    one_raise = "def check(value):\n    if value < 0:\n        raise ValueError('negative')\n    return value\n"
+    result = run("python", repo({"src/a.py": one_raise}))
+    assert row(result, "errors")["evidence"][0]["start_line"] == 3
+    assert row(result, "robustness")["status"] == "not_observed"
+
+    two_raises = one_raise.replace("    return value\n", "    if value > 9:\n        raise ValueError('big')\n    return value\n")
+    result = run("python", repo({"src/a.py": two_raises}))
+    assert row(result, "errors")["evidence"][0]["start_line"] == 3
+    assert row(result, "robustness")["evidence"][0]["start_line"] == 5
+
+    isinstance_check = "def check(value):\n    return isinstance(value, int)\n"
+    assert row(run("python", repo({"src/a.py": isinstance_check})), "robustness")["status"] == "observed"
+
+
+@pytest.mark.parametrize("decorator,header", [
+    ("@pytest.fixture", "import pytest\n"),
+    ("@pytest.fixture(scope='module')", "import pytest\n"),
+    ("@fixture", "from pytest import fixture\n"),
+    ("@fixture()", "from pytest import fixture\n"),
+])
+def test_unit_testing_isolation_detects_fixture_decorators(decorator, header):
+    code = f"{header}\n{decorator}\ndef engine():\n    return object()\n\ndef test_engine(engine):\n    assert engine\n"
+    isolation = row(run("unit-testing", repo({"tests/test_engine.py": code})), "isolation")
+    assert isolation["status"] == "observed"
+    assert isolation["evidence"][0]["start_line"] == 3  # the decorator line
+
+
+def test_unit_testing_targeting_ignores_pytest_stdlib_and_package_imports():
+    test = ("import pytest\nimport json\nfrom datetime import date\nimport requests\n\n"
+            "def test_date():\n    assert date(2026, 1, 1)\n")
+    data = repo({"app/store.py": "def add(x):\n    return x\n", "tests/test_dates.py": test})
+    assert row(run("unit-testing", data), "targeting")["status"] == "not_observed"
+
+    test = "import pytest\n\nfrom app.store import add\n\ndef test_add():\n    assert add(1) == 1\n"
+    data = repo({"app/store.py": "def add(x):\n    return x\n", "tests/test_store.py": test})
+    targeting = row(run("unit-testing", data), "targeting")
+    assert targeting["status"] == "observed"
+    assert targeting["evidence"][0]["start_line"] == 3  # the own-module import, not `import pytest`
+
+
+def test_unit_testing_targeting_only_counts_the_candidates_own_modules():
+    test = "from app.store import add\n\ndef test_add():\n    assert add(1) == 1\n"
+    data = repo({"app/store.py": "def add(x):\n    return x\n", "tests/test_store.py": test})
+    data["source_files"]["app/store.py"]["authored_shas"] = []
+    assert row(run("unit-testing", data), "targeting")["status"] == "not_observed"
+
+
+def test_empty_files_are_never_cited():
+    data = repo({"app/__init__.py": "\n", "app/store.py": "class Store:\n    def add(self, x):\n        return x\n"},
+                commits=[{"sha": "abc"}])
+    data["source_files"]["app/__init__.py"]["lines"] = [""]
+    for skill_id in ("python", "git"):
+        cited = {item["file_path"] for competency in run(skill_id, data)["competencies"]
+                 for item in competency["evidence"]}
+        assert "app/__init__.py" not in cited, skill_id
+
+
+def test_git_cites_file_content_not_a_line_one_placeholder():
+    data = repo({"queries.sql": "\n-- totals\nSELECT 1;\n", "one.py": "x = 1\n",
+                 "app.py": "def f():\n    return 1\n"}, commits=[{"sha": "abc"}])
+    data["source_files"]["queries.sql"]["lines"] = ["", "-- totals", "SELECT 1;"]
+    result = run("git", data)
+    spans = {(item["file_path"], item["start_line"], item["end_line"])
+             for competency in result["competencies"] for item in competency["evidence"]}
+    assert ("queries.sql", 2, 3) in spans
+    assert ("app.py", 1, 2) in spans
+    assert not any(path == "one.py" for path, _start, _end in spans)  # only line 1 has content
+
+
+def test_vite_scaffold_entry_point_is_not_composition_evidence():
+    scaffold = ("import { StrictMode } from 'react';\nimport { createRoot } from 'react-dom/client';\n"
+                "import App from './App';\n\ncreateRoot(document.getElementById('root')!).render(\n"
+                "  <StrictMode>\n    <App />\n  </StrictMode>,\n);\n")
+    assert row(run("react", repo({"src/main.tsx": scaffold})), "composition")["status"] == "not_observed"
+
+    routed = scaffold.replace("    <App />\n", "    <BrowserRouter>\n      <App />\n    </BrowserRouter>\n")
+    composition = row(run("react", repo({"src/main.tsx": routed})), "composition")
+    assert composition["status"] == "observed"
 
 
 def test_git_uses_author_attribution_but_not_commit_volume():
