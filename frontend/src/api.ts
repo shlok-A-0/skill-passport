@@ -195,9 +195,10 @@ export type Passport = {
     task: string;
     evidence_it_will_create: string;
   }[];
+  /** The student practice kit (I7). `good_answer_mentions` is returned on review endpoints only. */
   interview_kit: {
     skill_id: string;
-    questions: { q: string; good_answer_mentions: string }[];
+    questions: { q: string; good_answer_mentions?: string }[];
   }[];
   is_demo: boolean;
   level_changes?: { skill_id: string; from: string; to: string }[];
@@ -363,6 +364,91 @@ export type OwnershipChallenge = {
   instructions: string;
 };
 
+export type InterviewOutcome = "explained_well" | "partly_explained" | "could_not_explain";
+export type InterviewQuestionType = "explain" | "design_tradeoff" | "failure_case" | "modification" | "discussion";
+
+/** The validated code a question is about, pinned to the commit the passport analysed. */
+export type InterviewAnchor = {
+  repo: string;
+  repo_url: string | null;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  snippet_start_line: number;
+  snippet_end_line: number;
+  focus_start_line: number;
+  focus_end_line: number;
+  commit_sha: string | null;
+  url: string | null;
+  focus_url: string | null;
+  snippet: string;
+  snippet_sha256: string;
+};
+
+export type InterviewAssessment = {
+  question_id: string;
+  session_id: string;
+  outcome: InterviewOutcome;
+  note: string;
+  assessor_id: string;
+  assessed_at: string;
+};
+
+/** Recruiter-only: never part of the passport or any student response. */
+export type InterviewQuestion = {
+  id: string;
+  skill_id: string;
+  skill_name: string;
+  requirement: { importance: "must" | "nice"; status: string; min_level: string; student_level: string | null; quote?: string | null } | null;
+  selection_reasons: string[];
+  question_type: InterviewQuestionType;
+  type_label: string;
+  question: string;
+  follow_up: string | null;
+  answer_points: string[];
+  task: {
+    statement: string;
+    expected_behavior: string;
+    acceptance_criteria: string[];
+    suggested_tests: string[];
+    evaluation_guidance: string;
+  } | null;
+  anchor: InterviewAnchor | null;
+  related_url?: string | null;
+  attribution_warnings: string[];
+  stale: boolean;
+  stale_reason: string | null;
+  assessment: InterviewAssessment | null;
+};
+
+export type InterviewSummary = {
+  total: number;
+  assessed: number;
+  unassessed: number;
+  explained_well: number;
+  partly_explained: number;
+  could_not_explain: number;
+  text: string;
+};
+
+export type InterviewSession = {
+  id: string;
+  passport_id: string;
+  created_by: string;
+  status: "generating" | "ready" | "failed";
+  created_at: string;
+  passport_changed: boolean;
+  error: string | null;
+  role_name: string | null;
+  dropped: { reason: string; skill_id?: string }[];
+  questions: InterviewQuestion[];
+  summary: InterviewSummary;
+  outcome_labels: Record<InterviewOutcome, string>;
+};
+
+export type RecruiterIdentity = { role: "recruiter"; recruiter_id: string; auth_required: boolean };
+type MeResponse = RecruiterIdentity | { role: null; recruiter_id: null; auth_required: true };
+
 export type RoleRequirement = { skill_id: string; name?: string; min_level: string; importance: string };
 export type Role = { id: string; name: string; requirements: RoleRequirement[] };
 export type PassportJob = {
@@ -374,7 +460,7 @@ export type PassportJob = {
   passport_id?: string;
 };
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -385,6 +471,10 @@ class ApiError extends Error {
 
 export function isMissingJobError(reason: unknown): boolean {
   return reason instanceof ApiError && reason.status === 404;
+}
+
+export function isAuthError(reason: unknown): boolean {
+  return reason instanceof ApiError && reason.status === 401;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -425,30 +515,54 @@ function formatApiDetail(detail: unknown): string | null {
   return messages.length ? messages.join(" ") : null;
 }
 
-// Kept in memory only (never localStorage), so it is gone when the tab closes.
-let recruiterKey: string | null = null;
+// The short-lived sign-in token, never the recruiter key or password. Kept for as long as the
+// sign-in profile (localStorage); the server expires it after 8 hours and can revoke it.
+const RECRUITER_SESSION = "recruiter-session";
+let onAuthRequired: (() => void) | null = null;
 
-/** Review endpoints include fraud signals; the server may require a recruiter key. */
-async function reviewRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const send = () => request<T>(path, {
-    ...options,
-    headers: { ...(options.headers ?? {}), ...(recruiterKey ? { "X-Recruiter-Key": recruiterKey } : {}) },
-  });
+function recruiterToken(): string | null {
   try {
-    return await send();
-  } catch (reason) {
-    if (!(reason instanceof ApiError) || reason.status !== 401) throw reason;
-    const entered = window.prompt("Enter the recruiter key to see the full review:");
-    if (!entered) throw new Error("A recruiter key is required to open the review view.");
-    recruiterKey = entered;
-    try {
-      return await send();
-    } catch (retryReason) {
-      if (retryReason instanceof ApiError && retryReason.status === 401) recruiterKey = null;
-      throw retryReason;
-    }
+    return localStorage.getItem(RECRUITER_SESSION);
+  } catch {
+    return null;
   }
 }
+
+function setRecruiterToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(RECRUITER_SESSION, token);
+    else localStorage.removeItem(RECRUITER_SESSION);
+  } catch {
+    // storage unavailable: the session lasts until the page is reloaded
+  }
+}
+
+/** Called when a recruiter request is rejected as unauthenticated (the app reopens sign-in). */
+export function setAuthRequiredHandler(handler: (() => void) | null) {
+  onAuthRequired = handler;
+}
+
+/** Review and interview endpoints. The server decides access; hiding pages is only convenience. */
+async function reviewRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = recruiterToken();
+  try {
+    return await request<T>(path, {
+      ...options,
+      headers: { ...(options.headers ?? {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+  } catch (reason) {
+    if (isAuthError(reason)) {
+      setRecruiterToken(null);
+      onAuthRequired?.();
+    }
+    throw reason;
+  }
+}
+
+const json = (body: unknown, extra: Record<string, string> = {}): RequestInit => ({
+  headers: { "Content-Type": "application/json", ...extra },
+  body: JSON.stringify(body),
+});
 
 export const api = {
   roles: () => request<Role[]>("/roles"),
@@ -574,4 +688,38 @@ export const api = {
     return job;
   },
   badge: (id: string) => request<Record<string, unknown>>(`/passport/${id}/badge`),
+  recruiterLogin: async (key: string) => {
+    const session = await request<{ token: string; recruiter_id: string; expires_at: string }>(
+      "/auth/recruiter/login", { method: "POST", ...json({ key }) },
+    );
+    setRecruiterToken(session.token);
+    return session;
+  },
+  hasRecruiterSession: () => Boolean(recruiterToken()),
+  /** The signed-in recruiter, or null when nobody is (never redirects). */
+  me: async (): Promise<RecruiterIdentity | null> => {
+    const token = recruiterToken();
+    const me = await request<MeResponse>("/auth/me", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (me.role === null && token) setRecruiterToken(null);
+    return me.role === "recruiter" ? me : null;
+  },
+  recruiterLogout: async () => {
+    const token = recruiterToken();
+    setRecruiterToken(null);
+    if (token) await request("/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined);
+  },
+  interviewSessions: (passportId: string) =>
+    reviewRequest<{ items: InterviewSession[] }>(`/passport/${passportId}/interview-sessions`),
+  /** The idempotency key makes a retried or double-submitted click return the same set. */
+  createInterviewSession: (passportId: string, idempotencyKey: string) =>
+    reviewRequest<InterviewSession>(`/passport/${passportId}/interview-sessions`, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+  interviewSession: (sessionId: string) => reviewRequest<InterviewSession>(`/interview-sessions/${sessionId}`),
+  assessInterviewQuestion: (sessionId: string, questionId: string, outcome: InterviewOutcome, note: string) =>
+    reviewRequest<{ assessment: InterviewAssessment; summary: InterviewSummary }>(
+      `/interview-sessions/${sessionId}/questions/${questionId}/assessment`,
+      { method: "PUT", ...json({ outcome, note }) },
+    ),
 };

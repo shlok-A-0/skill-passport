@@ -1,9 +1,10 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, FileSearch, MessagesSquare, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, type RequirementPacket } from "../api";
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
+import InterviewWorkspace from "../components/InterviewWorkspace";
 import LadderPill from "../components/LadderPill";
 import ReportsPanel from "../components/ReportsPanel";
 import SqlDepthPanel from "../components/SqlDepthPanel";
@@ -99,6 +100,7 @@ export default function RecruiterView() {
         </div>
         <div className="recruiter-actions">
           <div className="match-total"><strong>{passport.role_match.met} <i>of</i> {passport.role_match.total}</strong><span>requirements met</span></div>
+          <a className="button" href="#interview"><MessagesSquare size={14} /> Interview kit</a>
           <button className="button button-light" onClick={copyLink}><Clipboard size={14} /> {copied ? "Link copied" : "Copy share link"}</button>
         </div>
       </header>
@@ -168,7 +170,8 @@ export default function RecruiterView() {
             ) : <p>No unverified claims in this passport.</p>}
           </section>
           <details className="panel interview-summary">
-            <summary><span><div className="eyebrow">DEFEND-YOUR-WORK KIT</div><strong>Interview questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>
+            <summary><span><div className="eyebrow">SHOWN TO THE STUDENT FOR PRACTICE</div><strong>Student practice questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>
+            <p className="muted">The candidate has seen these questions (without the answer notes). Use the private interview kit below for the interview itself.</p>
             {interviews.length ? interviews.slice(0, 5).map((entry) => (
               <article className="interview-entry" key={entry.skill_id}>
                 <strong>{skillName(entry.skill_id)}</strong>
@@ -183,6 +186,7 @@ export default function RecruiterView() {
           <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
         </aside>
       </div>
+      <InterviewWorkspace passportId={passport.id} />
       <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
