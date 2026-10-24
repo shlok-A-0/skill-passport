@@ -89,7 +89,7 @@ export default function RecruiterView() {
     <div className="recruiter-page">
       <header className="recruiter-heading">
         <div>
-          <div className="eyebrow">RECRUITER VIEW · EVIDENCE-BACKED SUMMARY</div>
+          <div className="eyebrow">RECRUITER VIEW</div>
           <h1>{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Candidate for <strong>{passport.target_role}</strong> · {passport.sources.repos} GitHub repositories reviewed · <span className={`verify-pill verify-${verify.tier.replace(" ", "-").toLowerCase()}`} title={verify.warnings.map(({ signal, where }) => `${signal.label} (${where}): ${signal.detail}`).join("\n") || undefined}>Verifiability: {verify.tier === "Not checked" ? "not checked" : `${verify.tier} · ${verify.passed} of ${verify.checked} checks`}</span>{verify.earlierSources > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {earlierSourcesText(verify.earlierSources)}</span>}{verify.notWritten > 0 && <span className="earlier-sources"><AlertTriangle size={11} /> {notWrittenText(verify.notWritten)}</span>}{openRequests > 0 && <Link className="open-requests" to={`/recruiter/${passport.id}/evidence`}>{openRequests} open review request{openRequests === 1 ? "" : "s"}</Link>}</p>
           {passport.custom_role && <p className="custom-role-note">Custom role from job description: <strong>{passport.custom_role.title}</strong></p>}
@@ -105,7 +105,7 @@ export default function RecruiterView() {
       {error && <div className="notice notice-error">{error}</div>}
       <div className="recruiter-grid">
         <section className="panel requirement-panel">
-          <div className="panel-heading"><div><div className="eyebrow">EXPLAINABLE ROLE MATCH</div><h2>Requirement checklist</h2></div><span className="muted">Must-have gaps first</span></div>
+          <div className="panel-heading"><div><h2>Role requirements</h2></div><span className="muted">Must-have gaps first</span></div>
           <div className="requirement-list">
             {passport.role_match.requirements.map((requirement) => {
               const skill = passport.skills.find((item) => item.skill_id === requirement.skill_id);
@@ -139,11 +139,11 @@ export default function RecruiterView() {
               );
             })}
           </div>
-          <p className="attribution-note">Attribution reflects how clearly the cited work traces to the candidate, not their ability.</p>
+          <p className="attribution-note">Attribution shows how clearly the work traces to the candidate, not their ability.</p>
         </section>
         <aside className="recruiter-side">
           <section className="panel verified-summary">
-            <div className="panel-heading"><div><div className="eyebrow">STRONGEST EVIDENCE</div><h2>Skills with the strongest evidence</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
+            <div className="panel-heading"><div><h2>Strongest evidence</h2></div><ShieldCheck size={19} color="#2fb36b" /></div>
             {topSkills.length ? topSkills.map((skill) => {
               const evidence = skill.evidence.find((item) => item.type === "code") ?? skill.evidence[0];
               const where = evidence.start_line > 0
@@ -159,16 +159,16 @@ export default function RecruiterView() {
             }) : <p className="muted">No evidence was found in the analysed files yet.</p>}
           </section>
           <section className="panel claimed-summary">
-            <div className="panel-heading"><div><div className="eyebrow">NOT INCLUDED IN MATCH</div><h2>Claimed, unverified</h2></div><span className="count-tag">{claimedSkills.length}</span></div>
+            <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimedSkills.length}</span></div>
             {claimedSkills.length ? (
               <>
                 <div className="claimed-inline">{claimedSkills.slice(0, 5).map((skill) => <span key={skill.skill_id}>{skillLabel(skill)}</span>)}</div>
-                <p>These skills may be listed on the resume, certificates or project reports, found only in uncommitted files, or retained from an earlier check. No current evidence was found in the analysed files.</p>
+                <p>From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted.</p>
               </>
             ) : <p>No unverified claims in this passport.</p>}
           </section>
           <details className="panel interview-summary">
-            <summary><span><div className="eyebrow">DEFEND-YOUR-WORK KIT</div><strong>Interview questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>
+            <summary><span><strong>Interview questions</strong></span><span className="count-tag">{interviews.length} skills</span></summary>
             {interviews.length ? interviews.slice(0, 5).map((entry) => (
               <article className="interview-entry" key={entry.skill_id}>
                 <strong>{skillName(entry.skill_id)}</strong>
@@ -183,7 +183,7 @@ export default function RecruiterView() {
           <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
         </aside>
       </div>
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated skills link to code the candidate authored. Used reflects dependencies or configuration; unverified claims are never counted. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated link to code the candidate wrote; Used means dependencies or config. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
-}
+                                      }
