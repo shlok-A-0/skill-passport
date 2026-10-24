@@ -165,6 +165,7 @@ function AppContent() {
                 )}
                 <span className="auth-role-name">
                   <strong>{user.role === "recruiter" ? "Recruiter" : "Student"}:</strong> {user.name.split(" ")[0]}
+                  <span className="demo-badge">DEMO DATA</span>
                 </span>
               </div>
 

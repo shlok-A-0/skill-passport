@@ -1,6 +1,6 @@
 ﻿import assert from "node:assert/strict";
 import test from "node:test";
-import { DEMO_PROFILES, canAccessRoute, parseStoredUser } from "../src/authTypes.ts";
+import { DEMO_PROFILES, canAccessRoute, displayNameFromLogin, parseStoredUser } from "../src/authTypes.ts";
 
 test("demo profiles configure recruiter and student credentials correctly", () => {
   assert.equal(DEMO_PROFILES.recruiter.user.role, "recruiter");
@@ -21,6 +21,13 @@ test("students can access create and student views, but not recruiter or placeme
   assert.equal(canAccessRoute("/recruiter/xyz-123", "student"), false);
   assert.equal(canAccessRoute("/recruiter/xyz-123/evidence", "student"), false);
   assert.equal(canAccessRoute("/placement", "student"), false);
+  assert.equal(canAccessRoute("/Recruiter", "student"), false);
+  assert.equal(canAccessRoute("/Placement", "student"), false);
+});
+
+test("generic login names stay valid for persisted sessions", () => {
+  assert.equal(displayNameFromLogin("alex@example.com"), "alex");
+  assert.equal(displayNameFromLogin("@alex"), "Student");
 });
 
 test("recruiters have access to all application routes", () => {

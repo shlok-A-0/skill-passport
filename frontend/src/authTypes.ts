@@ -46,13 +46,18 @@ export const DEMO_PROFILES: Record<UserRole, DemoProfile> = {
 };
 
 export function canAccessRoute(pathname: string, role: UserRole | null): boolean {
-  if (pathname === "/" || pathname.startsWith("/passport") || pathname === "/student") {
+  const path = pathname.toLowerCase();
+  if (path === "/" || path.startsWith("/passport") || path === "/student") {
     return true;
   }
-  if (pathname.startsWith("/recruiter") || pathname.startsWith("/placement")) {
+  if (path.startsWith("/recruiter") || path.startsWith("/placement")) {
     return role === "recruiter";
   }
   return true;
+}
+
+export function displayNameFromLogin(login: string): string {
+  return login.split("@")[0].replace(/[._-]/g, " ").trim() || "Student";
 }
 
 export function parseStoredUser(value: string | null): User | null {

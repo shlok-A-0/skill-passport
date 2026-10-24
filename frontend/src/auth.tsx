@@ -5,6 +5,7 @@ import {
   type User,
   type UserRole,
   canAccessRoute,
+  displayNameFromLogin,
   parseStoredUser,
 } from "./authTypes";
 
@@ -94,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Default generic login defaults to student role
     const genericUser: User = {
       id: `usr-${Date.now()}`,
-      name: trimmedEmail.split("@")[0].replace(/[._-]/g, " "),
+      name: displayNameFromLogin(trimmedEmail),
       email: trimmedEmail,
       role: "student",
       title: "Student Candidate",
