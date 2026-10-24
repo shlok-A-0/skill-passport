@@ -47,7 +47,7 @@ export default function SqlDepthPanel({ result, audience, compact = false }: {
   return (
     <details className="panel interview-summary sql-depth-panel" open={!compact}>
       <summary>
-        <span><div className="eyebrow">SQL EVIDENCE DEPTH · SCORED POINT BY POINT</div><strong>{sqlDepthHeadline(result)}</strong></span>
+        <span><strong>{sqlDepthHeadline(result)}</strong><small className="sql-depth-summary-note">Patterns in sampled files, not overall skill.</small></span>
         <Database size={17} color="#c95118" />
       </summary>
       <p className="sql-depth-note">{SQL_DEPTH_NOTE}</p>
