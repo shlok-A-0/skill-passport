@@ -3,7 +3,7 @@ import test from "node:test";
 import { droppedSummary, effectiveTargetRole, EXACT_ONLY_NOTE, extractionNote, JOB_DESCRIPTION_OPTION, jobDescriptionInputError } from "../src/customRole.ts";
 
 test("the exact-matching note shows only when the AI was unavailable", () => {
-  assert.equal(extractionNote({ mode: "exact_only" }), "AI suggestions unavailable right now; showing requirements found by exact matching.");
+  assert.equal(extractionNote({ mode: "exact_only" }), "AI suggestions unavailable; showing requirements found by exact matching.");
   assert.equal(extractionNote({ mode: "exact_only" }), EXACT_ONLY_NOTE);
   assert.equal(extractionNote({ mode: "ai" }), null);
   assert.equal(extractionNote({}), null);

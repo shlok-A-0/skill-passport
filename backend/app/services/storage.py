@@ -865,7 +865,8 @@ def delete_recruiter_session(token_hash: str) -> None:
         connection.execute("DELETE FROM recruiter_sessions WHERE token_hash = ?", (token_hash,))
 
 
-# A session still "generating" after this long was interrupted (for example by a restart).
+# A "generating" session with no heartbeat for this long was interrupted (for example by a
+# restart): the route renews the reservation with touch_interview_session while work runs.
 INTERVIEW_GENERATION_TIMEOUT_SECONDS = 300
 INTERRUPTED_INTERVIEW_ERROR = "Generation was interrupted. Start a new interview set."
 
@@ -874,8 +875,8 @@ def _interview_session_row(row: sqlite3.Row) -> dict[str, Any]:
     session = dict(row)
     session["payload"] = json.loads(session["payload"] or "{}")
     if session["status"] == "generating":
-        started = datetime.fromisoformat(session["created_at"])
-        if datetime.now(timezone.utc) - started > timedelta(seconds=INTERVIEW_GENERATION_TIMEOUT_SECONDS):
+        heartbeat = datetime.fromisoformat(session["updated_at"] or session["created_at"])
+        if datetime.now(timezone.utc) - heartbeat > timedelta(seconds=INTERVIEW_GENERATION_TIMEOUT_SECONDS):
             session["status"] = "failed"
             session["error"] = INTERRUPTED_INTERVIEW_ERROR
     return session
@@ -907,13 +908,23 @@ def start_interview_session(
         busy = connection.execute(
             """
             SELECT * FROM interview_sessions
-            WHERE recruiter_id = ? AND passport_id = ? AND status = 'generating' AND created_at > ?
+            WHERE recruiter_id = ? AND passport_id = ? AND status = 'generating' AND updated_at > ?
             ORDER BY created_at DESC LIMIT 1
             """,
             (recruiter_id, passport_id, cutoff),
         ).fetchone()
         if busy:
             return _interview_session_row(busy), "busy"
+        # No live reservation: anything still marked "generating" past the timeout is interrupted
+        # work. End it before allowing a replacement, so the original request cannot finish later
+        # and save over the new set.
+        connection.execute(
+            """
+            UPDATE interview_sessions SET status = 'failed', error = ?, updated_at = ?
+            WHERE recruiter_id = ? AND passport_id = ? AND status = 'generating'
+            """,
+            (INTERRUPTED_INTERVIEW_ERROR, now.isoformat(), recruiter_id, passport_id),
+        )
         session_id = str(uuid.uuid4())
         connection.execute(
             """
@@ -925,6 +936,17 @@ def start_interview_session(
         )
         row = connection.execute("SELECT * FROM interview_sessions WHERE id = ?", (session_id,)).fetchone()
     return _interview_session_row(row), "created"
+
+
+def touch_interview_session(session_id: str) -> None:
+    """Renew a running generation's reservation. The generation route calls this periodically so
+    slow-but-alive work is never reported as interrupted or replaced by a second generation."""
+    initialize_storage()
+    with _connect() as connection:
+        connection.execute(
+            "UPDATE interview_sessions SET updated_at = ? WHERE id = ? AND status = 'generating'",
+            (datetime.now(timezone.utc).isoformat(), session_id),
+        )
 
 
 def complete_interview_session(

@@ -3,7 +3,7 @@ import copy
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -371,6 +371,49 @@ def test_short_names_in_the_cited_code_can_ground_a_question() -> None:
     assert not _grounded("How would you add logging here?", mixed)
 
 
+def test_sql_query_identifiers_ground_questions() -> None:
+    sql_example = (
+        'rows = conn.execute(\n'
+        '    text("SELECT category, SUM(amount_cents) AS total FROM expenses "\n'
+        '         "WHERE spent_on >= :start AND spent_on < :end "\n'
+        '         "GROUP BY category ORDER BY total DESC"),\n'
+        '    {"start": start, "end": end},\n'
+        ')'
+    )
+    assert _grounded("Why are expenses grouped by category in this query?", sql_example)
+    assert _grounded("Why did you aggregate amount_cents?", sql_example)
+    assert _grounded("How does the query filter on spent_on?", sql_example)
+    # Generic SQL keywords alone do not ground questions.
+    assert not _grounded("Why did you use select here?", sql_example)
+    assert not _grounded("Can you explain this where clause?", sql_example)
+
+    # db.execute
+    db_exec = "return db.execute('SELECT id, name FROM users LIMIT ?', (limit,))"
+    assert _grounded("What users are returned by the query?", db_exec)
+    assert _grounded("Why does it query name from users?", db_exec)
+
+    # Quoted SQL names
+    quoted = 'SELECT "amount_cents", "category" FROM "expenses"'
+    assert _grounded("What is amount_cents in expenses?", quoted)
+    # Python and JavaScript identifiers (including count, update) remain valid
+    assert _grounded("Why is count incremented here?", "count += 1")
+    assert _grounded("What does update do?", "def update(item):\n    return item")
+
+
+def test_comment_and_string_words_do_not_ground_a_question() -> None:
+    # Ordinary words in a comment or a string literal name no identifier, however suggestive.
+    assert not _grounded("When should an application cache results?", "x = 1  # Cache results here")
+    assert not _grounded("When should an application cache results?", 'message = "Cache results here"')
+    assert not _grounded("When should an application cache results?", 'message = "cache"')
+    assert not _grounded("When should an application cache results?", "const ttl = 60; // cache results")
+    assert not _grounded("When should an application cache results?", "/* cache results */\nconst ttl = 60;")
+    assert not _grounded("When should an application cache results?", "SELECT 1; -- cache results")
+    # The same idea as an actual identifier still grounds the question.
+    assert _grounded("When should cache_results be called?", "def cache_results(rows):\n    return rows")
+    # And a comment does not strip the real code sharing its line.
+    assert _grounded("When should cache_results be called?", "def cache_results(rows):  # Cache results here\n    return rows")
+
+
 def test_malformed_output_is_retried_then_fails_safely(monkeypatch) -> None:
     sent = fake_gemini(monkeypatch, ["not json", valid_reply()])
     questions, _ = interview_sessions.generate_questions(_targets(), "Backend", [])
@@ -458,6 +501,47 @@ def test_a_set_still_generating_blocks_a_double_submit(client) -> None:
     alice = _login(client, ALICE)
     storage.start_interview_session("p-int", "alice", "in-flight", "rev")
     assert _create(client, alice, key="click-2").status_code == 409
+
+
+def _backdate(session_id: str, *, created_at: str | None = None, updated_at: str | None = None) -> None:
+    with storage._connect() as connection:
+        if created_at is not None:
+            connection.execute("UPDATE interview_sessions SET created_at = ? WHERE id = ?", (created_at, session_id))
+        if updated_at is not None:
+            connection.execute("UPDATE interview_sessions SET updated_at = ? WHERE id = ?", (updated_at, session_id))
+
+
+def test_a_slow_live_generation_keeps_its_reservation(client) -> None:
+    # Past five minutes but still heartbeating: not reported interrupted, not replaceable.
+    alice = _login(client, ALICE)
+    session, outcome = storage.start_interview_session("p-int", "alice", "slow-1", "rev")
+    assert outcome == "created"
+    started = (datetime.now(timezone.utc) - timedelta(
+        seconds=storage.INTERVIEW_GENERATION_TIMEOUT_SECONDS + 100)).isoformat()
+    _backdate(session["id"], created_at=started)
+    storage.touch_interview_session(session["id"])
+    assert _create(client, alice, key="click-2").status_code == 409
+    current = client.get(f"/interview-sessions/{session['id']}", headers=alice).json()
+    assert current["status"] == "generating" and current["error"] is None
+
+
+def test_an_interrupted_generation_is_ended_before_a_replacement(client, monkeypatch) -> None:
+    fake_gemini(monkeypatch, [valid_reply()])
+    alice = _login(client, ALICE)
+    stale, _ = storage.start_interview_session("p-int", "alice", "stale-1", "rev")
+    old = (datetime.now(timezone.utc) - timedelta(
+        seconds=storage.INTERVIEW_GENERATION_TIMEOUT_SECONDS + 100)).isoformat()
+    _backdate(stale["id"], created_at=old, updated_at=old)
+    # No heartbeat past the timeout: reported as interrupted...
+    interrupted = client.get(f"/interview-sessions/{stale['id']}", headers=alice).json()
+    assert interrupted["status"] == "failed" and "interrupted" in interrupted["error"].lower()
+    # ...a replacement is allowed to start...
+    assert _create(client, alice, key="click-2").status_code == 201
+    # ...and the original work can no longer save over the new set.
+    with pytest.raises(RuntimeError, match="Cannot complete"):
+        storage.complete_interview_session(stale["id"], {}, [])
+    ended = client.get(f"/interview-sessions/{stale['id']}", headers=alice).json()
+    assert ended["status"] == "failed" and "interrupted" in ended["error"].lower()
 
 
 def test_questions_are_flagged_stale_after_the_passport_changes(client, monkeypatch) -> None:

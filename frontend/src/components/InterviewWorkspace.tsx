@@ -222,9 +222,11 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
           </button>
         </div>
       </div>
-      <p className="muted interview-note">
-        Questions are picked from the job requirements and the candidate's cited code: job-critical requirements whose attribution needs a look come first, strong evidence last. Each question is checked against the cited file and lines before it's saved. {INTERVIEW_DISCLAIMER}
-      </p>
+      <details className="interview-how">
+        <summary>How questions are picked</summary>
+        <p className="muted">Questions are picked from the job requirements and the candidate's cited code: job-critical requirements whose attribution needs a look come first, strong evidence last. Each question is checked against the cited file and lines before it's saved.</p>
+      </details>
+      <p className="muted interview-note">{INTERVIEW_DISCLAIMER}</p>
       {error && <div className="notice notice-error">{error.message} {!generating && !loading && error.retry && <button type="button" className="link-button" onClick={error.retry}>Try again</button>}</div>}
       {sessions && sessions.length > 1 && (
         <label className="interview-picker">Interview set

@@ -106,8 +106,8 @@ export default function StudentSummary() {
     .map((s) => skillLabel(s));
 
   const strengthsOverview = topEvidencedNames.length > 0
-    ? `Observed evidence is available for ${evidencedCount} technical skills, including code-backed evidence for ${codeBackedCount}; stronger sampled examples include ${topEvidencedNames.join(", ")}. Levels describe evidence of use in the analysed sample, not overall ability.`
-    : `Candidate profile has been analysed across GitHub repositories and documents. Detailed evidence breakdown is listed below.`;
+    ? `Verified evidence found for ${evidencedCount} skills, with code-backed proof for ${codeBackedCount}. Strongest examples: ${topEvidencedNames.join(", ")}. Levels reflect the analysed sample, not overall ability.`
+    : `Analysed across GitHub repositories and documents. The evidence breakdown is below.`;
 
   const reportDateFormatted = new Date(passport.created_at).toLocaleDateString("en-US", {
     year: "numeric",
@@ -121,7 +121,7 @@ export default function StudentSummary() {
       <div className="summary-action-bar no-print">
         <Link className="summary-back-link" to={`/passport/${id}`}>
           <ArrowLeft size={16} />
-          <span>Back to Live Passport</span>
+          <span>Back to passport</span>
         </Link>
         <div className="summary-action-buttons">
           <button type="button" className="button button-light" onClick={downloadBadge}>
@@ -148,7 +148,7 @@ export default function StudentSummary() {
               <span className="summary-brand-icon"><ShieldCheck size={22} /></span>
               <div>
                 <span className="summary-brand-title">SKILL PASSPORT</span>
-                <span className="summary-brand-tagline">DETERMINISTIC EVIDENCE REPORT</span>
+                <span className="summary-brand-tagline">EVIDENCE REPORT</span>
               </div>
             </div>
             <div className="summary-header-meta">
@@ -195,31 +195,31 @@ export default function StudentSummary() {
           <div className="summary-metrics-grid">
             <div className="summary-metric-card highlighted">
               <span className="summary-metric-num">{evidencedCount}</span>
-              <span className="summary-metric-label">Evidenced Skills</span>
-              <small>Demonstrated, Applied & Used</small>
+              <span className="summary-metric-label">Evidenced skills</span>
+              <small>Demonstrated, Applied and Used</small>
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">{demonstratedSkills.length}</span>
               <span className="summary-metric-label">Demonstrated</span>
-              <small>Applied & exercised in tests</small>
+              <small>Used in code, covered by tests</small>
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">{appliedSkills.length}</span>
               <span className="summary-metric-label">Applied</span>
-              <small>Directly committed source lines</small>
+              <small>Used in committed code</small>
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">
                 {passport.sources.certificates ?? 0}
               </span>
               <span className="summary-metric-label">Certificates</span>
-              <small>Uploaded certificate documents</small>
+              <small>Uploaded documents</small>
             </div>
             <div className="summary-metric-card">
               <span className="summary-metric-num">
                 {passport.sources.reports ?? passport.reports ? (Array.isArray(passport.reports) ? passport.reports.length : (passport.sources.reports || 0)) : 0}
               </span>
-              <span className="summary-metric-label">Project Reports</span>
+              <span className="summary-metric-label">Project reports</span>
               <small>Cross-checked with code</small>
             </div>
             <div className="summary-metric-card">
@@ -227,7 +227,7 @@ export default function StudentSummary() {
                 {passport.coverage?.repos_analysed ?? passport.sources.repos}
               </span>
               <span className="summary-metric-label">Repositories</span>
-              <small>Analysed GitHub codebases</small>
+              <small>Analysed on GitHub</small>
             </div>
           </div>
 
@@ -247,7 +247,7 @@ export default function StudentSummary() {
             <h2>Skills & Evidence</h2>
           </div>
           <p className="summary-section-sub">
-            Skills categorized by deterministic verification level. Click any item on screen to expand cited code files, or review them directly in the printed PDF.
+            Grouped by verification level. Expand any skill to see the cited code.
           </p>
 
           {/* Level 1: Demonstrated */}
@@ -255,7 +255,7 @@ export default function StudentSummary() {
             <div className="summary-tier-header">
               <LadderPill level="Demonstrated" />
               <span className="summary-tier-title">Demonstrated ({demonstratedSkills.length})</span>
-              <span className="summary-tier-desc">Applied in source code AND exercised by candidate-authored tests</span>
+              <span className="summary-tier-desc">Used in code and covered by the candidate's own tests</span>
             </div>
             {demonstratedSkills.length > 0 ? (
               <div className="summary-skill-cards">
@@ -291,7 +291,7 @@ export default function StudentSummary() {
             <div className="summary-tier-header">
               <LadderPill level="Used" />
               <span className="summary-tier-title">Used ({usedSkills.length})</span>
-              <span className="summary-tier-desc">Configured in project manifests or dependencies authored by candidate</span>
+              <span className="summary-tier-desc">Found in the candidate's dependencies or config</span>
             </div>
             {usedSkills.length > 0 ? (
               <div className="summary-skill-cards">
@@ -309,12 +309,12 @@ export default function StudentSummary() {
             <div className="summary-tier-header">
               <LadderPill level="Claimed" />
               <span className="summary-tier-title">Claimed / Unverified in Sample ({claimedSkills.length})</span>
-              <span className="summary-tier-desc">Listed on resume or certificate, but no qualifying code found in sample</span>
+              <span className="summary-tier-desc">From documents, uncommitted files or an earlier check; no current evidence</span>
             </div>
             <div className="summary-claimed-callout">
               <AlertCircle size={15} />
               <span>
-                <strong>Unverified Notice:</strong> These skills were listed on the candidate’s resume or certificates, but no candidate-authored evidence was verified in the analysed source code sample. This indicates absence of evidence in the sampled files, not lack of ability.
+                From documents, uncommitted files or an earlier check, without current evidence in the analysed files. Missing evidence does not mean lack of ability.
               </span>
             </div>
             {claimedSkills.length > 0 ? (
@@ -357,7 +357,7 @@ export default function StudentSummary() {
                       <CheckCircle2 size={14} className="credential-check" />
                       <div>
                         <strong>{skillLabel(skill)}</strong>
-                        <span className="credential-meta">Skill name matched in uploaded certificate text; issuer and credential validity were not independently verified.</span>
+                        <span className="credential-meta">Name matched in certificate text; issuer and credential validity not verified.</span>
                       </div>
                     </li>
                   ))}
@@ -413,7 +413,7 @@ export default function StudentSummary() {
                 </div>
               ) : (
                 <p className="summary-empty-note">
-                  No separate project reports submitted. Technical analysis was derived directly from public GitHub repositories and resume.
+                  No project reports submitted. Analysis used GitHub repositories and the resume.
                 </p>
               )}
             </div>
@@ -441,8 +441,8 @@ export default function StudentSummary() {
                   </span>
                 </div>
                 <p className="summary-depth-desc">
-                  Structured query analysis evaluated {passport.sql_depth.distinct_query_count} distinct SQL statements in candidate code.
-                  {passport.sql_depth.concepts_found.length > 0 ? "Observed SQL concepts include: " : "No SQL concepts were found in the analysed sample."}{" "}
+                  {passport.sql_depth.distinct_query_count} distinct SQL statements analysed.
+                  {passport.sql_depth.concepts_found.length > 0 ? "Concepts found: " : "No SQL concepts found in the analysed sample."}{" "}
                   {passport.sql_depth.concepts_found.length > 0
                     ? passport.sql_depth.concepts_found.map((c) => c.label).join(", ")
                     : null}
@@ -484,7 +484,7 @@ export default function StudentSummary() {
                           </span>
                         </div>
                         <p className="depth-profile-obs">
-                          {observed.length} observed competencies out of {depth.competencies.length} evaluated · {depth.coverage.percent}% coverage.
+                          {observed.length} of {depth.competencies.length} competencies observed · {depth.coverage.percent}% coverage.
                         </p>
                         <p className="summary-depth-desc">{depth.disclaimer}</p>
                         <ul className="summary-depth-citations">
@@ -502,7 +502,7 @@ export default function StudentSummary() {
             {!passport.sql_depth && (!passport.skill_depth || Object.keys(passport.skill_depth).length === 0) && (
               <div className="summary-depth-card">
                 <p className="summary-empty-note">
-                  Skill depth pilot evaluation was not active or insufficient structured query instances were found in the analysed code sample. Overall skill categorization remains active above.
+                  Skill depth analysis was not available for this sample. The skill levels above still apply.
                 </p>
               </div>
             )}
@@ -518,7 +518,7 @@ export default function StudentSummary() {
 
           <div className="summary-coverage-box">
             <p className="summary-coverage-statement">
-              <strong>Context & Sampling Notice:</strong> This analysis evaluates a representative sample of public repositories ({passport.coverage?.repos_analysed ?? passport.sources.repos} analysed) and source files ({passport.coverage?.source_files_read ?? 0} files read, ~{passport.coverage?.lines_read?.toLocaleString() ?? 0} lines). Findings describe strictly the verified material within this sample; absence of evidence does not imply that the candidate lacks the skill.
+              <strong>Based on a sample:</strong> {passport.coverage?.repos_analysed ?? passport.sources.repos} repositories, {passport.coverage?.source_files_read ?? 0} files read, ~{passport.coverage?.lines_read?.toLocaleString() ?? 0} lines. Findings cover only this sample; missing evidence does not mean a missing skill.
             </p>
 
             {passport.coverage?.repos && passport.coverage.repos.length > 0 && (
@@ -557,7 +557,7 @@ export default function StudentSummary() {
             <h2>Growth Areas & Next Steps</h2>
           </div>
           <p className="summary-section-sub">
-            Concrete suggestions to turn unverified role requirements into evidenced proof by committing new work.
+            Tasks that turn gaps into new proof.
           </p>
 
           {passport.growth_tasks && passport.growth_tasks.length > 0 ? (
@@ -579,7 +579,7 @@ export default function StudentSummary() {
             <div className="summary-empty-note">{GROWTH_UNAVAILABLE}</div>
           ) : (
             <div className="summary-empty-note">
-              No immediate role gaps were flagged for the target role: <strong>{passport.target_role}</strong>. Continue building and re-check when publishing new repositories.
+              No gaps found for <strong>{passport.target_role}</strong>. Re-check after publishing new work.
             </div>
           )}
         </section>

@@ -1,4 +1,4 @@
-import { FileText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { FileText, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
@@ -159,7 +159,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
     <div className="passport-page">
       <header className="passport-heading">
         <div>
-          <div className="eyebrow">STUDENT PASSPORT · CREATED {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · RE-CHECKED ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
+          <div className="eyebrow">CREATED {new Date(passport.created_at).toLocaleDateString()}{passport.updated_at && passport.updated_at.slice(0, 10) !== passport.created_at.slice(0, 10) ? ` · UPDATED ${new Date(passport.updated_at).toLocaleDateString()}` : ""}</div>
           <h1>@{passport.github_username}{passport.is_demo && <span className="demo-badge">DEMO DATA</span>}</h1>
           <p>Target role: <strong>{passport.target_role}</strong> <span className="source-summary">GitHub: {passport.sources.repos} repos · Resume PDF · {passport.sources.certificates} certificates{passport.sources.reports ? ` · ${passport.sources.reports} project report${passport.sources.reports === 1 ? "" : "s"}` : ""}</span></p>
           <CoverageSummary coverage={passport.coverage} />
@@ -173,13 +173,13 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
       {changes.length > 0 && (
         <div className="upgrade-banner"><Sparkles size={18} /><div><strong>Evidence updated after re-check</strong><p>{changes.map((change) => `${skillName(change.skill_id)}: ${change.from} → ${change.to}`).join(" · ")}</p></div></div>
       )}
-      <section className="ladder-legend">
-        <div className="legend-title"><ShieldCheck size={17} /> EVIDENCE LADDER <small>Levels come from fixed evidence rules, never AI.</small></div>
+      <details className="ladder-legend">
+        <summary>What do the evidence levels mean?</summary>
         <div className="legend-items">{ladder.map(([level, text]) => (
           <div className="legend-item" key={level}><LadderPill level={level} /><span>{text}</span></div>
         ))}</div>
         <p className="legend-note">{LEVEL_NOTE}</p>
-      </section>
+      </details>
       <div className="passport-grid">
         <div className="skill-column">
           <section className="panel skill-panel">
@@ -195,26 +195,26 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           </section>
           {claimed.length > 0 && (
             <section className="panel claimed-panel">
-              <div className="panel-heading"><div><div className="eyebrow">SEPARATE · NEVER COUNTED AS MET</div><h2>Claimed, not yet evidenced</h2></div><span className="count-tag">{claimed.length}</span></div>
+              <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimed.length}</span></div>
               <div className="claimed-skills">{claimed.map((skill) => (
                 <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
               ))}</div>
-              <p className="muted">These skills may be listed on your resume, certificates or project reports, found only in files you did not commit to, or retained from an earlier check. No qualifying evidence was found in the latest analysis.</p>
+              <p className="muted">From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted as met.</p>
             </section>
           )}
           <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience={audience} />
           <SkillDepthPanel results={passport.skill_depth} />
-          <SqlDepthPanel result={passport.sql_depth} audience={audience} />
+          <SqlDepthPanel result={passport.sql_depth} audience={audience} compact />
           <section className="panel growth-panel">
-            <div className="panel-heading"><div><div className="eyebrow">GROWTH LOOP</div><h2>Turn gaps into proof</h2></div></div>
-            <p className="muted">Complete a task in your repo, then re-ingest GitHub to check for new evidence.</p>
+            <div className="panel-heading"><div><h2>Next steps</h2></div></div>
+            <p className="muted">Finish a task, then re-check to update your levels.</p>
             {passport.growth_tasks.length ? passport.growth_tasks.map((task) => (
               <GrowthCard key={task.skill_id} task={task} onRecheck={recheck} busy={busy} />
             )) : growthUnavailable(passport)
               ? <div className="notice notice-warning">{GROWTH_UNAVAILABLE}</div>
               : <div className="empty-state">No role gaps found. Keep building and use Re-check when your work changes.</div>}
             {pollingPaused && <button className="button button-light" onClick={() => { setError(""); setPollingPaused(false); }}>Retry status check</button>}
-            <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy && !pollingPaused ? "spin" : ""} /> {busy ? (pollingPaused ? "Re-check pending" : "Re-checking GitHub…") : "Re-check GitHub now"}</button>
+            <button className="button recheck-button" onClick={recheck} disabled={busy}><RefreshCw size={15} className={busy && !pollingPaused ? "spin" : ""} /> {busy ? (pollingPaused ? "Re-check pending" : "Re-checking GitHub…") : "Re-check GitHub"}</button>
           </section>
           {audience === "student" && passport.interview_kit.length > 0 && (
             <section className="panel practice-panel">

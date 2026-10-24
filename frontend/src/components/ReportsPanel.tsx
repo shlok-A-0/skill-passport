@@ -6,21 +6,22 @@ import type { Audience } from "./RejectedClaims";
  * Project reports and the portfolio link. Report claims are checked against counted evidence and
  * never raise a level; links to another account's repositories are shown to recruiters only.
  */
-export default function ReportsPanel({ reports = [], portfolio, audience }: {
+export default function ReportsPanel({ reports = [], portfolio, audience, defaultOpen }: {
   reports?: ProjectReport[];
   portfolio?: Portfolio;
   audience: Audience;
+  defaultOpen?: boolean;
 }) {
   if (!reports.length && !portfolio) return null;
   const recruiter = audience === "recruiter";
   const claimCount = reports.reduce((total, report) => total + report.claims.length, 0);
   return (
-    <details className="panel interview-summary reports-summary" open={!recruiter}>
+    <details className="panel interview-summary reports-summary" open={defaultOpen ?? !recruiter}>
       <summary>
-        <span><div className="eyebrow">CLAIMS, NOT EVIDENCE</div><strong>Project reports &amp; portfolio</strong></span>
+        <span><strong>Project reports &amp; portfolio</strong></span>
         <span className="count-tag">{claimCount} claim{claimCount === 1 ? "" : "s"}</span>
       </summary>
-      <p className="muted">Reports are checked against counted evidence and never raise a level. Skills a report mentions without counted evidence stay unverified.</p>
+      <p className="muted">Report claims are checked against the evidence and never raise a level.</p>
       {reports.map((report, index) => (
         <article className="report-entry" key={`${report.filename}-${index}`}>
           <strong>{report.filename}</strong>
@@ -32,10 +33,10 @@ export default function ReportsPanel({ reports = [], portfolio, audience }: {
                   <span className="report-claim-skill">{skillLabel(claim)}</span>
                   {claim.status === "corroborated" ? (
                     claim.evidence?.url
-                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> Corroborated by counted evidence <ExternalLink size={10} /></a>
-                      : <span className="flag-ok"><CheckCircle2 size={11} /> Corroborated by counted evidence</span>
+                      ? <a className="flag-ok" href={claim.evidence.url} target="_blank" rel="noreferrer"><CheckCircle2 size={11} /> Matches verified evidence <ExternalLink size={10} /></a>
+                      : <span className="flag-ok"><CheckCircle2 size={11} /> Matches verified evidence</span>
                   ) : (
-                    <span className="muted">{recruiter ? "Not corroborated by counted evidence" : "Not yet corroborated by counted evidence"}</span>
+                    <span className="muted">{recruiter ? "No matching evidence" : "No matching evidence yet"}</span>
                   )}
                   <small className="muted">“{claim.quote}”</small>
                 </li>

@@ -23,7 +23,7 @@ const result = {
 } as never;
 
 test("the headline shows the score out of 100 and the label", () => {
-  assert.equal(sqlDepthHeadline({ score: 72, label: "Solid" }), "SQL evidence depth: 72/100 · Solid");
+  assert.equal(sqlDepthHeadline({ score: 72, label: "Solid" }), "SQL depth: 72/100 · Solid");
 });
 
 test("parts are listed in weight order with points earned out of the maximum", () => {
@@ -49,12 +49,12 @@ test("evidence locations name the repository, file and lines", () => {
 });
 
 test("the disclaimer says it is not a full measure of skill", () => {
-  assert.equal(SQL_DEPTH_NOTE, "Depth of SQL evidence in the analysed repositories, not a full measure of skill.");
+  assert.equal(SQL_DEPTH_NOTE, "SQL patterns found in the analysed code. Not a measure of overall skill.");
 });
 
 test("passport creation copy reflects both depth feature flags", () => {
-  assert.match(createScoreNote(true, true), /SQL and selected pilot skills/);
-  assert.match(createScoreNote(false, true), /selected pilot skills/);
-  assert.match(createScoreNote(true, false), /SQL evidence depth/);
+  assert.match(createScoreNote(true, true), /SQL and pilot-skill patterns/);
+  assert.match(createScoreNote(false, true), /pilot-skill patterns/);
+  assert.match(createScoreNote(true, false), /SQL depth is scored/);
   assert.equal(createScoreNote(false, false), "No numeric skill scores.");
 });

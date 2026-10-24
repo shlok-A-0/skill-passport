@@ -21,6 +21,7 @@ import uuid
 from typing import Any, Literal
 
 from google import genai
+from sqlglot.tokens import Tokenizer, TokenType
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import config
@@ -372,6 +373,130 @@ def build_prompt(targets: list[dict[str, Any]], role_name: str, previous: list[s
     )
 
 
+# SQL keywords and standard aggregate/clause words that do not name code identifiers.
+_SQL_KEYWORDS = {
+    "select", "from", "where", "group", "by", "order", "having", "limit", "offset",
+    "join", "inner", "left", "right", "outer", "cross", "on", "using",
+    "insert", "into", "values", "update", "set", "delete", "create", "alter",
+    "drop", "table", "index", "view", "database", "schema", "primary", "key",
+    "foreign", "references", "default", "check", "unique", "constraint",
+    "distinct", "union", "all", "exists", "between", "like", "ilike", "similar",
+    "case", "when", "then", "else", "end", "cast", "as", "asc", "desc", "nulls",
+    "first", "last", "with", "recursive", "sum", "count", "avg", "min", "max",
+}
+
+_SQL_START = re.compile(
+    r"^\s*(?:(?:--[^\n]*(?:\n|$)|/\*.*?\*/)\s*)*"
+    r"(?:select|with|insert\s+into|update|delete\s+from|create\s+table|alter\s+table|drop\s+table"
+    r"|where|group\s+by|order\s+by|having|from|join)\b",
+    re.I | re.S,
+)
+
+_SQL_CALLS_PATTERN = re.compile(
+    r"\b(?:execute|executemany|executescript|text|read_sql|read_sql_query)\s*\($",
+    re.I,
+)
+
+
+def _extract_sql_identifiers(sql: str) -> list[str]:
+    """Extract column, table, alias and parameter identifiers from an executable SQL string."""
+    try:
+        tokens = Tokenizer().tokenize(sql)
+        identifiers: list[str] = []
+        for token in tokens:
+            if token.token_type in (TokenType.VAR, TokenType.IDENTIFIER):
+                val = token.text.strip('"`[]')
+                if val and val.lower() not in _SQL_KEYWORDS and val.lower() not in _STOP_WORDS:
+                    identifiers.append(val)
+        return identifiers
+    except Exception:
+        words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sql)
+        return [w for w in words if w.lower() not in _SQL_KEYWORDS and w.lower() not in _STOP_WORDS]
+
+
+def _code_only(text: str) -> str:
+    """The snippet with comments and ordinary string contents removed, keeping code tokens,
+    SQL identifiers from executable query strings, and quoted SQL names.
+    Newlines are preserved so tokens on different lines never merge."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    sql_call_depth = 0
+    paren_depth = 0
+    is_snippet_sql = bool(_SQL_START.match(text))
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if ch == "#" or (ch == "/" and nxt == "/") or (ch == "-" and nxt == "-" and (i + 2 >= n or text[i + 2] in " \t")):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            chunk = text[i:] if end == -1 else text[i:end + 2]
+            out.append("\n" * chunk.count("\n"))
+            i = n if end == -1 else end + 2
+            continue
+        if ch == "(":
+            paren_depth += 1
+            preceding = "".join(out)
+            if _SQL_CALLS_PATTERN.search(preceding + "("):
+                sql_call_depth = paren_depth
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ")":
+            if sql_call_depth == paren_depth:
+                sql_call_depth = 0
+            if paren_depth > 0:
+                paren_depth -= 1
+            out.append(ch)
+            i += 1
+            continue
+        if ch in "'\"`":
+            quote = ch * 3 if text.startswith(ch * 3, i) else ch
+            j = i + len(quote)
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text.startswith(quote, j):
+                    j += len(quote)
+                    break
+                j += 1
+            raw_chunk = text[i:j]
+            newline_count = raw_chunk.count("\n")
+            content_inner = text[i + len(quote) : j - len(quote)]
+
+            # Check if this string is in SQL context
+            is_in_sql = is_snippet_sql or (sql_call_depth > 0) or bool(_SQL_START.match(content_inner))
+
+            # Backticks quote identifiers in SQL or markdown
+            if quote == "`" and len(quote) == 1 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", content_inner):
+                if content_inner.lower() not in _STOP_WORDS:
+                    out.append(f" {content_inner} ")
+                    out.append("\n" * newline_count)
+                    i = j
+                    continue
+
+            # In SQL context, extract SQL identifiers from queries or quoted names
+            if is_in_sql:
+                identifiers = _extract_sql_identifiers(content_inner)
+                if identifiers:
+                    out.append(" " + " ".join(identifiers) + " ")
+                    out.append("\n" * newline_count)
+                    i = j
+                    continue
+
+            # Ordinary string literal in Python/JS (e.g. message = "cache", "invalid email")
+            out.append("\n" * newline_count)
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _identifiers(text: str) -> set[str]:
     return {
         word.lower() for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text)
@@ -385,8 +510,6 @@ def _short_identifiers(text: str) -> set[str]:
         word for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{1,2}\b", text)
         if word.lower() not in _SHORT_STOP_WORDS
     }
-
-
 def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> bool:
     """The main question names an identifier from its focus lines. A file name, a line number or
     a follow-up alone is not enough: any question could mention those.
@@ -398,10 +521,11 @@ def _refers_to_code(question: ProposedQuestion, citation: dict[str, Any]) -> boo
     first = question.focus_start_line - citation["snippet_start_line"]
     focus = "\n".join(lines[first:question.focus_end_line - citation["snippet_start_line"] + 1])
     text = question.question
-    long_names = _identifiers(focus)
+    code = _code_only(focus)
+    long_names = _identifiers(code)
     if long_names & _identifiers(text):
         return True
-    for name in _short_identifiers(focus):
+    for name in _short_identifiers(code):
         escaped = re.escape(name)
         if re.search(rf"`{escaped}`|\b{escaped}\s*\(|\.{escaped}\b", text):
             return True
@@ -690,4 +814,4 @@ def session_view(session: dict[str, Any], passport: dict[str, Any] | None) -> di
         "questions": questions,
         "summary": session_summary(session.get("questions", []), session.get("assessments", {})),
         "outcome_labels": OUTCOMES,
-    }
+   }

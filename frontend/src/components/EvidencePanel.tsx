@@ -36,12 +36,11 @@ export default function EvidencePanel({ skill, audience, labels }: {
     <section className="panel evidence-panel">
       <div className="panel-heading">
         <div>
-          <div className="eyebrow">EVIDENCE TRAIL</div>
           <h2>{skillLabel(skill)}</h2>
         </div>
         <LadderPill level={skill.level} />
       </div>
-      {skill.certified && <span className="certified-tag">Certificate noted · does not raise level</span>}
+      {skill.certified && <span className="certified-tag">Certificate mention · does not raise the level</span>}
       {skill.evidence.length === 0 ? (
         <div className="empty-evidence">No evidence for this skill was found in the analysed files.</div>
       ) : (
@@ -67,7 +66,7 @@ export default function EvidencePanel({ skill, audience, labels }: {
             )}
             <p className="evidence-explanation">{item.explanation}</p>
             {item.demonstrated_by && (
-              <p className="evidence-context evidence-tested"><FlaskConical size={12} /> Exercised by tests: {item.demonstrated_by.path} ({item.demonstrated_by.match === "name" ? "test named after this file" : "test imports this file"})</p>
+              <p className="evidence-context evidence-tested"><FlaskConical size={12} /> Linked test: {item.demonstrated_by.path} ({item.demonstrated_by.match === "name" ? "test named after this file" : "test imports this file"})</p>
             )}
             {item.build_config_present && <p className="evidence-context">Build or deploy config present</p>}
             {/* Grouped test files count only when committed to, like other config files (2026-10-20). */}
@@ -87,7 +86,7 @@ export default function EvidencePanel({ skill, audience, labels }: {
             </div>
             {audience === "recruiter" && item.integrity && item.integrity.length > 0 && (
               <div className="integrity-list">
-                <div className="integrity-title">Authorship signals · advisory, never change the level</div>
+                <div className="integrity-title">Authorship signals (advisory)</div>
                 {item.integrity.map((signal) => (
                   <div className={`integrity-row integrity-${signal.status}`} key={signal.id}>
                     {signal.status === "ok" ? <Check size={13} /> : signal.status === "warn" ? <AlertTriangle size={13} /> : <CircleHelp size={13} />}
@@ -121,4 +120,4 @@ export default function EvidencePanel({ skill, audience, labels }: {
       )}
     </section>
   );
-}
+            }

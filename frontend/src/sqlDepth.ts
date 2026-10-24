@@ -1,18 +1,18 @@
 import type { SqlDepth, SqlDepthPart, SqlDepthPartKey, SqlEvidence } from "./api.ts";
 
-export const SQL_DEPTH_NOTE = "Depth of SQL evidence in the analysed repositories, not a full measure of skill.";
-export const SQL_DEPTH_MISSING = "SQL evidence depth not recorded for this passport. Re-check to update.";
-export const SQL_DEPTH_UNAVAILABLE = "SQL evidence depth unavailable for this passport. Use Re-check to try again.";
+export const SQL_DEPTH_NOTE = "SQL patterns found in the analysed code. Not a measure of overall skill.";
+export const SQL_DEPTH_MISSING = "SQL depth is not recorded for this passport. Re-check to update.";
+export const SQL_DEPTH_UNAVAILABLE = "SQL depth unavailable for this passport. Re-check to try again.";
 
 export function createScoreNote(sqlDepthEnabled: boolean, skillDepthEnabled: boolean): string {
   if (sqlDepthEnabled && skillDepthEnabled) {
-    return "Separate, provisional evidence scores summarize patterns for SQL and selected pilot skills; they are not proficiency ratings.";
+    return "Optional depth scores summarize SQL and pilot-skill patterns. They are not proficiency ratings.";
   }
   if (skillDepthEnabled) {
-    return "Separate, provisional evidence scores summarize patterns for selected pilot skills; they are not proficiency ratings.";
+    return "Optional depth scores summarize pilot-skill patterns. They are not proficiency ratings.";
   }
   if (sqlDepthEnabled) {
-    return "SQL evidence depth is scored point by point with cited proof; it is not a measure of overall proficiency.";
+    return "SQL depth is scored point by point with cited proof. It is not a proficiency rating.";
   }
   return "No numeric skill scores.";
 }
@@ -21,7 +21,7 @@ export function createScoreNote(sqlDepthEnabled: boolean, skillDepthEnabled: boo
 export const PART_ORDER: SqlDepthPartKey[] = ["complexity", "breadth", "repetition", "integration", "authorship", "testing"];
 
 export function sqlDepthHeadline(result: Pick<SqlDepth, "score" | "label">): string {
-  return `SQL evidence depth: ${result.score}/100 · ${result.label}`;
+  return `SQL depth: ${result.score}/100 · ${result.label}`;
 }
 
 /** "16.7/20": points earned out of the most the part can give. */
