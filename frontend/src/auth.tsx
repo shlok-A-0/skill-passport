@@ -53,9 +53,10 @@ async function recruiterSignIn(password: string): Promise<string | null> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initialSession] = useState(() => {
     try {
-      const stored = parseStoredUser(localStorage.getItem(STORAGE_KEY));
-      // A stored recruiter profile without a server session is not a recruiter.
-      const user = stored?.role === "recruiter" && !api.hasRecruiterSession() ? null : stored;
+      // A restored recruiter profile is not trusted on its own: the effect below confirms it
+      // with /auth/me. A keyless development server holds no token, yet its sign-in is valid,
+      // so the profile is kept until the server answers instead of being dropped on refresh.
+      const user = parseStoredUser(localStorage.getItem(STORAGE_KEY));
       return { user, isLoginModalOpen: !user };
     } catch {
       return { user: null, isLoginModalOpen: true };
@@ -72,7 +73,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoginModalOpen(true);
     };
     setAuthRequiredHandler(endRecruiterSession);
-    // Re-check a restored recruiter session with the server (it may have expired or been revoked).
+    // Re-check a restored recruiter profile with the server: the token may have expired or been
+    // revoked, or there may be no token at all (a keyless development server confirms via /auth/me).
     if (initialSession.user?.role === "recruiter") {
       api.me().then((identity) => { if (!identity) endRecruiterSession(); }).catch(() => undefined);
     }
@@ -211,4 +213,4 @@ export function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
-}
+  }
