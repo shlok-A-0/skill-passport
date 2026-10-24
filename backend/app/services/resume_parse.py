@@ -1,6 +1,7 @@
 import io
 import math
 import re
+import subprocess
 from typing import Any
 
 import pdfplumber
@@ -171,7 +172,7 @@ def parse_resume(pdf_bytes: bytes) -> dict[str, Any]:
 
 
 def extract_certificate_text(pdf_bytes: bytes) -> str:
-    """Text of a PDF (hosted OCR for scanned pages) or a PNG/JPEG image (hosted OCR).
+    """Text of a PDF or image, using local Tesseract for scanned content.
 
     Also used for project reports, which accept the same file types.
     """
@@ -191,40 +192,75 @@ def parse_certificate(pdf_bytes: bytes) -> list[dict[str, str]]:
     return match_resume_skills(extract_certificate_text(pdf_bytes))
 
 
-def _vision_client():
-    """Create the hosted OCR client lazily so text PDFs don't need cloud credentials."""
-    try:
-        from google.cloud import vision
-
-        return vision.ImageAnnotatorClient()
-    except Exception as exc:
-        raise RuntimeError(
-            "Hosted certificate OCR is not configured. Set up Google Cloud Vision credentials."
-        ) from exc
-
-
-_VISION_CLIENT = None
-
-
 def _document_ocr(image_bytes: bytes) -> str:
-    global _VISION_CLIENT
-    if _VISION_CLIENT is None:
-        _VISION_CLIENT = _vision_client()
-    from google.cloud import vision
+    width, height = _encoded_image_dimensions(image_bytes)
+    if width * height > MAX_CERTIFICATE_OCR_PIXELS or max(width, height) > MAX_CERTIFICATE_OCR_SIDE:
+        raise ValueError("Certificate image is too large for OCR.")
 
     try:
-        response = _VISION_CLIENT.document_text_detection(
-            image=vision.Image(content=image_bytes), image_context=None
+        result = subprocess.run(
+            ["tesseract", "stdin", "stdout"],
+            input=image_bytes,
+            capture_output=True,
+            timeout=60,
+            check=True,
         )
+        return result.stdout.decode("utf-8")
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Local Tesseract OCR is unavailable. Confirm Tesseract is installed and available on PATH."
+        ) from exc
     except Exception as exc:
-        raise RuntimeError("Google Cloud Vision could not process a certificate image.") from exc
-    if response.error.message:
-        raise RuntimeError("Google Cloud Vision could not process a certificate image.")
-    return response.full_text_annotation.text or ""
+        raise RuntimeError("Local Tesseract OCR could not process this image.") from exc
+
+
+def _encoded_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
+    """Read PNG/JPEG dimensions from headers without allocating decoded pixels."""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(image_bytes) < 24 or image_bytes[8:12] != b"\x00\x00\x00\r" or image_bytes[12:16] != b"IHDR":
+            raise ValueError("Could not read certificate image dimensions for OCR.")
+        width = int.from_bytes(image_bytes[16:20], "big")
+        height = int.from_bytes(image_bytes[20:24], "big")
+        if width and height:
+            return width, height
+        raise ValueError("Certificate image has invalid dimensions.")
+
+    if not image_bytes.startswith(b"\xff\xd8"):
+        raise ValueError("Certificate image must be PNG or JPEG.")
+
+    sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+    offset = 2
+    while offset < len(image_bytes):
+        if image_bytes[offset] != 0xFF:
+            raise ValueError("Could not read certificate image dimensions for OCR.")
+        while offset < len(image_bytes) and image_bytes[offset] == 0xFF:
+            offset += 1
+        if offset >= len(image_bytes):
+            break
+        marker = image_bytes[offset]
+        offset += 1
+        if marker in {0x01, 0xD8, *range(0xD0, 0xD8)}:
+            continue
+        if marker in {0xD9, 0xDA} or offset + 2 > len(image_bytes):
+            break
+        segment_start = offset
+        segment_length = int.from_bytes(image_bytes[offset:offset + 2], "big")
+        if segment_length < 2 or segment_start + segment_length > len(image_bytes):
+            break
+        if marker in sof_markers:
+            if segment_length < 7:
+                break
+            height = int.from_bytes(image_bytes[segment_start + 3:segment_start + 5], "big")
+            width = int.from_bytes(image_bytes[segment_start + 5:segment_start + 7], "big")
+            if width and height:
+                return width, height
+            raise ValueError("Certificate image has invalid dimensions.")
+        offset = segment_start + segment_length
+    raise ValueError("Could not read certificate image dimensions for OCR.")
 
 
 def _extract_certificate_pdf_text(pdf_bytes: bytes) -> str:
-    """Extract embedded text locally, using hosted OCR only for image-only PDF pages."""
+    """Extract embedded text locally, using Tesseract for image-only PDF pages."""
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             if len(pdf.pages) > MAX_PDF_PAGES:

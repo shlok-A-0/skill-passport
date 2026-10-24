@@ -1,4 +1,5 @@
 import math
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,15 +37,22 @@ def _pdf(*page_types: str, width: float = 300, height: float = 200) -> bytes:
         return document.tobytes()
 
 
-def test_certificate_image_uploads_use_mocked_vision(monkeypatch) -> None:
+def test_certificate_image_uploads_use_local_tesseract(monkeypatch) -> None:
     received = []
-    monkeypatch.setattr(resume_parse, "_document_ocr", lambda image: received.append(image) or "Python AWS")
+    monkeypatch.setattr(
+        resume_parse.subprocess, "run",
+        lambda command, **kwargs: received.append((command, kwargs)) or SimpleNamespace(stdout=b"Python AWS"),
+    )
 
     for image_format in ("png", "jpeg"):
         image = _image_bytes(image_format)
         skills = resume_parse.parse_certificate(image)
         assert {skill["skill_id"] for skill in skills} >= {"python", "aws"}
-        assert received[-1] == image
+        assert received[-1][0] == ["tesseract", "stdin", "stdout"]
+        assert received[-1][1]["input"] == image
+        assert received[-1][1]["timeout"] == 60
+        assert received[-1][1]["check"] is True
+        assert received[-1][1]["capture_output"] is True
 
 
 def test_scanned_pdf_ocr_only_sends_pages_with_embedded_images(monkeypatch) -> None:
@@ -58,7 +66,7 @@ def test_scanned_pdf_ocr_only_sends_pages_with_embedded_images(monkeypatch) -> N
     assert received[0].startswith(b"\xff\xd8\xff")
 
 
-def test_vector_only_certificate_page_is_sent_to_vision(monkeypatch) -> None:
+def test_vector_only_certificate_page_is_sent_to_ocr(monkeypatch) -> None:
     received = []
     monkeypatch.setattr(resume_parse, "_document_ocr", lambda image: received.append(image) or "Python AWS")
 
@@ -68,53 +76,57 @@ def test_vector_only_certificate_page_is_sent_to_vision(monkeypatch) -> None:
     assert len(received) == 1
 
 
-def test_text_pdf_with_blank_page_does_not_require_vision(monkeypatch) -> None:
-    def vision_unavailable():
-        raise AssertionError("Vision should not be initialized for text or blank pages")
-
-    monkeypatch.setattr(resume_parse, "_VISION_CLIENT", None)
-    monkeypatch.setattr(resume_parse, "_vision_client", vision_unavailable)
-
+def test_text_pdf_with_blank_page_does_not_call_ocr(monkeypatch) -> None:
+    monkeypatch.setattr(resume_parse, "_document_ocr", lambda _image: pytest.fail("OCR called for text-only PDF"))
     skills = resume_parse.parse_certificate(_pdf("text", "blank"))
 
     assert {skill["skill_id"] for skill in skills} >= {"python", "aws"}
 
 
-def test_certificate_ocr_page_cap_rejects_before_calling_vision(monkeypatch) -> None:
-    monkeypatch.setattr(resume_parse, "_document_ocr", lambda _image: pytest.fail("Vision called beyond page cap"))
+def test_certificate_ocr_page_cap_rejects_before_calling_ocr(monkeypatch) -> None:
+    monkeypatch.setattr(resume_parse, "_document_ocr", lambda _image: pytest.fail("OCR called beyond page cap"))
     pdf_bytes = _pdf(*(["scan"] * (resume_parse.MAX_CERTIFICATE_OCR_PAGES + 1)))
 
     with pytest.raises(ValueError, match="Scanned certificates are limited"):
         resume_parse.parse_certificate(pdf_bytes)
 
 
-def test_vision_errors_are_reported_for_image_uploads(monkeypatch) -> None:
-    def fail_ocr(_image: bytes) -> str:
-        raise RuntimeError("Google Cloud Vision could not process a certificate image.")
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(subprocess.TimeoutExpired("tesseract", 60), id="timeout"),
+        pytest.param(subprocess.CalledProcessError(1, "tesseract"), id="nonzero-exit"),
+    ],
+)
+def test_tesseract_execution_errors_are_not_reported_as_missing_binary(monkeypatch, error) -> None:
+    def fail_ocr(*_args, **_kwargs):
+        raise error
 
-    monkeypatch.setattr(resume_parse, "_document_ocr", fail_ocr)
-    with pytest.raises(RuntimeError, match="Google Cloud Vision"):
-        resume_parse.parse_certificate(_image_bytes())
+    monkeypatch.setattr(resume_parse.subprocess, "run", fail_ocr)
+
+    with pytest.raises(RuntimeError, match="Local Tesseract OCR could not process") as raised:
+        resume_parse._document_ocr(_image_bytes())
+    assert "available on PATH" not in str(raised.value)
 
 
-def test_document_ocr_uses_vision_client_and_surfaces_provider_errors(monkeypatch) -> None:
-    try:
-        from google.cloud import vision
-    except ImportError:
-        pytest.skip("Google Cloud Vision dependency is not installed")
+def test_missing_tesseract_binary_has_actionable_error(monkeypatch) -> None:
+    def missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("tesseract")
 
-    class FakeClient:
-        def document_text_detection(self, *, image, image_context):
-            assert image.content == b"mock-image"
-            assert image_context is None
-            return SimpleNamespace(
-                error=SimpleNamespace(message="quota exceeded"),
-                full_text_annotation=SimpleNamespace(text=""),
-            )
+    monkeypatch.setattr(resume_parse.subprocess, "run", missing_binary)
 
-    monkeypatch.setattr(resume_parse, "_VISION_CLIENT", FakeClient())
-    with pytest.raises(RuntimeError, match="Google Cloud Vision"):
-        resume_parse._document_ocr(b"mock-image")
+    with pytest.raises(RuntimeError, match="installed and available on PATH"):
+        resume_parse._document_ocr(_image_bytes())
+
+
+def test_image_ocr_rejects_oversized_images_before_recognition(monkeypatch) -> None:
+    image_bytes = _image_bytes()
+    monkeypatch.setattr(resume_parse, "MAX_CERTIFICATE_OCR_PIXELS", 4)
+    monkeypatch.setattr(resume_parse.fitz, "Pixmap", lambda *_args, **_kwargs: pytest.fail("Image was decoded"))
+    monkeypatch.setattr(resume_parse.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("OCR called"))
+
+    with pytest.raises(ValueError, match="too large for OCR"):
+        resume_parse._document_ocr(image_bytes)
 
 
 def test_oversized_pdf_page_is_scaled_before_pixmap_allocation() -> None:
