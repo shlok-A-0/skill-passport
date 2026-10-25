@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowUpRight, Award, Download, ShieldCheck, TrendingDown
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
+import SkillName from "../components/SkillName";
 import SectionTabs from "../components/SectionTabs";
 import { adjustmentLabel } from "../interview";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
@@ -183,28 +184,39 @@ export default function PlacementCell() {
 
   return (
     <div className="placement-page">
-      <header className="placement-heading">
-        <div><h1>Skills across your cohort</h1><p>See where students have proof and where a shared workshop can help.</p></div>
-        <div className="placement-filters">
-          <label className="role-select-label">Role<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label className="role-select-label">Preferred role<select value={preferredRole} onChange={(event) => handlePreferredRoleChange(event.target.value)}><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      <header className="hero">
+        <div className="hero-copy">
+          <div className="hero-eyebrow">Placement cell · Cohort view</div>
+          <h1>Skills across your cohort</h1>
+          <p className="hero-sub"><span className="lead">See where students have proof and where a shared workshop can help.</span> Code-backed levels link to cited lines.{demoPresent ? " Demo passports are labelled." : ""}</p>
+        </div>
+        <div className="hero-side">
+          <section className="panel">
+            <h3>Filter</h3>
+            <div className="panel-list">
+              <div className="snapshot-row"><span>Role</span><b><select className="filter-select" value={roleId} onChange={(event) => setRoleId(event.target.value)} aria-label="Role">{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></b></div>
+              <div className="snapshot-row"><span>Preferred role</span><b><select className="filter-select" value={preferredRole} onChange={(event) => handlePreferredRoleChange(event.target.value)} aria-label="Preferred role"><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></b></div>
+              <div className="snapshot-row"><span>Showing</span><b>{visiblePassports.length} passport{visiblePassports.length === 1 ? "" : "s"}</b></div>
+            </div>
+          </section>
         </div>
       </header>
+      <div className="facts">
+        <div className="fact"><span>Students</span><b>{visiblePassports.length}{loadedPassportCount < totalPassports ? ` · ${loadedPassportCount} of ${totalPassports} loaded` : ""}</b></div>
+        <div className="fact"><span>Avg. requirements met</span><b>{avgMet} of {requirements.length}</b></div>
+        <div className="fact"><span>Suggested workshop</span><b>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal gaps"}</b></div>
+        <div className="fact"><span>Demo passports</span><b>{demoPresent ? "Included, labelled" : "None"}</b></div>
+      </div>
       {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
       {error && <div className="notice notice-error" role="alert">{error}<button type="button" className="link-button" onClick={() => void (retryLoadMore ? loadMore() : loadInitial())}>Retry</button></div>}
       {loading && <div className="page-message" role="status">Loading cohort insights…</div>}
       {!loading && loadedPassportCount < totalPassports && <p className="muted cohort-page-note">Role filters and exports cover the {loadedPassportCount} loaded passports so far.</p>}
-      <div className="placement-stats">
-        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>Students</small><strong>{visiblePassports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
-        <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>Avg. requirements met</small><strong>{avgMet} <i>of {requirements.length}</i></strong></div></section>
-        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>Suggested workshop</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `No evidence found for ${topGap.percent}% of this group.` : "The highest shared gap appears here."}</p></div></section>
-      </div>
       <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Cohort sections" idPrefix="placement" />
       <div id="placement-panel-candidates" role="tabpanel" aria-labelledby="placement-tab-candidates" tabIndex={0} hidden={section !== "candidates"} style={{ display: section === "candidates" ? undefined : "none" }}>
-      <section className="panel ranking-panel">
-        <div className="panel-heading">
-          <div><h2>Candidate ranking · {role?.name ?? "Role"}</h2></div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+      <section className="ranking-panel">
+        <div className="section-head">
+          <h2>Candidate ranking · {role?.name ?? "Role"}</h2>
+          <div className="head-actions">
             {ranked.length > 0 && (
               <button
                 type="button"
@@ -274,12 +286,12 @@ export default function PlacementCell() {
         ) : null}
         {!loading && loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
       </section>
-      <section className="panel heatmap-panel">
-          <div className="panel-heading"><div><h2>Requirements by student</h2></div><span className="muted">Select a row to open a passport</span></div>
+      <section className="heatmap-panel">
+          <div className="section-head"><h2>Requirements by student</h2><span>Select a row to open a passport</span></div>
           {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
               <table className="heatmap-table">
-                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}>{skillLabel(req)}</th>)}</tr></thead>
+                <thead><tr><th>Student</th>{requirements.map((req) => <th key={req.skill_id}><SkillName item={req} /></th>)}</tr></thead>
                 <tbody>{rows.map(({ passport }) => (
                   <tr key={passport.id}>
                     <td><Link to={`/recruiter/${passport.id}`}>{passport.github_username}{passport.is_demo && <small>DEMO</small>}</Link></td>
@@ -301,14 +313,14 @@ export default function PlacementCell() {
         </section>
       </div>
       <div id="placement-panel-gaps" role="tabpanel" aria-labelledby="placement-tab-gaps" tabIndex={0} hidden={section !== "gaps"} style={{ display: section === "gaps" ? undefined : "none" }}>
-      <section className="panel gaps-panel">
-          <div className="panel-heading"><div><h2>Most common gaps</h2></div></div>
+      <section className="gaps-panel">
+          <div className="section-head"><h2>Most common gaps</h2><span>Computed from the filtered cohort</span></div>
           <div className="gap-chart">
             {gaps.length ? (
               <div className="gap-bars-list">
                 {gaps.map((item) => (
                   <div key={item.skill} className="gap-bar-row">
-                    <span className="gap-bar-label" title={item.skill}>{item.skill}</span>
+                    <span className="gap-bar-label" title={item.skill}><SkillName item={{ skill_id: item.skill, name: item.skill }} /></span>
                     <div className="gap-bar-track">
                       <div
                         className="gap-bar-fill"
@@ -322,7 +334,7 @@ export default function PlacementCell() {
               </div>
             ) : <div className="empty-state">No role requirements to compare.</div>}
           </div>
-          {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: {topGap.skill}</strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
+          {topGap && <div className="gap-callout"><span className="stat-icon orange"><Wrench size={15} /></span><div><strong>Workshop opportunity: <SkillName item={{ skill_id: topGap.skill, name: topGap.skill }} reserveSlot={false} /></strong><p>Consider a hands-on session that leaves students with inspectable repo evidence.</p></div><ArrowUpRight size={15} /></div>}
       </section>
       </div>
     </div>

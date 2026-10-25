@@ -1774,3 +1774,41 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .interview-could_not_explain { background: var(--danger-soft); color: var(--danger); }
 .match-evidence { display: block; width: 100%; color: var(--muted); font-size: 9px; }
 .heat-interview { outline: 2px dashed var(--accent); outline-offset: 1px; }
+
+/* Codeforces is a separate competitive-programming axis. */
+.cp-panel h2 { display: flex; align-items: center; gap: 7px; }
+.cp-panel .cp-rating { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 2px; }
+.cp-panel .cp-rating b { font-family: var(--font-mono); font-size: 30px; font-weight: 600; color: var(--ink); }
+.cp-panel .cp-rank { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.cp-panel .cp-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cp-panel .cp-meter-block { margin: 10px 0 2px; }
+.cp-panel .cp-meter { position: relative; height: 6px; border-radius: 3px; background: var(--surface-soft); }
+.cp-panel .cp-marker { position: absolute; top: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--surface); }
+.cp-panel .cp-bounds { display: flex; align-items: center; margin-top: 4px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+.cp-panel .cp-best { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.cp-panel .cp-bounds > span:last-child { margin-left: 10px; }
+.cp-panel .cp-diamond { width: 7px; height: 7px; transform: rotate(45deg); display: inline-block; }
+.cp-panel .cp-stats { display: flex; gap: 8px; margin-top: 16px; }
+.cp-panel .cp-stat { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.cp-panel .cp-stat b { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 14px; color: var(--ink); }
+.cp-panel .cp-stat b svg { color: var(--success); flex: none; }
+.cp-panel .cp-stat span { display: block; margin-top: 2px; font-size: 10px; color: var(--muted); }
+.cp-panel .cp-bar-block { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.cp-panel .cp-bar-block > svg { color: var(--muted); flex: none; }
+.cp-panel .cp-bar { display: flex; flex: none; width: 34%; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-soft); }
+.cp-panel .cp-seg { display: block; }
+.cp-panel .cp-seg-0 { background: #7ce7b4; }
+.cp-panel .cp-seg-1 { background: rgba(124, 231, 180, .45); }
+.cp-panel .cp-seg-2 { background: #8b8b93; }
+.cp-panel .cp-seg-x, .cp-panel .cp-seg-3, .cp-panel .cp-seg-4 { background: #37373d; }
+.cp-panel .cp-key { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.cp-panel .cp-about { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.cp-panel .cp-about summary { cursor: pointer; display: inline-flex; align-items: center; gap: 5px; color: var(--muted); list-style: none; }
+.cp-panel .cp-about summary::-webkit-details-marker { display: none; }
+.cp-panel .cp-about summary::before { content: "ⓘ"; font-size: 11px; }
+.cp-panel .cp-about ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 3px; }
+.cp-panel .cp-about li { overflow-wrap: anywhere; }
+.cp-panel .cp-bar-legend { font-family: var(--font-mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.cp-panel .cp-marks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0 0; font-size: 11px; color: var(--muted); }
+.cp-panel .cp-marks span { display: inline-flex; align-items: center; gap: 5px; }
+.cp-panel .unavailable-note { display: flex; align-items: center; gap: 5px; }

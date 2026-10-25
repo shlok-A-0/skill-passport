@@ -137,7 +137,10 @@ def test_missing_authorship_data_counts_as_not_authored() -> None:
     ingestion = sample_ingestion()
     del ingestion["repos"][0]["authored_paths"]
     levels = {item["skill_id"]: item["level"] for item in verify_claims([], ingestion)["skills"]}
-    assert levels["docker"] == "Claimed" and levels["flask"] == "Claimed"
+    assert levels["docker"] == "Claimed"
+    # The deterministic signature scan cites the authored app.py independently of
+    # dependency authorship data, so flask reaches Applied here.
+    assert levels["flask"] == "Applied"
     # Authored code evidence is unaffected by dependency-file authorship.
     levels = {item["skill_id"]: item["level"] for item in verify_claims([claim()], ingestion)["skills"]}
     assert levels["flask"] == "Applied"
@@ -1143,16 +1146,21 @@ def _code_items(skill: dict) -> list[dict]:
 def test_citation_with_no_candidate_written_lines_is_excluded_and_level_recomputed() -> None:
     verified = run_with_blame([[1, 11, "karpathy"]])
     flask = _skill(verified, "flask")
-    assert flask["level"] == "Used"  # was Demonstrated; only the authored requirements.txt remains
-    assert not _code_items(flask)
+    # The misattributed citation is excluded; the deterministic signature scan's
+    # citation of the authored app.py keeps flask at Applied.
+    assert flask["level"] == "Applied"
+    assert [item["file_path"] for item in _code_items(flask)] == ["app.py"]
     excluded = [item for item in verified["rejected_claims"] if item["kind"] == "not_written_by_candidate"]
     assert len(excluded) == 1
     assert excluded[0]["reason"] == "None of the cited lines were last changed in your commits."
     assert excluded[0]["failed_checks"] == ["not_written_by_candidate"]
     assert excluded[0]["lines_written"] == {"written": 0, "cited": 11}
     assert excluded[0]["url"].endswith("web/routes.py#L1-L11")
-    # With nothing else supporting Flask (and no resume mention), the skill disappears.
-    assert _skill(run_with_blame([[1, 11, "karpathy"]], dependency_contents={}), "flask") is None
+    # Even with the dependency evidence removed, the scan's citation of the
+    # authored app.py keeps the skill listed at Applied.
+    stripped = _skill(run_with_blame([[1, 11, "karpathy"]], dependency_contents={}), "flask")
+    assert stripped["level"] == "Applied"
+    assert [item["file_path"] for item in _code_items(stripped)] == ["app.py"]
 
 
 def test_partly_written_citation_counts_but_cannot_be_demonstrated() -> None:

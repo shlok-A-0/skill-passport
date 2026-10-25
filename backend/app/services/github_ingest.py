@@ -4,13 +4,15 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from app.config import CACHE_DIR, GITHUB_TOKEN
+from app.services.ast_verifier import _signature_in_text
+from app.services.framework import skill_map
 from app.services.json_cache import write_json_cache
 
 API_ROOT = "https://api.github.com"
@@ -335,6 +337,149 @@ def _select_source_files(
 
 
 MAX_TEST_CONTENT_FETCHES = 5  # own budget: never uses the source-file budget
+
+# Retrieval-driven extension: when the first-pass selection shows no evidence (or
+# only dependency/config declarations) for a claimed/required skill, keep fetching
+# candidates (within these bounds) until it does. The extension spends only the
+# per-repo MAX_SOURCE_FETCHES budget the first pass left unused, so worst-case
+# fetches per repo are unchanged; worst-case files read grow from 6 to 9, while the
+# prompt line budget (_files_for_prompt) is applied afterwards as before.
+EXTEND_MAX_EXTRA_FILES = 3   # per repo, beyond MAX_SOURCE_FILES
+EXTEND_MAX_EXTRA_FETCHES = 6  # per-repo cap, further limited to unused first-pass budget
+
+
+def _dependency_declared(skill: dict[str, Any], contents: dict[str, str]) -> bool:
+    """A skill's package name appears in a fetched dependency file (word-boundary match)."""
+    for text in contents.values():
+        for name in skill.get("dependency_names", []):
+            if re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(name)}(?![A-Za-z0-9_.-])", text, re.I):
+                return True
+    return False
+
+
+def _config_declared(skill: dict[str, Any], paths: list[str]) -> bool:
+    """A skill's config file pattern matches a fetched config path."""
+    for configured in skill.get("config_files", []):
+        for path in paths:
+            if configured.endswith("/") and path.startswith(configured):
+                return True
+            if "/" in configured and path == configured:
+                return True
+            if "/" not in configured and PurePosixPath(path).name == configured:
+                return True
+    return False
+
+
+def _target_evidence_tiers(
+    target_ids: list[str],
+    selected: dict[str, tuple[str, list[str]]],
+    dependency_contents: dict[str, str],
+    config_contents: dict[str, str],
+) -> dict[str, str | None]:
+    """Best deterministic signal per target skill in the fetched files.
+
+    "signature" - code-level usage evidence (can support Applied/Demonstrated);
+    "declared" - dependency/config evidence only (supports Used at most);
+    None - no evidence in the fetched files.
+    """
+    tiers: dict[str, str | None] = {}
+    for skill_id in target_ids:
+        skill = skill_map().get(skill_id)
+        if not skill:
+            continue
+        signatures = skill.get("code_signatures", [])
+        if any(
+            _signature_in_text(signature, content)
+            for content, _lines in selected.values()
+            for signature in signatures
+        ):
+            tiers[skill_id] = "signature"
+        elif _dependency_declared(skill, dependency_contents) or _config_declared(
+            skill, list(config_contents)
+        ):
+            tiers[skill_id] = "declared"
+        else:
+            tiers[skill_id] = None
+    return tiers
+
+
+
+def _file_covers_skills(content: str, skill_ids: list[str]) -> set[str]:
+    """Skills whose signatures appear in this file's content."""
+    hits = set()
+    for skill_id in skill_ids:
+        skill = skill_map().get(skill_id)
+        if not skill:
+            continue
+        if any(_signature_in_text(sig, content) for sig in skill.get("code_signatures", [])):
+            hits.add(skill_id)
+    return hits
+
+
+def _extend_selection_for_targets(
+    selected: dict[str, tuple[str, list[str]]],
+    candidates: list[str],
+    sizes: dict[str, int],
+    fetch: Any,
+    target_ids: list[str] | None,
+    dependency_contents: dict[str, str],
+    config_contents: dict[str, str],
+    max_extra_fetches: int = EXTEND_MAX_EXTRA_FETCHES,
+) -> dict[str, tuple[str, list[str]]]:
+    """Second-pass retrieval: fetch extra candidates that contain code-level evidence
+    for target skills (resume-claimed or role-required) the first-pass selection
+    missed (no evidence) or only declared (dependency/config, capping the level at
+    Used).
+
+    The caller passes the per-repo fetch budget left after the first pass
+    (max_extra_fetches), so total source fetches per repo stay within
+    MAX_SOURCE_FETCHES; up to EXTEND_MAX_EXTRA_FILES extra files are read on top
+    of MAX_SOURCE_FILES. Files added here are read, verified and reported exactly
+    like first-pass files. The scan is over the candidate list of the sampled
+    repositories, not the whole repository tree: evidence ranked beyond the fetch
+    budget is still missed.
+    """
+    if not target_ids:
+        return selected
+    tiers = _target_evidence_tiers(target_ids, selected, dependency_contents, config_contents)
+    # Detection first: skills with no evidence at all. Then level upgrades: skills
+    # whose only signal is a dependency/config declaration (Used at most) get one
+    # bounded hunt for code-level usage evidence. Both share the per-repo budget.
+    missing = [skill_id for skill_id in target_ids if tiers.get(skill_id) is None]
+    upgrade_only = [skill_id for skill_id in target_ids if tiers.get(skill_id) == "declared"]
+    sought = missing + upgrade_only
+    if not sought:
+        return selected
+    result = dict(selected)
+    extra_files = 0
+    extra_fetches = 0
+    for path in candidates:
+        if not sought or extra_files >= EXTEND_MAX_EXTRA_FILES or extra_fetches >= max_extra_fetches:
+            break
+        if path in result:
+            continue
+        limit = MAX_FILE_BYTES if is_test_path(path) else MAX_SOURCE_BYTES
+        if sizes.get(path, MAX_FILE_BYTES + 1) > limit:
+            continue
+        extra_fetches += 1
+        content = fetch(path)
+        if content is None:
+            continue
+        lines = content.splitlines()
+        if not lines:
+            continue
+        if len(lines) > MAX_LINES:
+            if is_test_path(path):
+                lines = lines[:MAX_LINES]
+                content = "\n".join(lines)
+            else:
+                continue
+        hits = _file_covers_skills(content, sought)
+        if hits:
+            result[path] = (content, lines)
+            sought = [skill_id for skill_id in sought if skill_id not in hits]
+            extra_files += 1
+    return result
 TEST_CONTENT_LINES = 300  # imports are near the top; keep cache files small
 GENERIC_STEMS = {"__init__", "index", "main", "utils", "app"}
 
@@ -770,8 +915,16 @@ def _source_metadata(
     }
 
 
-def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
+def ingest_github(
+    username: str,
+    force_refresh: bool = False,
+    target_skills: list[str] | None = None,
+) -> dict[str, Any]:
+    """Read a user's public GitHub work. When target_skills (resume-claimed or
+    role-required skill ids) are given, a bounded second-pass fetch looks for
+    evidence of skills the first-pass selection missed."""
     username = validate_github_username(username)
+    requested_targets = sorted(target_skills or [])
 
     cache_path = _cache_path(username)
     if not force_refresh and cache_path.exists():
@@ -790,6 +943,12 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
                     fresh
                     and cached.get("schema_version") == CACHE_SCHEMA_VERSION
                     and isinstance(cached.get("data"), dict)
+                    # A cache entry only serves a request for the same target set:
+                    # the extended fetch reads different files for different
+                    # targets, and it is NOT monotonic - a superset read can miss
+                    # a target a narrower read would find (EXTEND_MAX_EXTRA_FILES
+                    # is consumed by evidence for the wider set first).
+                    and cached.get("target_skills", []) == requested_targets
                 ):
                     return cached["data"]
             cache_path.unlink(missing_ok=True)
@@ -886,10 +1045,22 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
             user_commits, user_commits_complete = _user_commits(client, owner, name, username)
             recent = _recently_changed_paths(client, owner, name, user_commits or [])
             skip_reasons: dict[str, int] = {}
-            selected = _select_source_files(
-                _ordered_candidates(tree, recent), sizes,
-                lambda path: _optional_content(client, owner, name, path, branch),
-                skip_reasons,
+            candidates = _ordered_candidates(tree, recent)
+            fetch_count = 0
+
+            def fetch_content(path: str) -> str | None:
+                nonlocal fetch_count
+                fetch_count += 1
+                return _optional_content(client, owner, name, path, branch)
+
+            selected = _select_source_files(candidates, sizes, fetch_content, skip_reasons)
+            # The second pass spends only the fetch budget the first pass did not
+            # use, so total source fetches per repo stay within MAX_SOURCE_FETCHES.
+            remaining_fetches = max(0, min(EXTEND_MAX_EXTRA_FETCHES, MAX_SOURCE_FETCHES - fetch_count))
+            selected = _extend_selection_for_targets(
+                selected, candidates, sizes, fetch_content,
+                target_skills, dependency_contents, config_contents,
+                max_extra_fetches=remaining_fetches,
             )
             source_files: dict[str, dict[str, Any]] = {}
             with ThreadPoolExecutor(max_workers=2, thread_name_prefix="github-file-meta") as executor:
@@ -980,6 +1151,11 @@ def ingest_github(username: str, force_refresh: bool = False) -> dict[str, Any]:
     }
     write_json_cache(
         cache_path,
-        {"schema_version": CACHE_SCHEMA_VERSION, "cached_at": time.time(), "data": result},
+        {
+            "schema_version": CACHE_SCHEMA_VERSION,
+            "cached_at": time.time(),
+            "data": result,
+            "target_skills": requested_targets,
+        },
     )
     return result

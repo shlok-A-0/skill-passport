@@ -533,6 +533,283 @@ def _test_code_evidence(
 
 GIT_HISTORY_PATH = "(commit history)"
 MAX_TEST_FILE_EVIDENCE = 3
+MAX_SIGNATURE_CODE_EVIDENCE = 3  # a few files per skill is enough; more bloats passports
+
+
+# --- deterministic scan: code-only matching ---------------------------------
+# Taxonomy signatures are short substrings, so matching raw lines turns prose into
+# recruiter-facing "code evidence": a comment "# select the best candidate" cited
+# SQL, "# remember to git pull" cited git, and a docstring mentioning docker cited
+# Docker. The scan therefore matches against a code-only view of each file (comment
+# and string contents removed per line, line numbers preserved), applies path or
+# command-position gates to weak signatures, matches case-sensitively where prose
+# case differs from code case, and skips a file whose only match is an unused
+# import. Where none of that shows actual code use, the scan abstains instead of
+# citing weak evidence.
+
+_C_LIKE_SUFFIXES = {"js", "jsx", "ts", "tsx", "java", "go", "cpp", "cc", "c", "h", "hpp"}
+_SQL_SCAN_SIGS = {"SELECT ", "INSERT INTO ", "CREATE TABLE "}
+_CI_SCAN_SIGS = {"jobs:", "runs-on:"}
+_K8S_SCAN_SIGS = {"apiVersion:", "kind: Deployment"}
+_COMMAND_SCAN_SIGS = {"docker run ", "docker build ", "docker compose ", "git "}
+_CI_PATH_MARKERS = (
+    ".github/workflows/", ".forgejo/workflows/", ".gitea/workflows/", ".gitlab-ci",
+    ".circleci/", "jenkinsfile", "azure-pipelines", ".travis", "bitbucket-pipelines",
+    "buildkite",
+)
+
+
+def _python_code_lines(lines: list[str]) -> list[tuple[int, str]] | None:
+    """Comment/string contents blanked via tokenize (docstrings included); None on failure."""
+    import io
+    import tokenize
+
+    chars = [list(line) for line in lines]
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO("\n".join(lines)).readline):
+            if tok.type not in (tokenize.STRING, tokenize.COMMENT):
+                continue
+            (srow, scol), (erow, ecol) = tok.start, tok.end
+            for row in range(srow, erow + 1):
+                start = scol if row == srow else 0
+                end = ecol if row == erow else len(chars[row - 1])
+                for col in range(start, end):
+                    chars[row - 1][col] = " "
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return None
+    return [(number, "".join(row)) for number, row in enumerate(chars, start=1)]
+
+
+def _generic_code_lines(path: str, lines: list[str]) -> list[tuple[int, str]]:
+    """State-machine blanking of comments and strings for non-Python sources."""
+    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    if suffix == "sql":
+        line_markers, block_markers, quotes, multiline = ("--",), (("/*", "*/"),), ("'", '"'), ()
+    elif suffix in _C_LIKE_SUFFIXES:
+        line_markers, block_markers, quotes, multiline = ("//",), (("/*", "*/"),), ("'", '"', "`"), ("`",)
+    else:  # shell and anything else: # comments, single/double quotes
+        line_markers, block_markers, quotes, multiline = ("#",), (), ("'", '"'), ()
+    code_lines: list[tuple[int, str]] = []
+    state: tuple[str, str] | None = None
+    for lineno, line in enumerate(lines, start=1):
+        buf = list(line)
+        i = 0
+        while i < len(buf):
+            if state is None:
+                if lineno == 1 and i == 0 and line.startswith("#!"):
+                    break  # shebang is code (Linux/Shell signature), not a comment
+                if any(line.startswith(marker, i) for marker in line_markers):
+                    for col in range(i, len(buf)):
+                        buf[col] = " "
+                    break
+                block = next((b for a, b in block_markers if line.startswith(a, i)), None)
+                if block is not None:
+                    buf[i] = " "
+                    if i + 1 < len(buf):
+                        buf[i + 1] = " "
+                    state = ("block", block)
+                    i += 2
+                    continue
+                if buf[i] in quotes:
+                    state = ("string", buf[i])
+                    buf[i] = " "
+                    i += 1
+                    continue
+                i += 1
+            elif state[0] == "block":
+                if line.startswith(state[1], i):
+                    for col in range(i, min(len(buf), i + len(state[1]))):
+                        buf[col] = " "
+                    i += len(state[1])
+                    state = None
+                else:
+                    buf[i] = " "
+                    i += 1
+            else:  # inside a string literal
+                if buf[i] == "\\" and state[1] != "`":
+                    buf[i] = " "
+                    if i + 1 < len(buf):
+                        buf[i + 1] = " "
+                    i += 2
+                    continue
+                if buf[i] == state[1]:
+                    state = None
+                buf[i] = " " if state is not None else " "
+                i += 1
+        if state is not None and state[0] == "string" and state[1] not in multiline:
+            state = None  # unterminated single-line string; next line starts fresh
+        code_lines.append((lineno, "".join(buf)))
+    return code_lines
+
+
+def _code_only_lines(path: str, lines: list[str]) -> list[tuple[int, str]]:
+    """(line number, comment/string-blanked text) per line; masking only removes matches."""
+    if path.endswith(".py"):
+        masked = _python_code_lines(lines)
+        if masked is not None:
+            return masked
+    return _generic_code_lines(path, lines)
+
+
+def _signature_applicable(signature: str, path: str) -> bool:
+    """Path gates for signatures that are only meaningful in specific file kinds."""
+    lower = path.lower()
+    if signature in _CI_SCAN_SIGS:
+        return any(marker in lower for marker in _CI_PATH_MARKERS)
+    if signature in _K8S_SCAN_SIGS:
+        return lower.endswith((".yaml", ".yml"))
+    return True
+
+
+def _in_command_position(line: str, signature: str) -> bool:
+    """A shell command at statement start or after a separator, not prose mentioning it."""
+    body = re.escape(signature.rstrip())
+    pattern = r"(?:^|&&|\|\|\||[;|({]\s*)(?:sudo\s+)?" + body + r"(?:\s|$)"
+    return re.search(pattern, line.lstrip()) is not None
+
+
+def _scan_match(line: str, signature: str, path: str) -> bool:
+    """Stricter contains_signature for the deterministic scan only.
+
+    Command signatures (git, docker CLI) require command position outside shell files;
+    signatures containing uppercase match case-sensitively so lowercase prose ("select
+    the best") cannot cite SQL, while .sql files keep case-insensitive matching because
+    their remaining code-only text is SQL by construction.
+    """
+    lower = path.lower()
+    if signature in _COMMAND_SCAN_SIGS and not lower.endswith(".sh"):
+        return _in_command_position(line, signature)
+    case_insensitive = not any(char.isupper() for char in signature) or (
+        lower.endswith(".sql") and signature in _SQL_SCAN_SIGS
+    )
+    prefix = r"(?<!\w)" if signature[:1].isalnum() or signature[:1] == "_" else ""
+    flags = re.IGNORECASE if case_insensitive else 0
+    return re.search(prefix + re.escape(signature), line, flags=flags) is not None
+
+
+_IMPORT_LINE = re.compile(
+    r"^\s*(?:import\b|from\s+[\w.]+\s+import\b|(?:const|let|var)\s+\w+\s*=\s*require\()"
+)
+
+
+def _imported_tokens(line: str) -> set[str]:
+    """Names an import statement binds, to tell a used import from an unused one."""
+    tokens: set[str] = set()
+    stripped = line.strip()
+    match = re.match(r"import\s+(.+)$", stripped)
+    if match and " from " not in stripped:
+        for part in match.group(1).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            alias = re.search(r"\bas\s+(\w+)$", part)
+            tokens.add(alias.group(1) if alias else part.split(".")[0].strip())
+        return tokens
+    match = re.match(r"from\s+[\w.]+\s+import\s+(.+)$", stripped)
+    if match:
+        for part in match.group(1).strip().strip("()").split(","):
+            part = part.strip()
+            if not part or part == "*":
+                continue
+            alias = re.search(r"\bas\s+(\w+)$", part)
+            tokens.add(alias.group(1) if alias else part.split()[0])
+        return tokens
+    match = re.match(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(", stripped)
+    if match:
+        return {match.group(1)}
+    match = re.match(r"import\s+(\w+)\s+from\b", stripped)
+    if match:
+        return {match.group(1)}
+    match = re.match(r"import\s*\{([^}]*)\}", stripped)
+    if match:
+        for part in match.group(1).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            alias = re.search(r"\bas\s+(\w+)$", part)
+            tokens.add(alias.group(1) if alias else part)
+    return tokens
+
+
+def _only_unused_imports(
+    matches: list[tuple[int, str]], code_lines: list[tuple[int, str]]
+) -> bool:
+    """Every match is an import statement binding names the rest of the file never uses."""
+    if not all(_IMPORT_LINE.match(cline) for _, cline in matches):
+        return False
+    tokens: set[str] = set()
+    for _, cline in matches:
+        tokens |= _imported_tokens(cline)
+    if not tokens:
+        return True  # side-effect import: no evidence of use
+    matched_numbers = {number for number, _ in matches}
+    for number, cline in code_lines:
+        if number in matched_numbers:
+            continue
+        if any(re.search(r"(?<!\w)" + re.escape(token) + r"(?!\w)", cline) for token in tokens):
+            return False
+    return True
+
+
+def _signature_code_evidence(
+    skill: dict[str, Any], repo: dict[str, Any], username: str = ""
+) -> list[dict[str, Any]]:
+    """Cite fetched, authored, non-test files whose code-only lines contain the skill's signatures.
+
+    Deterministic coverage for skills the claim proposer never named. The scan only
+    covers source files that were actually fetched and read, not the whole
+    repository tree - absence here still means "not in the sample", not "absent".
+    """
+    evidence: list[dict[str, Any]] = []
+    # Language skills are excluded: their signatures ("def ", "import ") match
+    # nearly every file, so a deterministic citation would be noise. Languages
+    # are proposed reliably by the claim proposer anyway; this scan exists for
+    # framework/tool skills with distinctive signatures.
+    if skill.get("category") == "Language":
+        return evidence
+    signatures = skill.get("code_signatures", [])
+    if not signatures:
+        return evidence
+    for path, source in sorted((repo.get("source_files") or {}).items()):
+        if len(evidence) >= MAX_SIGNATURE_CODE_EVIDENCE:
+            break
+        if is_test_path(path) or not source.get("authored_shas"):
+            continue
+        lines = source.get("lines", [])
+        code_lines = _code_only_lines(path, lines)
+        applicable = [sig for sig in signatures if _signature_applicable(sig, path)]
+        matches = [
+            (number, cline)
+            for number, cline in code_lines
+            if any(_scan_match(cline, sig, path) for sig in applicable)
+        ]
+        if not matches or _only_unused_imports(matches, code_lines):
+            continue
+        first = matches[0][0]
+        start, end = first, min(len(lines), first + 9)
+        sha = repo.get("head_sha") or source["authored_shas"][0]
+        evidence.append({
+            "type": "code",
+            "repo": repo["name"],
+            "file_path": path,
+            "start_line": start,
+            "end_line": end,
+            "commit_sha": sha,
+            "url": _make_url(repo, sha, path, start, end),
+            "snippet": "\n".join(lines[start - 1:end]),
+            "explanation": f"{skill['name']} usage in {path}, found by the deterministic scan.",
+            "checks": {
+                "file_exists": path in repo.get("tree", []),
+                "lines_valid": True,
+                "authored": True,
+                "not_fork": not repo.get("is_fork", False),
+                "signature_found": True,
+            },
+            "integrity": integrity_signals(repo, source, start, end, username),
+        })
+        evidence[-1]["lines_written"] = lines_written(evidence[-1])
+        _attach_record(evidence[-1], source)
+    return evidence
 
 
 def _authored_commit_count(repo: dict[str, Any]) -> tuple[int, str]:
@@ -698,6 +975,10 @@ def _deterministic_evidence(
             commit = _commit_evidence(repo, username)
             if commit:
                 evidence.append(commit)
+        # Code-level coverage for skills with no (or no verified) claim: cite
+        # fetched authored files carrying the skill's signatures. Duplicates of
+        # files the proposer already cited are filtered by the caller.
+        evidence.extend(_signature_code_evidence(skill, repo, username))
     return evidence
 
 

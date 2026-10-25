@@ -2,6 +2,7 @@ import { FileText, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, isMissingJobError, skillLabel, type Passport, type PassportSkill } from "../api";
+import CompetitiveProgrammingPanel from "../components/CompetitiveProgrammingPanel";
 import CoverageSummary from "../components/CoverageSummary";
 import EvidencePanel from "../components/EvidencePanel";
 import GrowthCard from "../components/GrowthCard";
@@ -206,6 +207,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
           <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience={audience} />
           <SkillDepthPanel results={passport.skill_depth} />
           <SqlDepthPanel result={passport.sql_depth} audience={audience} compact />
+          <CompetitiveProgrammingPanel result={passport.competitive_programming} />
           <section className="panel growth-panel">
             <div className="panel-heading"><div><h2>Next steps</h2></div></div>
             <p className="muted">Finish a task, then re-check to update your levels.</p>

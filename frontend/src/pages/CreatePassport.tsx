@@ -1,4 +1,4 @@
-import { ArrowRight, Clipboard, ExternalLink, FileUp, Github, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
+import { ArrowRight, Clipboard, ExternalLink, FileText, FileUp, Github, KeyRound, LoaderCircle, Paperclip } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, skillLabel, type CustomRole, type OwnershipChallenge, type PassportJob, type Role } from "../api";
@@ -20,6 +20,18 @@ const steps = [
   "Building growth plan",
   "Done",
 ];
+
+/** Per-letter spans for the home headline entrance; the h1 keeps a plain aria-label for screen readers. */
+function headlineLetters(text: string, start: number, extraMs = 0) {
+  let seen = 0;
+  return [...text].map((char, index) => {
+    if (char === " ") return " ";
+    const delay = (start + seen++) * 26 + extraMs;
+    return <span className="headline-letter" style={{ animationDelay: `${delay}ms` }} key={index}>{char}</span>;
+  });
+}
+const HEADLINE_LINE_1 = "Your work speaks.";
+const HEADLINE_LINE_2 = "Now show the proof.";
 
 export default function CreatePassport({ job, onJobChange, pollingPaused = false, generationError = "", onRetryPolling }: {
   job: PassportJob | null;
@@ -46,6 +58,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   const [skillDepthEnabled, setSkillDepthEnabled] = useState(false);
   const [reports, setReports] = useState<File[]>([]);
   const [portfolioUrl, setPortfolioUrl] = useState("");
+  const [cfHandle, setCfHandle] = useState("");
   const [jdTitle, setJdTitle] = useState("");
   const [jdText, setJdText] = useState("");
   const [extracted, setExtracted] = useState<CustomRole | null>(null);
@@ -174,6 +187,11 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       setError("Upload your resume PDF before generating a passport.");
       return;
     }
+    const trimmedCfHandle = cfHandle.trim();
+    if (trimmedCfHandle && !/^[A-Za-z0-9_.-]{1,24}$/.test(trimmedCfHandle)) {
+      setError("Codeforces handles use 1-24 letters, digits, underscore, dot or hyphen.");
+      return;
+    }
     setSubmitting(true);
     const data = new FormData();
     data.append("github_username", username.trim());
@@ -184,6 +202,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
     certificates.forEach((file) => data.append("certificates", file));
     sentReports.forEach((file) => data.append("reports", file));
     if (sentPortfolio) data.append("portfolio_url", sentPortfolio);
+    if (trimmedCfHandle) data.append("codeforces_handle", trimmedCfHandle);
     try {
       const created = await api.createPassport(data);
       if (!demo) setChallenge(null); // each code works once
@@ -208,14 +227,14 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   return (
     <div className="create-layout">
       <section className="create-intro">
-        <div className="eyebrow">SKILL PASSPORT · PROOF, NOT CLAIMS</div>
-        <h1>Your work speaks.<br /><em>Now show the proof.</em></h1>
+        <h1 aria-label="Your work speaks. Now show the proof.">
+          <span aria-hidden="true">
+            {headlineLetters(HEADLINE_LINE_1, 0)}
+            <br />
+            <em>{headlineLetters(HEADLINE_LINE_2, HEADLINE_LINE_1.replace(/ /g, "").length, 420)}</em>
+          </span>
+        </h1>
         <p>Create a skill profile from your GitHub work and resume, with links to the code behind each verified skill.</p>
-        <div className="promise-list">
-          <span><ShieldCheck size={17} /> Human-checkable evidence</span>
-          <span><Github size={17} /> Authorship is checked per file</span>
-          <span><ArrowRight size={17} /> Tasks to help close role gaps</span>
-        </div>
       </section>
       <section className="panel create-card">
         <div className="panel-heading">
@@ -273,34 +292,51 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             <small>PDF · Max 10 MB</small>
             <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
-          <details className="optional-uploads"><summary>Optional: certificates, reports and portfolio</summary>
+          <details className="optional-uploads"><summary>Optional: Codeforces, certificates, reports and portfolio</summary>
           <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs or images · select multiple</span>
-            <input type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={certificates.length >= 5} onChange={(event) => {
-              const selected = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              const remaining = 5 - certificates.length;
-              setCertificates([...certificates, ...selected.slice(0, remaining)]);
-              setError(selected.length > remaining
-                ? "Upload no more than 5 certificates. Extra selected files were not added."
-                : "");
-            }} />
+            <span className="file-field">
+              <input type="file" className="file-input-hidden" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={certificates.length >= 5} onChange={(event) => {
+                const selected = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                const remaining = 5 - certificates.length;
+                setCertificates([...certificates, ...selected.slice(0, remaining)]);
+                setError(selected.length > remaining
+                  ? "Upload no more than 5 certificates. Extra selected files were not added."
+                  : "");
+              }} />
+              <span className="file-trigger" aria-disabled={certificates.length >= 5}><Paperclip size={13} /> Choose files</span>
+              <span className="file-chosen">{certificates.length ? `${certificates.length} of 5 selected` : "No files selected"}</span>
+            </span>
+          </label>
+          {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
+            {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
+              <span><FileText size={12} /> {certificate.name}</span>
+              <button type="button" onClick={() => { setCertificates((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
+            </li>)}
+          </ul>}
+          <label className="cert-upload">Codeforces handle <span className="muted">optional · public contest data · shown separately, never raises a level · ownership not verified</span>
+            <input type="text" value={cfHandle} maxLength={24} placeholder="e.g. tourist" autoComplete="off" onChange={(event) => { setCfHandle(event.target.value); setError(""); }} />
           </label>
           {reportsEnabled && (
             <>
               <label className="cert-upload">Project reports <span className="muted">optional · up to 3 PDFs or images · checked against your code, never raise a level</span>
-                <input type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={reports.length >= 3} onChange={(event) => {
-                  const selected = Array.from(event.currentTarget.files ?? []);
-                  event.currentTarget.value = "";
-                  const remaining = 3 - reports.length;
-                  setReports([...reports, ...selected.slice(0, remaining)]);
-                  setError(selected.length > remaining
-                    ? "Upload no more than 3 project reports. Extra selected files were not added."
-                    : "");
-                }} />
+                <span className="file-field">
+                  <input type="file" className="file-input-hidden" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={reports.length >= 3} onChange={(event) => {
+                    const selected = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = "";
+                    const remaining = 3 - reports.length;
+                    setReports([...reports, ...selected.slice(0, remaining)]);
+                    setError(selected.length > remaining
+                      ? "Upload no more than 3 project reports. Extra selected files were not added."
+                      : "");
+                  }} />
+                  <span className="file-trigger" aria-disabled={reports.length >= 3}><Paperclip size={13} /> Choose files</span>
+                  <span className="file-chosen">{reports.length ? `${reports.length} of 3 selected` : "No files selected"}</span>
+                </span>
               </label>
               {reports.length > 0 && <ul className="certificate-list" aria-label="Selected project reports">
                 {reports.map((report, index) => <li key={`${report.name}-${report.lastModified}-${index}`}>
-                  <span>{report.name}</span>
+                  <span><FileText size={12} /> {report.name}</span>
                   <button type="button" onClick={() => { setReports((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
                 </li>)}
               </ul>}
@@ -309,12 +345,6 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
               </label>
             </>
           )}
-          {certificates.length > 0 && <ul className="certificate-list" aria-label="Selected certificates">
-            {certificates.map((certificate, index) => <li key={`${certificate.name}-${certificate.lastModified}-${index}`}>
-              <span>{certificate.name}</span>
-              <button type="button" onClick={() => { setCertificates((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
-            </li>)}
-          </ul>}
           </details>
           <label className="demo-toggle"><input type="checkbox" checked={demo} onChange={(event) => { setDemo(event.target.checked); setError(""); }} /> Create as a demo passport (sample data)</label>
           {!demo && (

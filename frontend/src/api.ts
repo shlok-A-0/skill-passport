@@ -240,6 +240,10 @@ export type Passport = {
   sql_depth?: SqlDepth | null;
   /** Skill-specific, cited evidence summaries; never a proficiency estimate. */
   skill_depth?: Record<string, SkillDepth | null>;
+  /** The Codeforces handle supplied at create time (re-check reuses it), if any. */
+  codeforces_handle?: string | null;
+  /** Separate competitive-programming record; never affects skill levels or role matching. */
+  competitive_programming?: CompetitiveProgramming | null;
 };
 
 export type SkillDepthEvidence = {
@@ -372,6 +376,32 @@ export type ProjectReport = {
   error?: string;
 };
 export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
+
+/** Public Codeforces profile and sampled submission data, clearly separate from verified skills. */
+export type CompetitiveProgramming = {
+  handle: string;
+  ownership: "unverified";
+  data_source: "codeforces_public_api";
+  fetched_at: string;
+  stale?: boolean;
+  error?: "not_found" | "unavailable";
+  profile?: {
+    rating: number | null;
+    max_rating: number | null;
+    rank: string | null;
+    max_rank: string | null;
+    contribution: number | null;
+    registered_at: string | null;
+  };
+  rated_contests?: number;
+  last_rated_contest_at?: string | null;
+  submission_sample?: number;
+  submissions_examined?: number;
+  solved_count?: number;
+  solved_max_problem_rating?: number | null;
+  top_tags?: [string, number][];
+  languages?: [string, number][];
+};
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */
 export type OwnershipChallenge = {

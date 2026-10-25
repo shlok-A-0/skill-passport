@@ -22,6 +22,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api, skillLabel, type Passport, type PassportSkill } from "../api";
+import SkillName from "../components/SkillName";
 import LadderPill from "../components/LadderPill";
 import { sqlDepthHeadline } from "../sqlDepth";
 import { growthUnavailable, GROWTH_UNAVAILABLE } from "../passportNotes";
@@ -160,27 +161,23 @@ export default function StudentSummary() {
             </div>
           </div>
 
-          <div className="summary-candidate-banner">
-            <div className="summary-candidate-primary">
-              <span className="eyebrow">VERIFIED CANDIDATE PROFILE</span>
-              <h1 className="summary-candidate-name">
+          <div className="hero summary-hero">
+            <div className="hero-copy">
+              <p className="hero-eyebrow">Verified candidate profile</p>
+              <h1 className="hero-title">
                 <a
                   href={`https://github.com/${passport.github_username}`}
                   target="_blank"
                   rel="noreferrer"
                   className="summary-github-link"
                 >
-                  <Github size={24} />
+                  <Github size={30} />
                   <span>@{passport.github_username}</span>
                 </a>
               </h1>
-              <div className="summary-role-pill">
-                <strong>Target Role:</strong> {passport.target_role}
-              </div>
-            </div>
-            <div className="summary-passport-id-box">
-              <span className="summary-id-label">PASSPORT ID</span>
-              <code className="summary-id-val">{passport.id}</code>
+              <p className="hero-sub">
+                Target role: {passport.target_role} · Passport <code>{passport.id}</code> · Generated {reportDateFormatted}
+              </p>
             </div>
           </div>
         </header>
@@ -192,43 +189,13 @@ export default function StudentSummary() {
             <h2>At-a-Glance Summary</h2>
           </div>
 
-          <div className="summary-metrics-grid">
-            <div className="summary-metric-card highlighted">
-              <span className="summary-metric-num">{evidencedCount}</span>
-              <span className="summary-metric-label">Evidenced skills</span>
-              <small>Demonstrated, Applied and Used</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">{demonstratedSkills.length}</span>
-              <span className="summary-metric-label">Demonstrated</span>
-              <small>Used in code, covered by tests</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">{appliedSkills.length}</span>
-              <span className="summary-metric-label">Applied</span>
-              <small>Used in committed code</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.sources.certificates ?? 0}
-              </span>
-              <span className="summary-metric-label">Certificates</span>
-              <small>Uploaded documents</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.sources.reports ?? passport.reports ? (Array.isArray(passport.reports) ? passport.reports.length : (passport.sources.reports || 0)) : 0}
-              </span>
-              <span className="summary-metric-label">Project reports</span>
-              <small>Cross-checked with code</small>
-            </div>
-            <div className="summary-metric-card">
-              <span className="summary-metric-num">
-                {passport.coverage?.repos_analysed ?? passport.sources.repos}
-              </span>
-              <span className="summary-metric-label">Repositories</span>
-              <small>Analysed on GitHub</small>
-            </div>
+          <div className="facts">
+            <div className="fact"><span>Evidenced skills</span><b>{evidencedCount}</b></div>
+            <div className="fact"><span>Demonstrated</span><b>{demonstratedSkills.length} · covered by tests</b></div>
+            <div className="fact"><span>Applied</span><b>{appliedSkills.length} · in committed code</b></div>
+            <div className="fact"><span>Certificates</span><b>{passport.sources.certificates ?? 0}</b></div>
+            <div className="fact"><span>Project reports</span><b>{passport.sources.reports ?? passport.reports ? (Array.isArray(passport.reports) ? passport.reports.length : (passport.sources.reports || 0)) : 0}</b></div>
+            <div className="fact"><span>Repositories analysed</span><b>{passport.coverage?.repos_analysed ?? passport.sources.repos}</b></div>
           </div>
 
           {downloadError && <div className="notice notice-error no-print">{downloadError}</div>}
@@ -321,7 +288,7 @@ export default function StudentSummary() {
               <div className="summary-claimed-tags">
                 {claimedSkills.map((skill) => (
                   <span key={skill.skill_id} className="summary-claimed-tag">
-                    {skillLabel(skill)}
+                    <SkillName item={skill} />
                     {skill.certified && (
                       <span title="Skill mentioned in certificate text" className="certified-badge-wrap">
                         <FileCheck2 size={12} className="certified-icon" aria-label="Skill mentioned in certificate text" />
@@ -356,7 +323,7 @@ export default function StudentSummary() {
                     <li key={skill.skill_id} className="summary-credential-item">
                       <CheckCircle2 size={14} className="credential-check" />
                       <div>
-                        <strong>{skillLabel(skill)}</strong>
+                        <strong><SkillName item={skill} /></strong>
                         <span className="credential-meta">Name matched in certificate text; issuer and credential validity not verified.</span>
                       </div>
                     </li>
@@ -478,7 +445,7 @@ export default function StudentSummary() {
                     return (
                       <div key={name} className="summary-depth-profile-item">
                         <div className="summary-profile-top">
-                          <strong>{skillLabel({ skill_id: name })}</strong>
+                          <strong><SkillName item={{ skill_id: name }} /></strong>
                           <span className="depth-score-tag">
                             {depth.score !== null ? `${depth.score}/100 · ${depth.label}` : depth.label}
                           </span>
@@ -565,7 +532,7 @@ export default function StudentSummary() {
               {passport.growth_tasks.map((task, idx) => (
                 <div key={idx} className="summary-growth-item">
                   <div className="summary-growth-head">
-                    <span className="summary-growth-skill">{skillLabel({ skill_id: task.skill_id })}</span>
+                    <span className="summary-growth-skill"><SkillName item={{ skill_id: task.skill_id }} /></span>
                     <span className="summary-growth-target">Target Repo: <strong>{task.target_repo}</strong></span>
                   </div>
                   <p className="summary-growth-task">{task.task}</p>

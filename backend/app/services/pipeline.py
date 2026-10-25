@@ -8,6 +8,11 @@ import httpx
 from app import config
 from app.config import VERIFIER_VERSION
 from app.services.claim_proposer import propose_claims
+from app.services.codeforces_ingest import (
+    CodeforcesIngestError,
+    CodeforcesUserNotFoundError,
+    fetch_codeforces,
+)
 from app.services.copy_check import add_copy_signals
 from app.services.coverage import build_coverage
 from app.services.github_ingest import (
@@ -33,7 +38,7 @@ from app.services.jobs import (
     update_job,
 )
 from app.services.resume_parse import parse_certificate, parse_resume, redact_personal_data
-from app.services.role_match import match_role
+from app.services.role_match import _get_role, match_role
 from app.services.sql_depth import safe_sql_depth
 from app.services.skill_depth import compute_skill_depth
 from app.services.storage import get_passport, save_passport, save_passport_depth
@@ -151,6 +156,7 @@ def build_passport(
     certificate_skill_mentions: list[dict[str, str]] | None = None,
     report_files: list[tuple[str, bytes]] | None = None,
     portfolio_url: str | None = None,
+    codeforces_handle: str | None = None,
 ) -> dict[str, Any]:
     existing = get_passport(passport_id) if passport_id else None
     update_job_id = job_id or (passport_id if passport_id and not existing else None)
@@ -165,8 +171,9 @@ def build_passport(
         if update_job_id:
             update_job(update_job_id, step)
 
-    progress("Reading GitHub")
-    ingestion = ingest_github(github_username, force_refresh=force_refresh)
+    # The resume is parsed before the GitHub read: its claimed skills (plus the
+    # target role's required skills) steer a bounded second-pass fetch so
+    # evidence for named skills is looked for beyond the first file sample.
     progress("Reading resume")
     if resume_bytes:
         parsed_resume = parse_resume(resume_bytes)
@@ -177,6 +184,14 @@ def build_passport(
         resume_logins = None  # re-check: the resume isn't stored, so the earlier signal is kept
     else:
         raise ValueError("A resume PDF or previously parsed resume skills are required.")
+    target_skill_ids = sorted(
+        {mention["skill_id"] for mention in resume_skills if mention.get("skill_id")}
+        | {requirement["skill_id"] for requirement in _get_role(target_role)["requirements"]}
+    )
+    progress("Reading GitHub")
+    ingestion = ingest_github(
+        github_username, force_refresh=force_refresh, target_skills=target_skill_ids
+    )
     if certificate_bytes:
         progress("Reading certificates")
         certificate_groups = [
@@ -227,6 +242,40 @@ def build_passport(
         portfolio = portfolio_status(portfolio_url, ingestion["username"])
     else:
         portfolio = (existing or {}).get("portfolio")  # kept as is on re-check; never fetched
+    # Optional competitive-programming evidence. A separate axis: it never feeds
+    # skill levels, role matching or claim verification. The handle comes from
+    # the create form; re-check reuses and refreshes the stored one.
+    handle = codeforces_handle or (existing or {}).get("codeforces_handle")
+    if handle:
+        progress("Reading Codeforces")
+        prior = (existing or {}).get("competitive_programming")
+        # Retained data is only valid for the same handle: never show a previous
+        # handle's stats under a changed one.
+        prior = prior if isinstance(prior, dict) and prior.get("handle") == handle else None
+        try:
+            competitive = fetch_codeforces(handle)
+        except CodeforcesUserNotFoundError:
+            competitive = {
+                "handle": handle,
+                "ownership": "unverified",
+                "error": "not_found",
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except CodeforcesIngestError:
+            logger.exception("Codeforces read failed for %s", handle)
+            # A platform hiccup must not fail the passport. Retained prior data is
+            # explicitly marked stale so the UI can say when it was fetched.
+            if prior:
+                competitive = {**prior, "stale": True}
+            else:
+                competitive = {
+                    "handle": handle,
+                    "ownership": "unverified",
+                    "error": "unavailable",
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                }
+    else:
+        competitive = None
     progress("Matching role")
     coverage = build_coverage(ingestion)
     role_match = match_role(verified["skills"], target_role, coverage)
@@ -253,6 +302,8 @@ def build_passport(
         "updated_at": now,
         "github_username": ingestion["username"],
         "target_role": role_match["role_name"],
+        "codeforces_handle": handle,
+        "competitive_programming": competitive,
         "sources": {
             "repos": ingestion["repo_count"],
             "resume": bool(resume_bytes) or bool(existing and existing["sources"]["resume"]),
@@ -342,7 +393,23 @@ def ensure_depth_analyzers(passport_id: str) -> None:
         return
 
     try:
-        ingestion = ingest_github(username, force_refresh=True)
+        # Re-ingest with the passport's own skills and role requirements as targets
+        # so the cache stays scoped to the same target set instead of being
+        # overwritten by a target-less read (which would force the next re-check
+        # to refetch everything).
+        target_ids = sorted(
+            {skill["skill_id"] for skill in passport.get("skills") or [] if skill.get("skill_id")}
+        )
+        stored_role = passport.get("custom_role") or passport.get("target_role")
+        if stored_role:
+            try:
+                target_ids = sorted(
+                    set(target_ids)
+                    | {r["skill_id"] for r in _get_role(stored_role)["requirements"]}
+                )
+            except Exception:
+                pass  # a role that no longer resolves just narrows the target set
+        ingestion = ingest_github(username, force_refresh=True, target_skills=target_ids)
         source_shas: dict[str, set[str]] = {}
         for skill in passport.get("skills") or []:
             for evidence in skill.get("evidence") or []:
@@ -434,6 +501,7 @@ def run_passport_job(
     is_demo: bool,
     report_files: list[tuple[str, bytes]] | None = None,
     portfolio_url: str | None = None,
+    codeforces_handle: str | None = None,
 ) -> None:
     update_job_id = job_id
     with keep_job_lease(job_id):
@@ -447,6 +515,7 @@ def run_passport_job(
                 passport_id=update_job_id,
                 report_files=report_files,
                 portfolio_url=portfolio_url,
+                codeforces_handle=codeforces_handle,
             )
         except Exception as exc:
             logger.exception("Passport job %s failed", job_id)

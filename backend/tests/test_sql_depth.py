@@ -642,7 +642,7 @@ def _stub_pipeline(monkeypatch, repos: list[dict], skills: list[dict]) -> None:
     monkeypatch.setattr(pipeline, "get_passport", lambda _: None)
     monkeypatch.setattr(
         pipeline, "ingest_github",
-        lambda username, force_refresh=False: {"username": username, "repo_count": len(repos), "repos": repos},
+        lambda username, force_refresh=False, target_skills=None: {"username": username, "repo_count": len(repos), "repos": repos},
     )
     monkeypatch.setattr(pipeline, "parse_resume", lambda _: {"skills": [], "github_logins": []})
     monkeypatch.setattr(pipeline, "propose_claims", lambda *_: [])

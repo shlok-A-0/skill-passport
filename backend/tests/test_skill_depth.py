@@ -450,3 +450,57 @@ def test_features_lists_only_enabled_depth_profiles(monkeypatch):
     monkeypatch.setattr(config, "ENABLE_SKILL_DEPTH", True)
     monkeypatch.setattr(config, "ENABLE_SQL_DEPTH", False)
     assert "sql" not in main.features()["skill_depth_profiles"]
+
+
+CODE = """def classify(value):
+    if value > 10 and value < 20:
+        return "mid"
+    for item in range(value):
+        while item > 3:
+            break
+    return "low"
+
+def plain():
+    return 1
+"""
+
+
+def _metrics(repo_data, verified=None):
+    results = compute_skill_depth({"username": "student", "repos": [repo_data]},
+                                  verified or {"skills": [], "rejected_claims": []},
+                                  sql_result=None, include_sql=False)
+    return (results.get("python") or {}).get("code_metrics")
+
+
+def test_complexity_metrics_counts_branches_and_functions():
+    metrics = _metrics(repo({"src/logic.py": CODE}))
+    assert metrics["files_analyzed"] == 1
+    assert metrics["functions_analyzed"] == 2
+    top = metrics["top_functions"][0]
+    assert top["function"] == "classify"
+    assert top["decision_points"] == 5  # base + if + boolop + for + while
+    assert top["span_lines"] == 7
+    assert metrics["max_decision_points"] == 5
+    assert metrics["median_decision_points"] == 3
+    assert "not a proficiency score" in metrics["note"]
+
+
+def test_complexity_metrics_ignores_non_python_and_unauthored():
+    data = repo({"src/app.js": "function f() { if (x) return 1; }", "src/plain.py": "x = 1\n"})
+    metrics = _metrics(data)
+    assert metrics["functions_analyzed"] == 0
+    assert metrics["max_decision_points"] is None
+    assert metrics["top_functions"] == []
+    data2 = repo({"src/logic.py": CODE})
+    data2["source_files"]["src/logic.py"]["authored_shas"] = []
+    assert _metrics(data2)["functions_analyzed"] == 0
+
+
+def test_complexity_metrics_skips_excluded_and_broken_files():
+    data = repo({"src/logic.py": CODE, "src/broken.py": "def f(:\n    pass\n"})
+    metrics = _metrics(data)
+    assert metrics["files_analyzed"] == 1  # broken.py fails to parse, not counted
+    verified = {"skills": [], "rejected_claims": [
+        {"kind": "copied", "claim": {"repo": "demo", "file_path": "src/logic.py"}}]}
+    metrics2 = _metrics(data, verified)
+    assert metrics2["functions_analyzed"] == 0

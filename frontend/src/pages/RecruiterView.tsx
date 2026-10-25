@@ -5,6 +5,7 @@ import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, 
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import InterviewWorkspace from "../components/InterviewWorkspace";
+import CompetitiveProgrammingPanel from "../components/CompetitiveProgrammingPanel";
 import ReportsPanel from "../components/ReportsPanel";
 import SectionTabs from "../components/SectionTabs";
 import SqlDepthPanel from "../components/SqlDepthPanel";
@@ -212,6 +213,7 @@ export default function RecruiterView() {
           <div className="section-col">
             <SkillDepthPanel results={passport.skill_depth} />
             <SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact />
+            <CompetitiveProgrammingPanel result={passport.competitive_programming} />
           </div>
         </div>
       </div>
