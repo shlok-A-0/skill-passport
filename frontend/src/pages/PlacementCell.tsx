@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type Role } from "../api";
 import SectionTabs from "../components/SectionTabs";
+import { adjustmentLabel } from "../interview";
 import { COVERAGE_MISSING, GROWTH_UNAVAILABLE, growthUnavailable } from "../passportNotes";
 import { earlierSourcesText, excludedCitations, excludedCitationsText, latestPerStudent, notWrittenText, rankCandidates, requirementsMet, type Verifiability } from "../verifiability";
 
@@ -285,7 +286,9 @@ export default function PlacementCell() {
                     {requirements.map((req) => {
                       const skill = passport.skills.find((item) => item.skill_id === req.skill_id);
                       const level = skill?.evidence.length ? skill.level : undefined;
-                      return <td key={req.skill_id}><span className={`heat-cell ${levelClass(level)}`} title={`${skillLabel(req)}: ${level ?? `Not found. ${NOT_FOUND_TOOLTIP}`}`} /></td>;
+                      // A level moved by an interview outcome is outlined and says so; it never reads as plain evidence.
+                      const interview = skill?.interview ? ` (${adjustmentLabel(skill.interview)})` : "";
+                      return <td key={req.skill_id}><span className={`heat-cell ${levelClass(level)}${interview ? " heat-interview" : ""}`} title={`${skillLabel(req)}: ${level ?? `Not found. ${NOT_FOUND_TOOLTIP}`}${interview}`} /></td>;
                     })}
                   </tr>
                 ))}</tbody>
@@ -293,7 +296,7 @@ export default function PlacementCell() {
             </div>
           ) : null}
           <div className="heatmap-legend">
-            <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span>
+            <span><i className="heat-used" />Used</span><span><i className="heat-applied" />Applied</span><span><i className="heat-demonstrated" />Demonstrated</span><span title={NOT_FOUND_TOOLTIP}><i className="heat-missing" />Not found</span><span title="An interview outcome moved this level; hover a cell for the level from evidence alone."><i className="heat-used heat-interview" />Moved by interview</span>
           </div>
         </section>
       </div>

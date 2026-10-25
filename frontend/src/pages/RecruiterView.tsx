@@ -5,11 +5,11 @@ import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, 
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import InterviewWorkspace from "../components/InterviewWorkspace";
-import LadderPill from "../components/LadderPill";
 import ReportsPanel from "../components/ReportsPanel";
 import SectionTabs from "../components/SectionTabs";
 import SqlDepthPanel from "../components/SqlDepthPanel";
 import SkillDepthPanel from "../components/SkillDepthPanel";
+import SkillLevel from "../components/SkillLevel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
@@ -75,6 +75,19 @@ export default function RecruiterView() {
     return () => { loadVersion.current += 1; };
   }, [id]);
 
+  /** Reload in place after an interview outcome is saved: levels and the role match may have moved.
+   * A save that finishes after switching candidates is ignored, so it can't cancel the new page's load. */
+  const currentId = useRef(id);
+  currentId.current = id;
+  function refreshPassport() {
+    const forId = id;
+    if (forId !== currentId.current) return;
+    const version = ++loadVersion.current;
+    api.reviewPassport(forId)
+      .then((data) => { if (version === loadVersion.current) setPassport(data); })
+      .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
+  }
+
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -119,7 +132,11 @@ export default function RecruiterView() {
           {growthUnavailable(passport) && <p className="unavailable-note">{GROWTH_UNAVAILABLE}</p>}
         </div>
         <div className="recruiter-actions">
-          <div className="match-total"><strong>{passport.role_match.met} <i>of</i> {passport.role_match.total}</strong><span>requirements met</span></div>
+          <div className="match-total"><strong>{passport.role_match.met} <i>of</i> {passport.role_match.total}</strong><span>requirements met</span>
+            {passport.evidence_role_match && passport.evidence_role_match.met !== passport.role_match.met && (
+              <small className="match-evidence" title="Before interview outcomes adjusted the levels">{passport.evidence_role_match.met} from evidence alone</small>
+            )}
+          </div>
           <button className="button button-light" onClick={copyLink}><Clipboard size={14} /> {copied ? "Link copied" : "Copy share link"}</button>
         </div>
       </header>
@@ -153,7 +170,7 @@ export default function RecruiterView() {
                       <p>{packet?.summary ?? requirement.reason}</p>
                       {quote && <small className="req-quote" title={quote}>From the job description: “{quote}”</small>}
                     </button>
-                    {skill && <LadderPill level={skill.level} />}
+                    {skill && <SkillLevel skill={skill} />}
                     <Link className="view-evidence-link" to={`/recruiter/${passport.id}/evidence?skill=${requirement.skill_id}`} aria-label={`View ${requirement.skill_id} evidence`}><FileSearch size={15} /> Evidence</Link>
                   </article>
                   {open && packet && <PacketDetails packet={packet} reason={requirement.reason} />}
@@ -177,7 +194,7 @@ export default function RecruiterView() {
                 return (
                   <Link className="strength-row" to={`/recruiter/${passport.id}/evidence?skill=${skill.skill_id}`} key={skill.skill_id}>
                     <span><strong>{skillLabel(skill)}{flags > 0 && <span className="integrity-flag" title="Authorship signals need a human look"><AlertTriangle size={11} /> {flags} to check</span>}</strong><small>{where}</small></span>
-                    <LadderPill level={skill.level} />
+                    <SkillLevel skill={skill} />
                   </Link>
                 );
               }) : <p className="muted">No evidence was found in the analysed files yet.</p>}
@@ -200,7 +217,7 @@ export default function RecruiterView() {
       </div>
       <div id="recruiter-panel-interview" role="tabpanel" aria-labelledby="recruiter-tab-interview" tabIndex={0} hidden={section !== "interview"} style={{ display: section === "interview" ? undefined : "none" }}>
         <div className="section-col">
-          <InterviewWorkspace passportId={passport.id} />
+          <InterviewWorkspace passportId={passport.id} onOutcomeSaved={refreshPassport} />
           <details className="panel interview-panel practice-panel practice-collapsible">
             <summary className="panel-heading">
               <div><div className="eyebrow">SHOWN TO THE STUDENT FOR PRACTICE</div><h2>Student practice questions</h2></div>
@@ -223,7 +240,7 @@ export default function RecruiterView() {
           ? <ReportsPanel reports={passport.reports} portfolio={passport.portfolio} audience="recruiter" defaultOpen />
           : <div className="empty-state">No project reports or portfolio were attached to this passport.</div>}
       </div>
-      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated link to code the candidate wrote; Used means dependencies, config or commit history. Unverified claims never count. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
+      <footer className="recruiter-disclaimer"><ShieldCheck size={14} /> Applied and Demonstrated link to code the candidate wrote; Used means dependencies, config or commit history. Unverified claims never count. A level tagged "Interview" was moved by a recorded interview outcome. <Link to={`/recruiter/${passport.id}/evidence`}><ExternalLink size={13} /> Full evidence review</Link></footer>
     </div>
   );
 }

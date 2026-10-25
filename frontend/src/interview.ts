@@ -1,9 +1,18 @@
-import type { InterviewAnchor, InterviewSession } from "./api";
+import type { InterviewAdjustment, InterviewAnchor, InterviewSession } from "./api";
 
 export const OUTCOME_ORDER = ["explained_well", "partly_explained", "could_not_explain"] as const;
 
 export const INTERVIEW_DISCLAIMER =
-  "Outcomes are your observations. They never change evidence levels, role match or depth scores, and a weak answer is not proof of copying, AI use or a missing skill.";
+  "Outcomes adjust this candidate's levels on recruiter pages (Explained well +1, Partly explained −1, Couldn't explain −2; the latest set decides, worst answer per skill). The evidence level from the code checks stays visible, and the student passport and credential are unchanged. A weak answer is not proof of copying, AI use or a missing skill.";
+
+const LEVEL_RANK: Record<string, number> = { "Not found": -1, Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
+
+/** "Interview −1 · evidence: Demonstrated" (the actual move, after caps), or "Interview: Explained well" when the level didn't move. */
+export function adjustmentLabel(adjustment: InterviewAdjustment): string {
+  const moved = (LEVEL_RANK[adjustment.level] ?? 0) - (LEVEL_RANK[adjustment.evidence_level] ?? 0);
+  if (moved === 0) return `Interview: ${adjustment.outcome_label}`;
+  return `Interview ${moved > 0 ? "+" : "−"}${Math.abs(moved)} · evidence: ${adjustment.evidence_level}`;
+}
 
 /** Lines of the cited snippet, numbered as on GitHub, with the question's focus marked. */
 export function anchorLines(anchor: InterviewAnchor): { number: number; text: string; focus: boolean }[] {

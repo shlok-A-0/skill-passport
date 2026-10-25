@@ -8,6 +8,7 @@ import GrowthCard from "../components/GrowthCard";
 import LadderPill from "../components/LadderPill";
 import RejectedClaims, { type Audience } from "../components/RejectedClaims";
 import ReportsPanel from "../components/ReportsPanel";
+import SkillLevel from "../components/SkillLevel";
 import SqlDepthPanel from "../components/SqlDepthPanel";
 import SkillDepthPanel from "../components/SkillDepthPanel";
 import { LEVEL_HELP_STUDENT, LEVEL_NOTE } from "../levels";
@@ -187,7 +188,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             {verified.length ? (
               <div className="skill-grid">{verified.map((skill) => (
                 <button className={`skill-tile ${selected?.skill_id === skill.skill_id ? "skill-selected" : ""}`} key={skill.skill_id} onClick={() => setSelected(skill)}>
-                  <span className="skill-name">{skillLabel(skill)}</span><LadderPill level={skill.level} />
+                  <span className="skill-name">{skillLabel(skill)}</span><SkillLevel skill={skill} />
                   <small>{skill.evidence.length} evidence {skill.certified ? "· Certified" : ""}</small>
                 </button>
               ))}</div>
@@ -197,7 +198,7 @@ export default function StudentPassport({ audience = "student" }: { audience?: A
             <section className="panel claimed-panel">
               <div className="panel-heading"><div><h2>Unverified claims</h2></div><span className="count-tag">{claimed.length}</span></div>
               <div className="claimed-skills">{claimed.map((skill) => (
-                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><LadderPill level="Claimed" /></button>
+                <button key={skill.skill_id} onClick={() => setSelected(skill)}><span>{skillLabel(skill)}</span><SkillLevel skill={skill} level="Claimed" /></button>
               ))}</div>
               <p className="muted">From documents, uncommitted files or an earlier check. No current evidence in the analysed files. Never counted as met.</p>
             </section>

@@ -115,7 +115,11 @@ function QuestionCard({ question, index, session, onSaved }: {
 }
 
 /** Private recruiter interview sets: generated on request, saved, and assessed question by question. */
-export default function InterviewWorkspace({ passportId }: { passportId: string }) {
+export default function InterviewWorkspace({ passportId, onOutcomeSaved }: {
+  passportId: string;
+  /** Called after an outcome is saved, so the page can show the levels it moved. */
+  onOutcomeSaved?: () => void;
+}) {
   const [sessions, setSessions] = useState<InterviewSession[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -203,6 +207,7 @@ export default function InterviewWorkspace({ passportId }: { passportId: string 
         .then((fresh) => setSessions((current) => (current ?? []).map((item) => item.id === fresh.id ? fresh : item)))
         .catch((reason: Error) => setError({ message: reason.message }));
     }
+    onOutcomeSaved?.();
   }
 
   const session = sessions?.find((item) => item.id === activeId) ?? null;
