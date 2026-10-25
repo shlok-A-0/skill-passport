@@ -69,3 +69,16 @@ to exercise fetch selection), the claims a perfect reader could make,
 resume/certificate mentions, and labels with a provenance note. Put tuning
 cases in `split: "tune"` and cases that must stay untouched by tuning in
 `split: "heldout"`.
+
+## Deterministic signature scan
+
+`verify_claims` adds rule-based code citations for framework/tool skills the
+claim proposer never named (`_signature_code_evidence`): a fetched, authored,
+non-test file whose lines contain the skill's signatures is cited like any
+other code evidence and passes the same exclusion stage (blame attribution,
+earlier-source). Language skills are excluded because their signatures match
+nearly every file. Coverage is the fetched file sample only - a skill whose
+evidence was never fetched is still missed (see challenge-deep-burial), so
+this is not a repo-wide scan. The challenge-unproposed-skill fixture shows
+the rescue: without the scan the skill is a detection miss; with it, the
+authored Django models file is cited and leveled Applied.

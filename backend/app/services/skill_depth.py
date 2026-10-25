@@ -10,6 +10,7 @@ import copy
 import json
 import logging
 import re
+import statistics
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote
@@ -763,6 +764,56 @@ def _sql_adapter(
             "competencies": competencies, "disclaimer": result.get("note", DISCLAIMER)}
 
 
+_CODE_METRICS_NOTE = (
+    "Function-level structural metrics over candidate-authored Python files in the analyzed "
+    "sample. Decision points count branching constructs; they flag code worth reviewing and "
+    "are an evidence summary, not a proficiency score."
+)
+
+
+def _decision_points(function: ast.AST) -> int:
+    """McCabe-style count for one function: 1 + branching constructs. A nested function's
+    constructs count toward its enclosing function and toward itself."""
+    points = 1
+    for node in ast.walk(function):
+        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler,
+                             ast.Assert, ast.IfExp)):
+            points += 1
+        elif isinstance(node, ast.BoolOp):
+            points += len(node.values) - 1
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            points += sum(1 + len(gen.ifs) for gen in node.generators)
+        elif hasattr(ast, "match_case") and isinstance(node, ast.match_case):
+            points += 1 + (1 if node.guard is not None else 0)
+    return points
+
+
+def _python_complexity_metrics(ingestion: dict[str, Any], verified: dict[str, Any]) -> dict[str, Any]:
+    """Advisory function-level metrics over candidate-authored, non-excluded Python files."""
+    records = []
+    files = 0
+    for repo, path, source, text in _eligible_sources(ingestion, verified):
+        if not path.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            continue
+        files += 1
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                records.append({"function": node.name, "repo": repo["name"], "file_path": path,
+                                "start_line": node.lineno, "end_line": node.end_lineno or node.lineno,
+                                "span_lines": (node.end_lineno or node.lineno) - node.lineno + 1,
+                                "decision_points": _decision_points(node)})
+    points = sorted(record["decision_points"] for record in records)
+    ranked = sorted(records, key=lambda r: (-r["decision_points"], -r["span_lines"]))
+    return {"scope": "python", "files_analyzed": files, "functions_analyzed": len(records),
+            "max_decision_points": points[-1] if points else None,
+            "median_decision_points": statistics.median(points) if points else None,
+            "top_functions": ranked[:3], "note": _CODE_METRICS_NOTE}
+
+
 def compute_skill_depth(
     ingestion: dict[str, Any],
     verified: dict[str, Any],
@@ -791,6 +842,11 @@ def compute_skill_depth(
         notes.append(f"Analyzed {source_read} of {source_total} listed source files; repository sampling may omit relevant evidence.")
     if ingestion.get("repo_count", len(ingestion.get("repos", []))) >= 5:
         notes.append("The analysis is bounded to the five most recently pushed eligible public repositories.")
+    if results.get("python") is not None:
+        try:
+            results["python"]["code_metrics"] = _python_complexity_metrics(ingestion, verified)
+        except Exception:
+            logger.exception("Python complexity metrics failed")
     for result in results.values():
         if result:
             result["coverage"]["source_files_read"] = source_read

@@ -476,4 +476,35 @@ FIXTURES: list[dict[str, Any]] = [
         },
         "expected_persistent_miss": "flask",
     },
+    {
+        "id": "challenge-unproposed-skill",
+        "split": "challenge",
+        "purpose": "Post-hoc challenge case: the proposer never names django, but a "
+                   "fetched authored file carries its signature. Without the "
+                   "deterministic signature scan the skill is missed entirely; the "
+                   "scan cites it. Scan coverage is fetched files only, and Language "
+                   "skills are excluded (their signatures match everything).",
+        # No dependency declaration: without the signature scan the skill is
+        # absent, so the fixture shows the scan rescuing detection, not only
+        # upgrading a dependency-based Used.
+        "ingestion": _ingestion(_repo(
+            "cms",
+            tree=["manage.py", "blog/models.py"],
+            source_files={
+                "manage.py": _source("import sys\n\nif __name__ == '__main__':\n    sys.exit(0)\n"),
+                "blog/models.py": _source(
+                    "from django.db import models\n\n"
+                    "class Post(models.Model):\n"
+                    "    title = models.CharField(max_length=200)\n"
+                ),
+            },
+        )),
+        "resume_skills": [],
+        "available_claims": [],  # the proposer misses django completely
+        "labels": {
+            # models.Model usage in authored code is Applied, not just the dependency Used.
+            "levels": {"django": "Applied"},
+            "absent": ["react"],
+        },
+    },
 ]

@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services.framework import skill_map
 from eval.fixtures import FIXTURES
 from eval.harness import run_all, run_fixture, summarize
 
@@ -117,3 +118,33 @@ def test_fixture_fetch_counts_stay_within_per_repo_budget() -> None:
         result = run_fixture(fixture)
         for repo, count in result["sampling"]["fetch_counts"].items():
             assert count <= MAX_SOURCE_FETCHES, (fixture["id"], repo, count)
+
+
+def test_challenge_unproposed_skill_scan_rescues_detection(monkeypatch) -> None:
+    """A skill the proposer never names is absent without the deterministic
+    signature scan and correctly leveled with it."""
+    import app.services.verifier as verifier
+
+    fixture = next(f for f in FIXTURES if f["id"] == "challenge-unproposed-skill")
+    monkeypatch.setattr(verifier, "_signature_code_evidence", lambda skill, repo, username="": [])
+    baseline = run_fixture(fixture)
+    monkeypatch.undo()
+
+    assert baseline["detection"]["fn"] == 1  # django missed without the scan
+    result = run_fixture(fixture)
+    django = next(c for c in result["comparisons"] if c["skill_id"] == "django")
+    assert django["expected"] == "Applied" and django["actual"] == "Applied"
+    assert not result["absent_violations"]
+
+
+def test_signature_scan_excludes_language_skills() -> None:
+    """Language signatures ("def ", "import ") match nearly every file; scanning
+    them would cite noise. The scan must skip category=Language skills."""
+    from app.services.verifier import _signature_code_evidence
+
+    python_skill = next(s for s in skill_map().values() if s["id"] == "python")
+    repo = {
+        "name": "x", "is_fork": False, "tree": ["a.py"],
+        "source_files": {"a.py": {"lines": ["def f():", "    pass"], "authored_shas": ["c1"]}},
+    }
+    assert _signature_code_evidence(python_skill, repo) == []
