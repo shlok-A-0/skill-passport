@@ -1773,3 +1773,4 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 .interview-partly_explained { background: var(--warning-soft); color: var(--warning); }
 .interview-could_not_explain { background: var(--danger-soft); color: var(--danger); }
 .match-evidence { display: block; width: 100%; color: var(--muted); font-size: 9px; }
+.heat-interview { outline: 2px dashed var(--accent); outline-offset: 1px; }

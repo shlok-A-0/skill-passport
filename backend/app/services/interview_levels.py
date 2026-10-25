@@ -118,5 +118,23 @@ def apply_interview_levels(passport: dict[str, Any], rows: list[dict[str, Any]])
             adjusted["role_match"] = match_role(adjusted["skills"], role, adjusted.get("coverage"))
         except ValueError:
             pass  # a role that no longer exists keeps its stored match
+        else:
+            _explain_interview_moves(adjusted["role_match"], skills)
     adjusted["interview_adjustments"] = changes
     return adjusted
+
+
+def _explain_interview_moves(role_match: dict[str, Any], skills: dict[str, dict[str, Any]]) -> None:
+    """Say in each requirement's reason that an interview moved the level. A skill demoted to
+    Claimed still has verified evidence, so it reads as partial (citations kept), not "not found"."""
+    for requirement in role_match.get("requirements", []):
+        skill = skills.get(requirement["skill_id"]) or {}
+        record = skill.get("interview")
+        if not record or record["level"] == record["evidence_level"]:
+            continue
+        if requirement["status"] == "missing" and skill.get("evidence") and record["evidence_level"] != "Claimed":
+            requirement["status"] = "partial"
+            requirement["reason"] = f"Requires {requirement['min_level']}; found {record['level']}."
+        requirement["reason"] += (
+            f" Interview: {record['outcome_label']} moved it from {record['evidence_level']} to {record['level']}."
+        )

@@ -22,6 +22,14 @@ test("'with code evidence' counts only requirements met at Applied or Demonstrat
   assert.deepEqual(countRequirementsMet(skills, requirements), { met: 4, mustMet: 2, mustTotal: 3, codeMet: 2 });
 });
 
+test("a level raised by an interview meets the requirement but is not code evidence", () => {
+  const skills = [
+    { skill_id: "python", level: "Applied", evidence_level: "Used", evidence }, // dependency-only, raised by an interview
+    { skill_id: "sql", level: "Used", evidence_level: "Applied", evidence }, // code-backed, lowered by an interview
+  ];
+  assert.deepEqual(countRequirementsMet(skills, requirements), { met: 2, mustMet: 1, mustTotal: 3, codeMet: 1 });
+});
+
 test("Unverified skills and skills without evidence never count", () => {
   const skills = [
     { skill_id: "python", level: "Claimed", evidence: [] },

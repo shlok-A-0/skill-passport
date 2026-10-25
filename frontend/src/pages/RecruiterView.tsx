@@ -5,32 +5,16 @@ import { api, NOT_FOUND_TOOLTIP, skillLabel, type Passport, type PassportSkill, 
 import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import InterviewWorkspace from "../components/InterviewWorkspace";
-import LadderPill from "../components/LadderPill";
 import ReportsPanel from "../components/ReportsPanel";
 import SectionTabs from "../components/SectionTabs";
 import SqlDepthPanel from "../components/SqlDepthPanel";
 import SkillDepthPanel from "../components/SkillDepthPanel";
-import { adjustmentLabel } from "../interview";
+import SkillLevel from "../components/SkillLevel";
 import { GROWTH_UNAVAILABLE, growthUnavailable, KIT_UNAVAILABLE, kitUnavailable } from "../passportNotes";
 import { earlierSourcesText, notWrittenText, verifiability } from "../verifiability";
 import { skillName } from "../skillNames";
 
 const levelRank: Record<PassportSkill["level"], number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
-
-/** The level as shown, plus how a recorded interview outcome moved it. */
-function SkillLevel({ skill }: { skill: PassportSkill }) {
-  return (
-    <span className="skill-level">
-      <LadderPill level={skill.level} />
-      {skill.interview && (
-        <span className={`interview-tag interview-${skill.interview.outcome}`}
-          title={`${skill.interview.outcome_label} in the interview (${skill.interview.questions} question${skill.interview.questions === 1 ? "" : "s"}, ${skill.interview.assessor_id}). Level from the code checks: ${skill.interview.evidence_level}.`}>
-          {adjustmentLabel(skill.interview)}
-        </span>
-      )}
-    </span>
-  );
-}
 
 /** The four questions for one requirement: support, attribution, uncertainty, what to ask next. */
 function PacketDetails({ packet, reason }: { packet: RequirementPacket; reason: string }) {
@@ -91,10 +75,15 @@ export default function RecruiterView() {
     return () => { loadVersion.current += 1; };
   }, [id]);
 
-  /** Reload in place after an interview outcome is saved: levels and the role match may have moved. */
+  /** Reload in place after an interview outcome is saved: levels and the role match may have moved.
+   * A save that finishes after switching candidates is ignored, so it can't cancel the new page's load. */
+  const currentId = useRef(id);
+  currentId.current = id;
   function refreshPassport() {
+    const forId = id;
+    if (forId !== currentId.current) return;
     const version = ++loadVersion.current;
-    api.reviewPassport(id)
+    api.reviewPassport(forId)
       .then((data) => { if (version === loadVersion.current) setPassport(data); })
       .catch((reason: Error) => { if (version === loadVersion.current) setError(reason.message); });
   }

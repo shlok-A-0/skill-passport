@@ -81,6 +81,22 @@ def test_role_match_follows_the_adjusted_levels() -> None:
     assert adjusted["role_match"]["met"] == passport["role_match"]["met"] - 1
 
 
+def test_a_demotion_to_claimed_keeps_the_verified_citations_visible() -> None:
+    from app.services.packets import requirement_packets
+    from app.services.role_match import match_role
+    passport = _passport()
+    passport["skills"].append({"skill_id": "sql", "level": "Applied", "evidence": [
+        {"type": "code", "repo": "api", "file_path": "db.py", "start_line": 3, "end_line": 4, "url": "https://x/db.py#L3-L4",
+         "checks": {"file_exists": True}}]})
+    passport["role_match"] = match_role(passport["skills"], "backend-intern")
+    adjusted = apply_interview_levels(passport, [_row("sql", "could_not_explain")])
+    sql = next(r for r in adjusted["role_match"]["requirements"] if r["skill_id"] == "sql")
+    assert sql["student_level"] == "Claimed" and sql["status"] == "partial"  # not "No evidence found"
+    assert "Interview: Couldn't explain moved it from Applied to Claimed." in sql["reason"]
+    packet = next(p for p in requirement_packets(adjusted) if p["skill_id"] == "sql")
+    assert packet["support"] and packet["support"][0]["file_path"] == "db.py"
+
+
 def test_no_outcomes_returns_the_passport_unchanged() -> None:
     passport = _passport()
     assert apply_interview_levels(passport, []) is passport
