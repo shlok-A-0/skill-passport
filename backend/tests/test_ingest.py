@@ -492,3 +492,21 @@ def test_repository_listing_reports_page_limit_without_enough_eligible_repos(mon
     assert truncated is True
     coverage = build_coverage({"repos": [], "repo_listing_truncated": truncated})
     assert any("scan limit" in note for note in coverage["notes"])
+
+
+def test_cache_written_for_superset_targets_does_not_serve_subset_request(fake_github: FakeGitHub) -> None:
+    """Exact target-set matching: the extended fetch is not monotonic in the
+    target set (see test_extend_selection.test_extension_is_not_monotonic_in_targets_file_cap),
+    so a cached superset read must NOT serve a narrower request."""
+    fake_github.add_repo("web", {
+        "app.py": "from flask import Flask\napp = Flask(__name__)\n",
+        "models.py": "from django.db import models\nclass X(models.Model): pass\n",
+    }, authored={"app.py", "models.py"})
+    github_ingest.ingest_github("student", target_skills=["flask", "django"])
+    calls_after_superset = len(fake_github.calls)
+
+    github_ingest.ingest_github("student", target_skills=["flask", "django"])
+    assert len(fake_github.calls) == calls_after_superset  # same targets: cache hit
+
+    github_ingest.ingest_github("student", target_skills=["flask"])
+    assert len(fake_github.calls) > calls_after_superset  # subset: must refetch

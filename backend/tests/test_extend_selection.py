@@ -147,9 +147,32 @@ def test_extension_spend_never_exceeds_remaining_budget():
     assert fetch_count <= MAX_SOURCE_FETCHES
 
 
-def test_cache_superset_rule_documented():
-    """A cache entry serves requests whose targets it covers (superset reads
-    more, so it is safe); a narrower entry does not serve a wider request."""
-    requested = ["flask"]
-    assert set(requested) <= set(["flask", "django"])
-    assert not set(["flask", "django"]) <= set(requested)
+def test_extension_is_not_monotonic_in_targets_file_cap():
+    """Why the ingest cache requires exact target-set matching (no superset
+    reuse): the extension is not monotonic in the target set. With several
+    uncovered targets, evidence files for the wider set consume the
+    EXTEND_MAX_EXTRA_FILES cap first, so a superset read can miss a target a
+    narrower read would find."""
+    candidates = ["f1.py", "f2.py", "f3.py", "f4.py", "f5.py"]
+    sizes = {path: 100 for path in candidates}
+    contents = {
+        "f1.py": "from flask import Flask\nfrom fastapi import FastAPI",
+        "f2.py": "from django.db import models\nclass X(models.Model): pass",
+        "f3.py": "from 'react'\nconst x = 1",
+        "f4.py": "print('noise')",
+        "f5.py": "import docker\ndocker.from_env()",
+    }
+
+    def fetch(path):
+        return contents[path]
+
+    superset = _extend_selection_for_targets(
+        {}, candidates, sizes, fetch,
+        ["flask", "fastapi", "django", "react", "docker"], {}, {},
+        max_extra_fetches=5,
+    )
+    assert "f5.py" not in superset  # 3-file cap consumed by the wider set's evidence
+    narrow = _extend_selection_for_targets(
+        {}, candidates, sizes, fetch, ["docker"], {}, {}, max_extra_fetches=5,
+    )
+    assert "f5.py" in narrow

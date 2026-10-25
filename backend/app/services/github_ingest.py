@@ -943,10 +943,12 @@ def ingest_github(
                     fresh
                     and cached.get("schema_version") == CACHE_SCHEMA_VERSION
                     and isinstance(cached.get("data"), dict)
-                    # A cache entry serves a request whose targets it covers: an
-                    # entry written for a superset read at least everything the
-                    # narrower request would (avoids target-set cache ping-pong).
-                    and set(requested_targets) <= set(cached.get("target_skills", []))
+                    # A cache entry only serves a request for the same target set:
+                    # the extended fetch reads different files for different
+                    # targets, and it is NOT monotonic - a superset read can miss
+                    # a target a narrower read would find (EXTEND_MAX_EXTRA_FILES
+                    # is consumed by evidence for the wider set first).
+                    and cached.get("target_skills", []) == requested_targets
                 ):
                     return cached["data"]
             cache_path.unlink(missing_ok=True)
