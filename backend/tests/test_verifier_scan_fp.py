@@ -16,7 +16,8 @@ import pytest
 
 from app.services.verifier import _signature_code_evidence
 
-_SKILLS = {s["name"]: s for s in json.loads(Path("app/data/skills.json").read_text())}
+_SKILLS_PATH = Path(__file__).resolve().parents[1] / "app" / "data" / "skills.json"
+_SKILLS = {s["name"]: s for s in json.loads(_SKILLS_PATH.read_text(encoding="utf-8"))}
 
 
 def _scan(skill_name: str, files: dict[str, list[str]]):
