@@ -11,6 +11,22 @@ function capitalize(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
+/** Slim proportion bar with a plain-text legend; counts stay visible, no badges. */
+function ProportionBar({ label, entries }: { label: string; entries: [string, number][] }) {
+  const total = entries.reduce((sum, [, count]) => sum + count, 0) || 1;
+  return (
+    <div className="cp-bar-block">
+      <span className="cp-bar-label">{label}</span>
+      <span className="cp-bar" role="img" aria-label={entries.map(([name, count]) => `${name} ${count}`).join(", ")}>
+        {entries.map(([name, count], index) => (
+          <i key={name} className={`cp-seg cp-seg-${index}`} style={{ width: `${(count / total) * 100}%` }} />
+        ))}
+      </span>
+      <span className="cp-bar-legend">{entries.map(([name, count]) => `${name} ${count}`).join(" · ")}</span>
+    </div>
+  );
+}
+
 /**
  * Codeforces section, a separate competitive-programming axis that never feeds
  * skill levels, role match or coverage. Renders nothing for passports built
@@ -32,7 +48,6 @@ export default function CompetitiveProgrammingPanel({ result }: {
     <section className="panel cp-panel">
       <div className="panel-heading">
         <div><div className="eyebrow">COMPETITIVE PROGRAMMING</div><h2><Trophy size={16} /> {result.handle}</h2></div>
-        <span className="count-tag">separate axis</span>
       </div>
 
       {result.error === "not_found" && (
@@ -64,10 +79,10 @@ export default function CompetitiveProgrammingPanel({ result }: {
             </div>
           </div>
           {result.top_tags && result.top_tags.length > 0 && (
-            <span className="cp-chips">{result.top_tags.map(([tag, count]) => <span className="count-tag" key={tag}>{tag} · {count}</span>)}</span>
+            <ProportionBar label="Top topics" entries={result.top_tags.slice(0, 5)} />
           )}
           {result.languages && result.languages.length > 0 && (
-            <span className="cp-chips">{result.languages.map(([language, count]) => <span className="count-tag" key={language}>{language} · {count}</span>)}</span>
+            <ProportionBar label="Languages" entries={result.languages.slice(0, 3)} />
           )}
         </>
       )}

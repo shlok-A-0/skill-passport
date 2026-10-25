@@ -930,6 +930,15 @@ a.row:hover .row-name { text-decoration: underline; text-underline-offset: 3px; 
 .cp-panel .cp-rating { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 2px; }
 .cp-panel .cp-rating b { font-family: var(--font-mono); font-size: 30px; font-weight: 600; letter-spacing: -0.5px; color: var(--ink); }
 .cp-panel .cp-rating span { font-size: 12px; color: var(--muted); }
-.cp-panel .cp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cp-panel .cp-bar-block { margin-top: 12px; }
+.cp-panel .cp-bar-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.cp-panel .cp-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-soft); }
+.cp-panel .cp-seg { display: block; }
+.cp-panel .cp-seg-0 { background: #7ce7b4; }
+.cp-panel .cp-seg-1 { background: rgba(124, 231, 180, .45); }
+.cp-panel .cp-seg-2 { background: #8b8b93; }
+.cp-panel .cp-seg-3 { background: #55555c; }
+.cp-panel .cp-seg-4 { background: #37373d; }
+.cp-panel .cp-bar-legend { display: block; margin-top: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .cp-panel .cp-meta { margin: 10px 0 0; font-size: 11px; }
 .cp-panel .unavailable-note { display: flex; align-items: center; gap: 5px; }
