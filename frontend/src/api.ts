@@ -163,6 +163,21 @@ export type PassportSkill = {
   certified: boolean;
   evidence: Evidence[];
   resume_mention?: string | null;
+  /** Review endpoints, when interview outcomes moved the level: the level from the code checks. */
+  evidence_level?: string;
+  interview?: InterviewAdjustment;
+};
+
+/** How recorded interview outcomes moved one skill's level (recruiter views only). */
+export type InterviewAdjustment = {
+  outcome: InterviewOutcome;
+  outcome_label: string;
+  steps: number;
+  evidence_level: string;
+  level: string;
+  assessed_at: string;
+  assessor_id: string;
+  questions: number;
 };
 
 export type Passport = {
@@ -201,6 +216,9 @@ export type Passport = {
     questions: { q: string; good_answer_mentions?: string }[];
   }[];
   is_demo: boolean;
+  /** Review endpoints: skills whose level interview outcomes moved, and the evidence-only match. */
+  interview_adjustments?: (InterviewAdjustment & { skill_id: string; name: string })[];
+  evidence_role_match?: Passport["role_match"];
   level_changes?: { skill_id: string; from: string; to: string }[];
   updated_at?: string;
   generation_warning?: string | null;
@@ -224,7 +242,7 @@ export type Passport = {
   skill_depth?: Record<string, SkillDepth | null>;
   /** The Codeforces handle supplied at create time (re-check reuses it), if any. */
   codeforces_handle?: string | null;
-  /** Absent on passports built before the feature; null when no handle was supplied. */
+  /** Separate competitive-programming record; never affects skill levels or role matching. */
   competitive_programming?: CompetitiveProgramming | null;
 };
 
@@ -357,19 +375,15 @@ export type ProjectReport = {
   repo_links: { owner: string; repo: string; url: string; status: "own" | "other_account" }[];
   error?: string;
 };
+export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
-/** Competitive-programming record from the Codeforces public API. A separate axis:
- * it never feeds skill levels, role match or coverage. `ownership` is always
- * "unverified" (a typed handle proves nothing). Stats are computed over the
- * `submission_sample` most recent submissions, not lifetime history. */
+/** Public Codeforces profile and sampled submission data, clearly separate from verified skills. */
 export type CompetitiveProgramming = {
   handle: string;
   ownership: "unverified";
   data_source: "codeforces_public_api";
   fetched_at: string;
-  /** Present only when a refresh failed and this is retained prior data. */
   stale?: boolean;
-  /** Present only on failure payloads; stats are absent then. */
   error?: "not_found" | "unavailable";
   profile?: {
     rating: number | null;
@@ -381,17 +395,13 @@ export type CompetitiveProgramming = {
   };
   rated_contests?: number;
   last_rated_contest_at?: string | null;
-  /** Requested sample size (up to 200 most recent submissions). */
   submission_sample?: number;
-  /** Submissions actually returned and examined; label stats with this count. */
   submissions_examined?: number;
   solved_count?: number;
   solved_max_problem_rating?: number | null;
   top_tags?: [string, number][];
   languages?: [string, number][];
 };
-
-export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */
 export type OwnershipChallenge = {

@@ -1,7 +1,8 @@
 /**
  * Requirement matching for the Placement Cell. No imports, so `node --test` can load it directly.
  */
-export type SkillLike = { skill_id: string; level: string; evidence: unknown[] };
+/** `evidence_level` is set when an interview outcome moved `level` (review endpoints). */
+export type SkillLike = { skill_id: string; level: string; evidence: unknown[]; evidence_level?: string };
 export type RequirementLike = { skill_id: string; min_level: string; importance: string };
 
 const LEVEL_ORDER: Record<string, number> = { Claimed: 0, Used: 1, Applied: 2, Demonstrated: 3 };
@@ -15,13 +16,17 @@ function metBy(skills: SkillLike[], requirement: RequirementLike): SkillLike | u
   return met ? skill : undefined;
 }
 
-/** Requirements met; `codeMet` counts only those met with code evidence (Applied or Demonstrated). */
+/** Requirements met; `codeMet` counts only those met with code evidence (Applied or Demonstrated
+ * from the code checks: a level raised by an interview outcome is not code evidence). */
 export function countRequirementsMet(skills: SkillLike[], requirements: RequirementLike[]) {
   const met = requirements.filter((requirement) => metBy(skills, requirement));
   return {
     met: met.length,
     mustMet: met.filter((item) => item.importance === "must").length,
     mustTotal: requirements.filter((item) => item.importance === "must").length,
-    codeMet: met.filter((item) => CODE_LEVELS.has(metBy(skills, item)!.level)).length,
+    codeMet: met.filter((item) => {
+      const skill = metBy(skills, item)!;
+      return CODE_LEVELS.has(skill.evidence_level ?? skill.level);
+    }).length,
   };
 }

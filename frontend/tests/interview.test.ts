@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { anchorLines, defaultSessionId, sessionLabel } from "../src/interview.ts";
+import { adjustmentLabel, anchorLines, defaultSessionId, sessionLabel } from "../src/interview.ts";
+
+const adjustment = (outcome: string, steps: number, evidence_level: string, level: string) =>
+  ({ outcome, outcome_label: outcome, steps, evidence_level, level } as never);
+
+test("interview tags show the actual move after caps, and the evidence level", () => {
+  assert.equal(adjustmentLabel(adjustment("Partly explained", -1, "Demonstrated", "Applied")), "Interview −1 · evidence: Demonstrated");
+  assert.equal(adjustmentLabel(adjustment("Explained well", 1, "Used", "Applied")), "Interview +1 · evidence: Used");
+  // Couldn't explain is -2, but Used can only drop one step to Claimed.
+  assert.equal(adjustmentLabel(adjustment("Couldn't explain", -2, "Used", "Claimed")), "Interview −1 · evidence: Used");
+  // Capped with no move (already Demonstrated): the outcome is still shown.
+  assert.equal(adjustmentLabel(adjustment("Explained well", 1, "Demonstrated", "Demonstrated")), "Interview: Explained well");
+});
 
 const anchor = {
   snippet: "def a():\n    b()\n    return c",

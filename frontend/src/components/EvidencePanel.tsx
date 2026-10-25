@@ -1,8 +1,8 @@
 import { AlertTriangle, Check, CircleHelp, ExternalLink, FileCode2, FlaskConical, X } from "lucide-react";
 import { DEFAULT_CHECK_LABELS, skillLabel, type Evidence, type PassportSkill } from "../api";
 import { showsNotCountedNote } from "../evidencePanel";
-import LadderPill from "./LadderPill";
 import type { Audience } from "./RejectedClaims";
+import SkillLevel from "./SkillLevel";
 
 const GIT_HISTORY = "(commit history)";
 const CODE_CHECKS = ["file_exists", "lines_valid", "authored", "not_fork", "signature_found"];
@@ -38,7 +38,7 @@ export default function EvidencePanel({ skill, audience, labels }: {
         <div>
           <h2>{skillLabel(skill)}</h2>
         </div>
-        <LadderPill level={skill.level} />
+        <SkillLevel skill={skill} />
       </div>
       {skill.certified && <span className="certified-tag">Certificate mention · does not raise the level</span>}
       {skill.evidence.length === 0 ? (

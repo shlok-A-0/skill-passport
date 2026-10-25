@@ -74,7 +74,15 @@ On a recruiter view, **Interview kit** (header button, or scroll down) shows the
 2. **Show answer guidance** reveals the points a good answer covers. A modification question may include a five-minute code-change task; nothing is run on the server.
 3. Record **Explained well / Partly explained / Couldn't explain** and an optional note per question. The summary ("Interview check: 3 of 5 questions explained well · 1 not yet assessed") is computed from the saved outcomes.
 
-Sets are saved: reopening the page never generates new questions, and **Generate another set** starts a separate one. Each recruiter sees only their own sets. Outcomes are observations: they never change levels, role match or depth scores. After a Re-check, questions about citations that changed are marked outdated.
+Sets are saved: reopening the page never generates new questions, and **Generate another set** starts a separate one. Each recruiter sees only their own sets. After a Re-check, questions about citations that changed are marked outdated.
+
+**Outcomes move levels on recruiter pages.**
+
+- **Steps:** Explained well **+1**, Partly explained **−1**, Couldn't explain **−2**.
+- **Which answer counts:** each skill takes its worst answer in the newest interview set that assessed it, from any recruiter.
+- **Limits:** levels stay between Unverified and Demonstrated (Unit Testing: Applied). A skill with no counted evidence never rises above Unverified.
+- **Where it shows:** the role match, the Placement Cell ranking and the requirement rows use the adjusted level. Each moved level is tagged, e.g. "Interview −1 · evidence: Applied", and the header also shows the match from evidence alone when it differs.
+- **Unchanged:** the student passport, the downloadable credential and the stored evidence keep the level from the code checks. Changing an outcome recalculates immediately.
 
 ## Regenerate all passports
 

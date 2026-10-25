@@ -561,7 +561,7 @@ def test_questions_are_flagged_stale_after_the_passport_changes(client, monkeypa
 
 # --- Assessments ---------------------------------------------------------------------------------------
 
-def test_outcomes_notes_and_summary_persist_without_touching_evidence(client, monkeypatch) -> None:
+def test_outcomes_notes_and_summary_persist_and_adjust_recruiter_levels(client, monkeypatch) -> None:
     fake_gemini(monkeypatch, [valid_reply()])
     alice = _login(client, ALICE)
     session = _create(client, alice).json()
@@ -589,11 +589,39 @@ def test_outcomes_notes_and_summary_persist_without_touching_evidence(client, mo
     assert reopened["summary"]["explained_well"] == 2 and reopened["summary"]["could_not_explain"] == 0
     assert reopened["questions"][0]["assessment"]["note"] == "note explained_well"
 
-    # Evidence, levels and role match are untouched.
+    # The stored passport and the student view keep the evidence-only levels...
     assert storage.get_passport("p-int") == before
+    student = client.get("/passport/p-int").json()
+    assert {s["skill_id"]: s["level"] for s in student["skills"]} == {s["skill_id"]: s["level"] for s in before["skills"]}
+    assert "interview_adjustments" not in student and "evidence_level" not in student["skills"][0]
+    # ...while recruiter views show interview-adjusted levels: the worst answer per skill counts.
     review_after = client.get("/passport/p-int/review", headers=alice).json()
-    for field in ("skills", "role_match", "requirement_packets", "rejected_claims"):
-        assert review_after[field] == review_before[field]
+    levels = {s["skill_id"]: (s.get("evidence_level"), s["level"]) for s in review_after["skills"]}
+    assert levels["flask"] == ("Applied", "Used")  # explained well + partly explained -> -1
+    assert levels["sql"] == ("Applied", "Demonstrated")  # changed to explained well -> +1
+    # Role match is recomputed from the adjusted levels (the real backend-intern role).
+    sql = next(r for r in review_after["role_match"]["requirements"] if r["skill_id"] == "sql")
+    assert (sql["student_level"], sql["status"]) == ("Demonstrated", "met")
+    assert review_after["evidence_role_match"] == review_before["role_match"]
+    assert review_after["rejected_claims"] == review_before["rejected_claims"]
+
+
+def test_placement_list_uses_adjusted_levels_and_the_badge_stays_evidence_only(client, monkeypatch) -> None:
+    fake_gemini(monkeypatch, [valid_reply()])
+    alice, bob = _login(client, ALICE), _login(client, BOB)
+    session = _create(client, alice).json()
+    badge_before = client.get("/passport/p-int/badge").json()
+    python_question = next(q for q in session["questions"] if q["skill_id"] == "python")
+    client.put(f"/interview-sessions/{session['id']}/questions/{python_question['id']}/assessment",
+               headers=alice, json={"outcome": "could_not_explain"})
+    # The adjustment belongs to the passport: every recruiter's view shows it, including the Placement Cell list.
+    for headers in (alice, bob):
+        item = next(i for i in client.get("/passports/review", headers=headers).json()["items"] if i["id"] == "p-int")
+        python = next(s for s in item["skills"] if s["skill_id"] == "python")
+        assert (python["evidence_level"], python["level"]) == ("Demonstrated", "Used")
+        # backend-intern needs Python at Applied: the must-have is now partial.
+        assert next(r for r in item["role_match"]["requirements"] if r["skill_id"] == "python")["status"] == "partial"
+    assert client.get("/passport/p-int/badge").json() == badge_before
 
 
 def test_assessment_input_is_validated(client, monkeypatch) -> None:
