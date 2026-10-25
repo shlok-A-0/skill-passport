@@ -211,7 +211,7 @@ def initialize_storage() -> None:
             """
         )
         # Private recruiter interview sessions. Kept out of the passport payload, so no student
-        # endpoint can return them. Outcomes are human observations and never change evidence.
+        # endpoint can return them. Outcomes adjust levels on recruiter views only (interview_levels.py).
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS interview_sessions (
@@ -1056,3 +1056,30 @@ def save_interview_assessment(
             assessment,
         )
     return assessment
+
+
+def list_interview_outcomes(passport_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Saved outcomes of ready interview sets (any recruiter), per passport, newest set first.
+    Each row carries the question's skill, so levels can be adjusted per skill."""
+    if not passport_ids:
+        return {}
+    initialize_storage()
+    placeholders = ",".join("?" for _ in passport_ids)
+    with _connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT sessions.passport_id, sessions.id AS session_id, sessions.created_at AS session_created_at,
+                   questions.skill_id, questions.question_type,
+                   assessments.outcome, assessments.assessed_at, assessments.assessor_id
+            FROM interview_assessments AS assessments
+            JOIN interview_questions AS questions ON questions.id = assessments.question_id
+            JOIN interview_sessions AS sessions ON sessions.id = assessments.session_id
+            WHERE sessions.passport_id IN ({placeholders}) AND sessions.status = 'ready'
+            ORDER BY sessions.created_at DESC, sessions.id, assessments.assessed_at DESC
+            """,
+            passport_ids,
+        ).fetchall()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(row["passport_id"], []).append(dict(row))
+    return grouped

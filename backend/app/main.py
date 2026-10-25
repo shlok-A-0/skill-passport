@@ -46,6 +46,7 @@ from app.services.badge import create_badge
 from app.services.framework import get_roles, get_skills
 from app.services.github_ingest import validate_github_username
 from app.services.identity import OwnershipError, create_challenge, verify_challenge
+from app.services.interview_levels import apply_interview_levels
 from app.services.interview_sessions import (
     OUTCOMES,
     InterviewGenerationError,
@@ -84,6 +85,7 @@ from app.services.storage import (
     get_passport_owner_token_hash,
     get_recruiter_session,
     get_review_requests_by_passports,
+    list_interview_outcomes,
     list_interview_sessions,
     list_passports_page,
     list_latest_passports_page,
@@ -407,7 +409,9 @@ def _excluded_keys(passport: dict[str, Any]) -> set[str]:
 
 
 def review_view(passport: dict[str, Any]) -> dict[str, Any]:
-    """The full passport for recruiters, with the student's review requests."""
+    """The full passport for recruiters, with the student's review requests and levels adjusted
+    by recorded interview outcomes (the stored passport keeps evidence-only levels)."""
+    passport = apply_interview_levels(passport, list_interview_outcomes([passport["id"]]).get(passport["id"], []))
     return {
         **_without_disabled_features(passport),
         "check_labels": CHECK_LABELS,
@@ -893,6 +897,8 @@ def passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)
 def review_passports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict:
     items, total = list_latest_passports_page(limit, offset)
     all_requests = get_review_requests_by_passports([item["id"] for item in items])
+    outcomes = list_interview_outcomes([item["id"] for item in items])
+    items = [apply_interview_levels(item, outcomes.get(item["id"], [])) for item in items]
     return {
         "items": [
             {
@@ -1147,7 +1153,8 @@ def assess_interview_question(
     body: AssessmentBody,
     recruiter_id: str = Depends(require_recruiter),
 ) -> dict:
-    """Record a human observation. Never changes levels, role match, depth scores or verification."""
+    """Record a recruiter's observation. Recruiter views adjust the skill's level from it on read
+    (interview_levels.py); the stored passport, verification and depth scores are unchanged."""
     session = _owned_session(session_id, recruiter_id)
     if session["status"] != "ready":
         raise HTTPException(status_code=409, detail="Only a ready interview set can be assessed.")

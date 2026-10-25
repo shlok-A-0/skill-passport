@@ -163,6 +163,21 @@ export type PassportSkill = {
   certified: boolean;
   evidence: Evidence[];
   resume_mention?: string | null;
+  /** Review endpoints, when interview outcomes moved the level: the level from the code checks. */
+  evidence_level?: string;
+  interview?: InterviewAdjustment;
+};
+
+/** How recorded interview outcomes moved one skill's level (recruiter views only). */
+export type InterviewAdjustment = {
+  outcome: InterviewOutcome;
+  outcome_label: string;
+  steps: number;
+  evidence_level: string;
+  level: string;
+  assessed_at: string;
+  assessor_id: string;
+  questions: number;
 };
 
 export type Passport = {
@@ -201,6 +216,9 @@ export type Passport = {
     questions: { q: string; good_answer_mentions?: string }[];
   }[];
   is_demo: boolean;
+  /** Review endpoints: skills whose level interview outcomes moved, and the evidence-only match. */
+  interview_adjustments?: (InterviewAdjustment & { skill_id: string; name: string })[];
+  evidence_role_match?: Passport["role_match"];
   level_changes?: { skill_id: string; from: string; to: string }[];
   updated_at?: string;
   generation_warning?: string | null;

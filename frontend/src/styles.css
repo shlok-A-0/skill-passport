@@ -1765,3 +1765,11 @@ button.req-main { display: block; width: 100%; border: 0; background: none; padd
 
 .inline-disclosure { display: inline-block; margin-left: 4px; font-size: 10px; color: var(--ink-soft); }
 .inline-disclosure summary { cursor: pointer; color: var(--accent); display: inline; text-decoration: underline; font-weight: 600; }
+
+/* Interview-adjusted levels (recruiter views) */
+.skill-level { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.interview-tag { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 7px; font-size: 9px; font-weight: 700; white-space: nowrap; cursor: help; }
+.interview-explained_well { background: var(--success-soft); color: var(--success); }
+.interview-partly_explained { background: var(--warning-soft); color: var(--warning); }
+.interview-could_not_explain { background: var(--danger-soft); color: var(--danger); }
+.match-evidence { display: block; width: 100%; color: var(--muted); font-size: 9px; }
