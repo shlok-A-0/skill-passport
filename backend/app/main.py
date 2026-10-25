@@ -66,6 +66,7 @@ from app.services.jobs import (
 )
 from app.services.json_cache import prune_json_cache
 from app.services.packets import requirement_packets
+from app.services.codeforces_ingest import validate_codeforces_handle
 from app.services.pipeline import ensure_depth_analyzers, run_passport_job, run_recheck_job
 from app.services.report_parse import MAX_REPORTS, safe_filename, validate_portfolio_url
 from app.services.sql_depth import student_sql_depth
@@ -667,6 +668,7 @@ async def create_passport(
     ownership_challenge_id: str | None = Form(default=None),
     reports: list[UploadFile] | None = File(default=None),
     portfolio_url: str | None = Form(default=None),
+    codeforces_handle: str | None = Form(default=None),
 ) -> dict[str, str]:
     try:
         github_username = validate_github_username(github_username)
@@ -698,6 +700,13 @@ async def create_passport(
         portfolio_url = validate_portfolio_url(portfolio_url)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if codeforces_handle:
+        try:
+            codeforces_handle = validate_codeforces_handle(codeforces_handle)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        codeforces_handle = None
 
     # Atomic job slot reservation before accepting large file bodies
     candidate_key = github_username.strip().lower()
@@ -790,6 +799,7 @@ async def create_passport(
         is_demo,
         report_files=report_files,
         portfolio_url=portfolio_url,
+        codeforces_handle=codeforces_handle,
     )
     return {"job_id": job_id, "access_token": access_token}
 

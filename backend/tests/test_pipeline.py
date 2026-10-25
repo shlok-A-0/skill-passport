@@ -70,7 +70,7 @@ def test_legacy_depth_backfill_uses_only_the_saved_repository_revision(monkeypat
     monkeypatch.setattr(
         pipeline,
         "ingest_github",
-        lambda username, force_refresh=False: calls.append((username, force_refresh)) or ingested,
+        lambda username, force_refresh=False, target_skills=None: calls.append((username, force_refresh)) or ingested,
     )
     analyzed = []
     monkeypatch.setattr(
@@ -121,7 +121,7 @@ def test_recheck_refreshes_ingestion_without_treating_passport_as_job(monkeypatc
     monkeypatch.setattr(
         pipeline,
         "ingest_github",
-        lambda username, force_refresh=False: calls.update(
+        lambda username, force_refresh=False, target_skills=None: calls.update(
             username=username, force_refresh=force_refresh
         ) or {"username": "MiXeDCase", "repo_count": 1, "repos": []},
     )
@@ -199,7 +199,7 @@ def _stub_pipeline(monkeypatch, existing, new_skills, growth=None):
     monkeypatch.setattr(pipeline, "get_passport", lambda _: existing)
     monkeypatch.setattr(
         pipeline, "ingest_github",
-        lambda username, force_refresh=False: {"username": username, "repo_count": 1, "repos": []},
+        lambda username, force_refresh=False, target_skills=None: {"username": username, "repo_count": 1, "repos": []},
     )
     monkeypatch.setattr(pipeline, "propose_claims", lambda *_: [])
     monkeypatch.setattr(
@@ -455,3 +455,87 @@ def test_gemini_connection_errors_are_retried_twice(monkeypatch) -> None:
     with pytest.raises(httpx.RemoteProtocolError):
         gemini.generate_json(client, "prompt")
     assert calls["n"] == 3
+
+
+def _stub_codeforces(monkeypatch, payload=None, error=None):
+    def fake_fetch(handle, force_refresh=False):
+        if error:
+            raise error
+        return payload or {
+            "handle": handle, "ownership": "unverified",
+            "data_source": "codeforces_public_api",
+            "profile": {"rating": 1500, "max_rating": 1600},
+            "rated_contests": 12, "solved_count": 340,
+        }
+    monkeypatch.setattr(pipeline, "fetch_codeforces", fake_fetch)
+
+
+def test_passport_stores_codeforces_as_separate_axis(monkeypatch) -> None:
+    saved = _stub_pipeline(monkeypatch, None, [])
+    _stub_codeforces(monkeypatch)
+    result = pipeline.build_passport(
+        github_username="student", target_role="backend-intern", resume_bytes=b"",
+        resume_skill_mentions=[], codeforces_handle="tourist",
+    )
+    assert result["codeforces_handle"] == "tourist"
+    competitive = result["competitive_programming"]
+    assert competitive["ownership"] == "unverified"
+    assert competitive["solved_count"] == 340
+    # Separate axis: no skill gains a level or evidence from Codeforces data.
+    assert result["skills"] == []
+
+
+def test_passport_without_handle_has_no_codeforces_section(monkeypatch) -> None:
+    _stub_pipeline(monkeypatch, None, [])
+    result = pipeline.build_passport(
+        github_username="student", target_role="backend-intern", resume_bytes=b"",
+        resume_skill_mentions=[],
+    )
+    assert result["codeforces_handle"] is None
+    assert result["competitive_programming"] is None
+
+
+def test_recheck_reuses_and_refreshes_stored_handle(monkeypatch) -> None:
+    existing = {
+        **EXISTING,
+        "codeforces_handle": "tourist",
+        "competitive_programming": {"handle": "tourist", "ownership": "unverified", "solved_count": 300},
+    }
+    _stub_pipeline(monkeypatch, existing, [])
+    seen = []
+
+    def fake_fetch(handle, force_refresh=False):
+        seen.append(handle)
+        return {"handle": handle, "ownership": "unverified", "solved_count": 345}
+
+    monkeypatch.setattr(pipeline, "fetch_codeforces", fake_fetch)
+    result = _recheck()
+    assert seen == ["tourist"]
+    assert result["competitive_programming"]["solved_count"] == 345
+
+
+def test_unknown_codeforces_handle_is_recorded_not_fatal(monkeypatch) -> None:
+    from app.services.codeforces_ingest import CodeforcesUserNotFoundError
+
+    _stub_pipeline(monkeypatch, None, [])
+    _stub_codeforces(monkeypatch, error=CodeforcesUserNotFoundError("nope"))
+    result = pipeline.build_passport(
+        github_username="student", target_role="backend-intern", resume_bytes=b"",
+        resume_skill_mentions=[], codeforces_handle="no-such-user",
+    )
+    assert result["competitive_programming"]["error"] == "not_found"
+    assert result["competitive_programming"]["ownership"] == "unverified"
+
+
+def test_codeforces_platform_failure_keeps_prior_data(monkeypatch) -> None:
+    from app.services.codeforces_ingest import CodeforcesIngestError
+
+    existing = {
+        **EXISTING,
+        "codeforces_handle": "tourist",
+        "competitive_programming": {"handle": "tourist", "ownership": "unverified", "solved_count": 300},
+    }
+    _stub_pipeline(monkeypatch, existing, [])
+    _stub_codeforces(monkeypatch, error=CodeforcesIngestError("HTTP 503"))
+    result = _recheck()
+    assert result["competitive_programming"]["solved_count"] == 300

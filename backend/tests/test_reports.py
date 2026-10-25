@@ -201,7 +201,7 @@ def test_portfolio_url_validation() -> None:
 def _stub_pipeline(monkeypatch, existing, skills):
     saved: list[dict] = []
     monkeypatch.setattr(pipeline, "get_passport", lambda _: existing)
-    monkeypatch.setattr(pipeline, "ingest_github", lambda username, force_refresh=False: {"username": "Student-Dev", "repo_count": 1, "repos": []})
+    monkeypatch.setattr(pipeline, "ingest_github", lambda username, force_refresh=False, target_skills=None: {"username": "Student-Dev", "repo_count": 1, "repos": []})
     monkeypatch.setattr(pipeline, "propose_claims", lambda *_: [])
     monkeypatch.setattr(pipeline, "verify_claims", lambda *_a, **_k: {"skills": skills, "rejected_claims": []})
     monkeypatch.setattr(pipeline, "add_copy_signals", lambda *_a, **_k: None)

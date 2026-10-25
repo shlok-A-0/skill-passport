@@ -645,7 +645,7 @@ def test_build_passport_stores_the_custom_role_and_recheck_reuses_it(monkeypatch
                               "min_level": "Applied", "quote": "strong Python"}]}
     saved: list[dict] = []
     monkeypatch.setattr(pipeline, "get_passport", lambda _: None)
-    monkeypatch.setattr(pipeline, "ingest_github", lambda username, force_refresh=False: {"username": username, "repo_count": 0, "repos": []})
+    monkeypatch.setattr(pipeline, "ingest_github", lambda username, force_refresh=False, target_skills=None: {"username": username, "repo_count": 0, "repos": []})
     monkeypatch.setattr(pipeline, "propose_claims", lambda *_: [])
     monkeypatch.setattr(pipeline, "verify_claims", lambda *_a, **_k: {"skills": [
         {"skill_id": "python", "level": "Applied", "evidence": [{"type": "code"}]}], "rejected_claims": []})
