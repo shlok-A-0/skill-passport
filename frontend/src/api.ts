@@ -375,15 +375,19 @@ export type ProjectReport = {
   repo_links: { owner: string; repo: string; url: string; status: "own" | "other_account" }[];
   error?: string;
 };
-export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
-/** Public Codeforces profile and sampled submission data, clearly separate from verified skills. */
+/** Competitive-programming record from the Codeforces public API. A separate axis:
+ * it never feeds skill levels, role match or coverage. `ownership` is always
+ * "unverified" (a typed handle proves nothing). Stats are computed over the
+ * `submission_sample` most recent submissions, not lifetime history. */
 export type CompetitiveProgramming = {
   handle: string;
   ownership: "unverified";
   data_source: "codeforces_public_api";
   fetched_at: string;
+  /** Present only when a refresh failed and this is retained prior data. */
   stale?: boolean;
+  /** Present only on failure payloads; stats are absent then. */
   error?: "not_found" | "unavailable";
   profile?: {
     rating: number | null;
@@ -395,13 +399,17 @@ export type CompetitiveProgramming = {
   };
   rated_contests?: number;
   last_rated_contest_at?: string | null;
+  /** Requested sample size (up to 200 most recent submissions). */
   submission_sample?: number;
+  /** Submissions actually returned and examined; label stats with this count. */
   submissions_examined?: number;
   solved_count?: number;
   solved_max_problem_rating?: number | null;
   top_tags?: [string, number][];
   languages?: [string, number][];
 };
+
+export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */
 export type OwnershipChallenge = {
