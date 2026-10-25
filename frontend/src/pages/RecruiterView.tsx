@@ -6,6 +6,7 @@ import CoverageSummary from "../components/CoverageSummary";
 import IdentityChecks from "../components/IdentityChecks";
 import InterviewWorkspace from "../components/InterviewWorkspace";
 import LadderPill from "../components/LadderPill";
+import CompetitiveProgrammingPanel from "../components/CompetitiveProgrammingPanel";
 import ReportsPanel from "../components/ReportsPanel";
 import SectionTabs from "../components/SectionTabs";
 import SqlDepthPanel from "../components/SqlDepthPanel";
@@ -250,6 +251,7 @@ export default function RecruiterView() {
           <div className="section-columns">
             <div className="section-col"><SkillDepthPanel results={passport.skill_depth} /></div>
             <div className="section-col"><SqlDepthPanel result={passport.sql_depth} audience="recruiter" compact /></div>
+            <div className="section-col"><CompetitiveProgrammingPanel result={passport.competitive_programming} /></div>
           </div>
         </div>
       </div>

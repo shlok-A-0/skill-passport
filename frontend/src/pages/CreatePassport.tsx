@@ -58,6 +58,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
   const [skillDepthEnabled, setSkillDepthEnabled] = useState(false);
   const [reports, setReports] = useState<File[]>([]);
   const [portfolioUrl, setPortfolioUrl] = useState("");
+  const [cfHandle, setCfHandle] = useState("");
   const [jdTitle, setJdTitle] = useState("");
   const [jdText, setJdText] = useState("");
   const [extracted, setExtracted] = useState<CustomRole | null>(null);
@@ -186,6 +187,11 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
       setError("Upload your resume PDF before generating a passport.");
       return;
     }
+    const trimmedCfHandle = cfHandle.trim();
+    if (trimmedCfHandle && !/^[A-Za-z0-9_.-]{1,24}$/.test(trimmedCfHandle)) {
+      setError("Codeforces handles use 1-24 letters, digits, underscore, dot or hyphen.");
+      return;
+    }
     setSubmitting(true);
     const data = new FormData();
     data.append("github_username", username.trim());
@@ -196,6 +202,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
     certificates.forEach((file) => data.append("certificates", file));
     sentReports.forEach((file) => data.append("reports", file));
     if (sentPortfolio) data.append("portfolio_url", sentPortfolio);
+    if (trimmedCfHandle) data.append("codeforces_handle", trimmedCfHandle);
     try {
       const created = await api.createPassport(data);
       if (!demo) setChallenge(null); // each code works once
@@ -285,7 +292,7 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
             <small>PDF · Max 10 MB</small>
             <input type="file" accept="application/pdf,.pdf" onChange={(event) => { setResume(event.target.files?.[0] ?? null); setError(""); }} />
           </label>
-          <details className="optional-uploads"><summary>Optional: certificates, reports and portfolio</summary>
+          <details className="optional-uploads"><summary>Optional: Codeforces, certificates, reports and portfolio</summary>
           <label className="cert-upload">Certificates <span className="muted">optional · up to 5 PDFs or images · select multiple</span>
             <span className="file-field">
               <input type="file" className="file-input-hidden" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg" multiple disabled={certificates.length >= 5} onChange={(event) => {
@@ -307,6 +314,9 @@ export default function CreatePassport({ job, onJobChange, pollingPaused = false
               <button type="button" onClick={() => { setCertificates((current) => current.filter((_, itemIndex) => itemIndex !== index)); setError(""); }}>Remove</button>
             </li>)}
           </ul>}
+          <label className="cert-upload">Codeforces handle <span className="muted">optional · public contest data · shown separately, never raises a level · ownership not verified</span>
+            <input type="text" value={cfHandle} maxLength={24} placeholder="e.g. tourist" autoComplete="off" onChange={(event) => { setCfHandle(event.target.value); setError(""); }} />
+          </label>
           {reportsEnabled && (
             <>
               <label className="cert-upload">Project reports <span className="muted">optional · up to 3 PDFs or images · checked against your code, never raise a level</span>

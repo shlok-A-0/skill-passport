@@ -222,6 +222,10 @@ export type Passport = {
   sql_depth?: SqlDepth | null;
   /** Skill-specific, cited evidence summaries; never a proficiency estimate. */
   skill_depth?: Record<string, SkillDepth | null>;
+  /** The Codeforces handle supplied at create time (re-check reuses it), if any. */
+  codeforces_handle?: string | null;
+  /** Absent on passports built before the feature; null when no handle was supplied. */
+  competitive_programming?: CompetitiveProgramming | null;
 };
 
 export type SkillDepthEvidence = {
@@ -353,6 +357,40 @@ export type ProjectReport = {
   repo_links: { owner: string; repo: string; url: string; status: "own" | "other_account" }[];
   error?: string;
 };
+
+/** Competitive-programming record from the Codeforces public API. A separate axis:
+ * it never feeds skill levels, role match or coverage. `ownership` is always
+ * "unverified" (a typed handle proves nothing). Stats are computed over the
+ * `submission_sample` most recent submissions, not lifetime history. */
+export type CompetitiveProgramming = {
+  handle: string;
+  ownership: "unverified";
+  data_source: "codeforces_public_api";
+  fetched_at: string;
+  /** Present only when a refresh failed and this is retained prior data. */
+  stale?: boolean;
+  /** Present only on failure payloads; stats are absent then. */
+  error?: "not_found" | "unavailable";
+  profile?: {
+    rating: number | null;
+    max_rating: number | null;
+    rank: string | null;
+    max_rank: string | null;
+    contribution: number | null;
+    registered_at: string | null;
+  };
+  rated_contests?: number;
+  last_rated_contest_at?: string | null;
+  /** Requested sample size (up to 200 most recent submissions). */
+  submission_sample?: number;
+  /** Submissions actually returned and examined; label stats with this count. */
+  submissions_examined?: number;
+  solved_count?: number;
+  solved_max_problem_rating?: number | null;
+  top_tags?: [string, number][];
+  languages?: [string, number][];
+};
+
 export type Portfolio = { url: string; status: "own_github_pages" | "external_unverified" };
 
 /** A one-time code the applicant publishes as a public gist to show they control the account. */

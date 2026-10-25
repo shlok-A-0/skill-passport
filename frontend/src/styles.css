@@ -128,8 +128,8 @@ h2 { margin: 6px 0 0; font: 500 18px/1.2 var(--font-sans); letter-spacing: -.02e
 .input-wrap { height: 44px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--subtle); background: var(--ground); transition: border .16s ease, box-shadow .16s ease; }
 .input-wrap:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
 .input-wrap input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; }
-.create-form select, .cert-upload input[type="url"] { height: 43px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--ink-soft); background: var(--ground); }
-.create-form select:focus, .cert-upload input[type="url"]:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
+.create-form select, .cert-upload input[type="url"], .cert-upload input[type="text"] { height: 43px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 11px; color: var(--ink-soft); background: var(--ground); }
+.create-form select:focus, .cert-upload input[type="url"]:focus, .cert-upload input[type="text"]:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px rgba(250, 250, 250, .12); }
 .upload-box { min-height: 116px; border: 1px dashed var(--line-strong); border-radius: 10px; display: flex !important; flex-direction: column; justify-content: center; align-items: center; gap: 6px !important; background: var(--surface); cursor: pointer; transition: border .16s ease, background .16s ease; }
 .upload-box:hover { border-color: var(--subtle); background: var(--surface-soft); }
 .upload-box:focus-within { outline: 2px solid var(--ink); outline-offset: 3px; border-color: var(--ink); }
@@ -138,7 +138,7 @@ h2 { margin: 6px 0 0; font: 500 18px/1.2 var(--font-sans); letter-spacing: -.02e
 .upload-box small { color: var(--subtle); font-weight: 500; }
 .cert-upload { display: grid !important; gap: 8px !important; font-size: 13px; font-weight: 500; color: var(--ink); }
 .cert-upload .muted { font-size: 12px; font-weight: 400; }
-.cert-upload input[type="url"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.cert-upload input[type="url"], .cert-upload input[type="text"] { width: 100%; min-width: 0; box-sizing: border-box; }
 .file-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .file-input-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 .file-trigger { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
@@ -924,3 +924,12 @@ a.row:hover .row-name { text-decoration: underline; text-underline-offset: 3px; 
 .skill-logo-icon { color: var(--subtle); }
 .skill-logo-empty { width: 15px; height: 15px; flex: 0 0 auto; }
 .skill-name-text { min-width: 0; overflow-wrap: anywhere; }
+
+/* Competitive programming (Codeforces) - separate axis, reuses panel/snapshot conventions */
+.cp-panel h2 { display: flex; align-items: center; gap: 7px; }
+.cp-panel .cp-rating { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 2px; }
+.cp-panel .cp-rating b { font-family: var(--font-mono); font-size: 30px; font-weight: 600; letter-spacing: -0.5px; color: var(--ink); }
+.cp-panel .cp-rating span { font-size: 12px; color: var(--muted); }
+.cp-panel .cp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cp-panel .cp-meta { margin: 10px 0 0; font-size: 11px; }
+.cp-panel .unavailable-note { display: flex; align-items: center; gap: 5px; }
