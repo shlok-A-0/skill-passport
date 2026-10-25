@@ -26,7 +26,7 @@ QUOTE_CONTEXT_CHARS = 60
 CUSTOM_ROLE_PREFIX = "custom-"
 EXACT_ONLY_NOTE = "AI suggestions unavailable right now; showing requirements found by exact matching."
 logger = logging.getLogger(__name__)
-IMPORTANCE_WORDS = re.compile(r"\b(?:required|must|essential|strong)\b", re.IGNORECASE)
+IMPORTANCE_WORDS = re.compile(r"\b(?:require(?:d|s)?|must|essential|strong)\b", re.IGNORECASE)
 TESTING_WORDS = re.compile(r"\b(?:tests?|tested|testing|unit tests?|tdd|pytest|jest)\b", re.IGNORECASE)
 # A quote stays inside its sentence: ; ! ? always end one, "." only before whitespace or the
 # end (so "Node.js" and "Python 3.11" are not cut). Line breaks end it too (one bullet each).
@@ -121,6 +121,17 @@ def _heading_section(line: str) -> str | None | bool:
     stripped = line.strip()
     if not stripped or stripped[0] in "-*•·–":
         return False
+    if re.match(r"^\d+[.)]\s", stripped):
+        # Numbered list items ("1. Python") are content lines like bullets, not headings:
+        # they must not reset the section started by a heading such as "Requirements:".
+        return False
+    if ":" in stripped:
+        # An inline heading with content on the same line ("Requirements: Python, FastAPI")
+        # still starts its section; the skills after the colon are ranked within it.
+        key = " ".join(stripped.split(":", 1)[0].replace("’", "'").lower().split())
+        for section, phrases in HEADING_SECTIONS:
+            if any(key == phrase for phrase in phrases):
+                return section
     normalized = stripped.lstrip("#").strip().rstrip(":").strip()
     if (
         not normalized
@@ -162,12 +173,58 @@ def _sentence_spans(line: str):
         yield start, len(line)
 
 
+# Contexts in which an everyday-word skill ("react", "go") names a technology in a job
+# description even without its capitalised form. Each is deliberately narrow so ordinary
+# English ("react to feedback", "express yourself", "ready to go") still does not match.
+_COMMON_WORD_REQUIREMENT = re.compile(
+    r"^(?:is|are)\s+(?:required|needed|preferred|mandatory|essential|a\s+plus|a\s+must-?have|must-?have)\b",
+    re.IGNORECASE,
+)
+_COMMON_WORD_TECH_NOUN = re.compile(
+    r"^(?:experience|framework|library|development|skills?|proficiency|knowledge|stack)\b",
+    re.IGNORECASE,
+)
+
+
+def _other_skill_in(sentence: str, exclude: str) -> bool:
+    """True when the sentence also mentions a non-everyday-word skill ("express and Python")."""
+    for skill in get_skills():
+        for term in skill_terms(skill):
+            if term.lower() in COMMON_WORDS or term.lower() == exclude.lower():
+                continue
+            if term_span(term, sentence) is not None:
+                return True
+    return False
+
+
+def _jd_common_word_span(term: str, sentence: str) -> tuple[int, int] | None:
+    """Everyday-word skills in unambiguous JD tech contexts, case-insensitively."""
+    pattern = rf"(?<!\w){re.escape(term)}(?!\w)"
+    for match in re.finditer(pattern, sentence, flags=re.IGNORECASE):
+        before = sentence[: match.start()].strip().rstrip(",:/|(").lstrip("-*•·–").strip()
+        after = sentence[match.end():].strip()
+        if not before and not after.rstrip(".,;/|)"):
+            return match.span()  # a standalone list item ("react" alone) names the tech
+        if _COMMON_WORD_REQUIREMENT.match(after.lstrip()):
+            return match.span()  # "React is required." / "Express is preferred."
+        if _COMMON_WORD_TECH_NOUN.match(after.lstrip()):
+            return match.span()  # "react experience", "express framework"
+        if REQUIREMENT_LEAD.match(sentence.strip()):
+            return match.span()  # "Experience with react."
+        if _other_skill_in(sentence, term):
+            return match.span()  # listed alongside an unambiguous skill
+    return None
+
+
 def _jd_term_span(term: str, sentence: str) -> tuple[int, int] | None:
-    """Like the resume matcher, plus a simple plural ("REST APIs" for "rest api"). Not for
-    everyday-word skills, where "reacts" or "shells" would be ordinary English."""
+    """Like the resume matcher, plus a simple plural ("REST APIs" for "rest api") and the
+    narrow everyday-word JD contexts above. Plurals stay off for everyday words, where
+    "reacts" or "shells" would be ordinary English."""
     span = term_span(term, sentence)
-    if span is not None or term.lower() in COMMON_WORDS:
+    if span is not None:
         return span
+    if term.lower() in COMMON_WORDS:
+        return _jd_common_word_span(term, sentence)
     for plural in (term + "s", term + "es"):
         span = term_span(plural, sentence)
         if span is not None:

@@ -1,12 +1,12 @@
-"""Regression tests for confirmed job-description parsing issues (2026-10-25 investigation).
+"""Regression tests for job-description parsing (2026-10-25 investigation and fixes).
 
-Each xfail(strict=True) test asserts the DESIRED behaviour for a bug that is confirmed
-present on this branch: it fails while the bug exists and turns into a hard CI failure
-(XPASS) once the bug is fixed, forcing removal of the marker. Bugs were reproduced
-through POST /roles/from-description in exact_only mode and through the extraction
-function directly. No API keys are required: the AI path is monkeypatched out.
+The first six tests pin bugs that were confirmed through POST /roles/from-description
+in exact_only mode and are now fixed: case-insensitive everyday-word skills in tech
+contexts, sentence-start "React is required.", numbered requirement lists, and
+"We require X" / inline "Requirements: X, Y" must-have phrasing. They fail if any
+of those bugs regress. No API keys are required: the AI path is monkeypatched out.
 
-Non-xfail tests here DOCUMENT current behaviour that is a product/policy decision
+The last two tests DOCUMENT current behaviour that is a product/policy decision
 (skill-framework coverage, empty interview kit), not an accident: changing those
 behaviours needs an explicit decision, and these tests pin the current contract.
 """
@@ -37,56 +37,74 @@ def _ids(result: dict) -> set[str]:
     return {item["skill_id"] for item in result["requirements"]}
 
 
-# --- Confirmed bug 1: common-word skills only match one exact casing -----------------
-# "react"/"express" (lowercase, as ordinary English words) are not matched at all, so a
-# JD whose only framework skills are lowercase common words fails with "No skills found".
+# --- Fixed bug 1: everyday-word skills match case-insensitively in tech contexts -------
+# "react"/"express" (lowercase) match in unambiguous tech contexts; ordinary English
+# ("react to feedback") still does not match.
 
-@pytest.mark.xfail(strict=True, reason="lowercase 'react' not matched (case-sensitive common-word gate)")
 def test_lowercase_react_is_found(monkeypatch) -> None:
     result = _exact_only(monkeypatch, "Frontend Intern", "We need strong react experience for our dashboard.")
     assert "react" in _ids(result)
 
 
-@pytest.mark.xfail(strict=True, reason="lowercase 'express' not matched (case-sensitive common-word gate)")
 def test_lowercase_express_is_found(monkeypatch) -> None:
-    result = _exact_only(monkeypatch, "Backend Intern", "Must have express and Python experience.")
+    result = _exact_only(monkeypatch, "Backend Intern", "We are hiring. Must have express and Python experience.")
     assert {"express", "python"} <= _ids(result)
 
 
-# --- Confirmed bug 2: sentence-start "React is required." is missed ------------------
-# "React" capitalised at the start of a sentence is ALSO not matched: a JD that says
-# exactly that ends in the "No skills found" error even though it names a framework skill.
+# --- Fixed bug 2: sentence-start "React is required." matches ------------------------
 
-@pytest.mark.xfail(strict=True, reason="sentence-start 'React is required.' yields 'No skills found' error")
+def test_bullet_lowercase_react_is_a_must_have(monkeypatch) -> None:
+    text = "Requirements:\n- react is a must-have.\n- familiarity with docker is a plus."
+    result = _exact_only(monkeypatch, "Frontend Intern", text)
+    by_id = {item["skill_id"]: item["importance"] for item in result["requirements"]}
+    assert by_id.get("react") == "must" and by_id.get("docker") == "nice"
+
+
+def test_all_caps_react_is_a_must_have(monkeypatch) -> None:
+    text = "REQUIREMENTS:\n- REACT IS A MUST-HAVE.\n- FAMILIARITY WITH DOCKER IS A PLUS."
+    result = _exact_only(monkeypatch, "Frontend Intern", text)
+    by_id = {item["skill_id"]: item["importance"] for item in result["requirements"]}
+    assert by_id.get("react") == "must" and by_id.get("docker") == "nice"
+
+
+def test_ordinary_english_common_words_do_not_match(monkeypatch) -> None:
+    """False-positive protection: everyday uses of react/express/go/shell are not skills."""
+    with pytest.raises(JobDescriptionError, match="No skills from the skill framework"):
+        _exact_only(
+            monkeypatch,
+            "Team Lead",
+            "We want someone who can react to feedback, express ideas clearly and "
+            "is ready to go the extra mile every single day.",
+        )
+
+
 def test_sentence_start_react_is_found(monkeypatch) -> None:
     result = _exact_only(monkeypatch, "Frontend Intern", "React is required for this role. Python is a plus.")
     assert "react" in _ids(result)
 
 
-# --- Confirmed bug 3: numbered-list lines lose their skills ---------------------------
-# "1. Python\n2. FastAPI" style requirements lists are not parsed for those skills.
+# --- Fixed bug 3: numbered-list items keep the current section ------------------------
+# "1. Python" under "Requirements:" is a must-have, not a section reset to nice.
 
-@pytest.mark.xfail(strict=True, reason="skills listed in a numbered list are not extracted")
 def test_numbered_list_skills_are_found(monkeypatch) -> None:
     text = "Backend Intern\nRequirements:\n1. Python\n2. FastAPI\n3. SQL"
     result = _exact_only(monkeypatch, "Backend Intern", text)
     assert {"python", "fastapi", "sql"} <= _ids(result)
 
 
-# --- Confirmed bug 4: "We require X" and inline "Requirements: X, Y" ---------------
-# Neither phrasing is treated as a must-have signal, so such JDs fail with
-# "No must-have requirement" even though they plainly state mandatory skills.
+# --- Fixed bug 4: "We require X" and inline "Requirements: X, Y" are must-haves -----
 
-@pytest.mark.xfail(strict=True, reason="'We require X' is not treated as a must-have signal")
 def test_we_require_phrasing_is_must_have(monkeypatch) -> None:
-    result = _exact_only(monkeypatch, "Backend Intern", "We require Python and FastAPI for this role.")
+    result = _exact_only(monkeypatch, "Backend Intern", "We are hiring for our platform team. We require Python and FastAPI for this role.")
     must = {item["skill_id"] for item in result["requirements"] if item["importance"] == "must"}
     assert {"python", "fastapi"} <= must
 
 
-@pytest.mark.xfail(strict=True, reason="inline 'Requirements: X, Y' is not parsed for must-haves")
+JD_INLINE_HEADING = "Backend Intern\nRequirements: Python, FastAPI and SQL."
+
+
 def test_inline_requirements_heading_is_parsed(monkeypatch) -> None:
-    result = _exact_only(monkeypatch, "Backend Intern", "Requirements: Python, FastAPI and SQL.")
+    result = _exact_only(monkeypatch, "Backend Intern", JD_INLINE_HEADING)
     must = {item["skill_id"] for item in result["requirements"] if item["importance"] == "must"}
     assert {"python", "fastapi", "sql"} <= must
 
