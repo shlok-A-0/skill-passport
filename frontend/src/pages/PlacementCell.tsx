@@ -184,28 +184,17 @@ export default function PlacementCell() {
 
   return (
     <div className="placement-page">
-      <header className="hero">
-        <div className="hero-copy">
-          <div className="hero-eyebrow">Placement cell · Cohort view</div>
-          <h1>Skills across your cohort</h1>
-          <p className="hero-sub"><span className="lead">See where students have proof and where a shared workshop can help.</span> Code-backed levels link to cited lines.{demoPresent ? " Demo passports are labelled." : ""}</p>
-        </div>
-        <div className="hero-side">
-          <section className="panel">
-            <h3>Filter</h3>
-            <div className="panel-list">
-              <div className="snapshot-row"><span>Role</span><b><select className="filter-select" value={roleId} onChange={(event) => setRoleId(event.target.value)} aria-label="Role">{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></b></div>
-              <div className="snapshot-row"><span>Preferred role</span><b><select className="filter-select" value={preferredRole} onChange={(event) => handlePreferredRoleChange(event.target.value)} aria-label="Preferred role"><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></b></div>
-              <div className="snapshot-row"><span>Showing</span><b>{visiblePassports.length} passport{visiblePassports.length === 1 ? "" : "s"}</b></div>
-            </div>
-          </section>
+      <header className="placement-heading">
+        <div><h1>Skills across your cohort</h1><p>See where students have proof and where a shared workshop can help. Code-backed levels link to cited lines.</p></div>
+        <div className="placement-filters">
+          <label className="role-select-label">Role<select value={roleId} onChange={(event) => setRoleId(event.target.value)} aria-label="Role">{roles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="role-select-label">Preferred role<select value={preferredRole} onChange={(event) => handlePreferredRoleChange(event.target.value)} aria-label="Preferred role"><option value="">All preferred roles</option>{preferredRoleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         </div>
       </header>
-      <div className="facts">
-        <div className="fact"><span>Students</span><b>{visiblePassports.length}{loadedPassportCount < totalPassports ? ` · ${loadedPassportCount} of ${totalPassports} loaded` : ""}</b></div>
-        <div className="fact"><span>Avg. requirements met</span><b>{avgMet} of {requirements.length}</b></div>
-        <div className="fact"><span>Suggested workshop</span><b>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal gaps"}</b></div>
-        <div className="fact"><span>Demo passports</span><b>{demoPresent ? "Included, labelled" : "None"}</b></div>
+      <div className="placement-stats">
+        <section className="panel stat-card"><span className="stat-icon orange"><Users size={18} /></span><div><small>Students</small><strong>{visiblePassports.length}</strong>{loadedPassportCount < totalPassports && <i>{loadedPassportCount} of {totalPassports} passports loaded</i>}</div></section>
+        <section className="panel stat-card"><span className="stat-icon green"><Wrench size={18} /></span><div><small>Avg. requirements met</small><strong>{avgMet} <i>of {requirements.length}</i></strong></div></section>
+        <section className="panel workshop-card"><span className="stat-icon orange"><Wrench size={18} /></span><div><small>Suggested workshop</small><strong>{topGap ? `Build proof for ${topGap.skill}` : "Add passports to reveal shared gaps"}</strong><p>{topGap ? `No evidence found for ${topGap.percent}% of this group.` : "The highest shared gap appears here."}</p></div></section>
       </div>
       {demoPresent && <div className="demo-notice">DEMO DATA is included in this cohort view.</div>}
       {error && <div className="notice notice-error" role="alert">{error}<button type="button" className="link-button" onClick={() => void (retryLoadMore ? loadMore() : loadInitial())}>Retry</button></div>}
@@ -213,7 +202,7 @@ export default function PlacementCell() {
       {!loading && loadedPassportCount < totalPassports && <p className="muted cohort-page-note">Role filters and exports cover the {loadedPassportCount} loaded passports so far.</p>}
       <SectionTabs tabs={tabs} active={section} onChange={setSection} ariaLabel="Cohort sections" idPrefix="placement" />
       <div id="placement-panel-candidates" role="tabpanel" aria-labelledby="placement-tab-candidates" tabIndex={0} hidden={section !== "candidates"} style={{ display: section === "candidates" ? undefined : "none" }}>
-      <section className="ranking-panel">
+      <section className="panel ranking-panel">
         <div className="section-head">
           <h2>Candidate ranking · {role?.name ?? "Role"}</h2>
           <div className="head-actions">
@@ -286,7 +275,7 @@ export default function PlacementCell() {
         ) : null}
         {!loading && loadedPassportCount < totalPassports && <button type="button" className="secondary-btn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : `Load more (${totalPassports - loadedPassportCount} passports remain)`}</button>}
       </section>
-      <section className="heatmap-panel">
+      <section className="panel heatmap-panel">
           <div className="section-head"><h2>Requirements by student</h2><span>Select a row to open a passport</span></div>
           {!loading && !error && !rows.length ? <div className="empty-state">{preferredRole ? `No loaded passports have ${preferredRole} as their preferred role.` : "No passports yet. Generate student passports to populate the batch view."}</div> : rows.length > 0 ? (
             <div className="heatmap-scroll">
@@ -313,7 +302,7 @@ export default function PlacementCell() {
         </section>
       </div>
       <div id="placement-panel-gaps" role="tabpanel" aria-labelledby="placement-tab-gaps" tabIndex={0} hidden={section !== "gaps"} style={{ display: section === "gaps" ? undefined : "none" }}>
-      <section className="gaps-panel">
+      <section className="panel gaps-panel">
           <div className="section-head"><h2>Most common gaps</h2><span>Computed from the filtered cohort</span></div>
           <div className="gap-chart">
             {gaps.length ? (
