@@ -24,6 +24,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-flash-latest").strip() or "gemini-flash-latest"
 # Small extraction calls: job-description requirements and project-report claims.
 GEMINI_JD_MODEL = os.getenv("GEMINI_JD_MODEL") or "gemini-3.5-flash-lite"
+# Optional fallback provider. DeepSeek is ONLY a fallback for Gemini quota/service
+# failures or unusable output - never the primary generator.
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = (os.getenv("DEEPSEEK_MODEL") or "deepseek-flash").strip() or "deepseek-flash"
+DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").strip() or "https://api.deepseek.com"
 FRONTEND_ORIGINS = [
     origin.strip()
     for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
