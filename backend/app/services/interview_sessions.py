@@ -618,8 +618,9 @@ def generate_questions(
     contents = prompt
     fallback: tuple[list[ProposedQuestion], list[dict[str, Any]]] | None = None
     for attempt in range(2):
+        prefer = "deepseek" if attempt and config.DEEPSEEK_API_KEY else "gemini"
         try:
-            text = generate_json(client, contents)
+            text = generate_json(client, contents, prefer=prefer)
         except Exception as exc:  # timeouts, rate limits and outages after generate_json's retries
             raise InterviewGenerationError(
                 f"The question generator is unavailable right now ({exc.__class__.__name__}). Try again shortly."

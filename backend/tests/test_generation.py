@@ -22,11 +22,12 @@ def _fake_gemini(monkeypatch, module, responses: list[str]) -> list[str]:
     monkeypatch.setattr(module, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(module.genai, "Client", lambda api_key: object())
 
-    def generate(client, contents):
+    def generate(client, contents, prefer="gemini"):
+        from app.services.gemini import GenerationResult
         sent.append(contents)
-        return next(replies)
+        return GenerationResult(text=next(replies), provider="gemini")
 
-    monkeypatch.setattr(module, "generate_json", generate)
+    monkeypatch.setattr(module, "generate_json_result", generate)
     return sent
 
 
@@ -130,12 +131,13 @@ def test_malformed_growth_cache_is_removed_and_regenerated(monkeypatch, tmp_path
     })
     sent = _fake_gemini(monkeypatch, growth_and_kit, [reply])
 
-    def generate(_client, contents):
+    def generate(_client, contents, prefer="gemini"):
+        from app.services.gemini import GenerationResult
         assert not cache_path.exists()
         sent.append(contents)
-        return reply
+        return GenerationResult(text=reply, provider="gemini")
 
-    monkeypatch.setattr(growth_and_kit, "generate_json", generate)
+    monkeypatch.setattr(growth_and_kit, "generate_json_result", generate)
 
     result = growth_and_kit.generate_growth_and_kit(skills, role_match, ingestion)
 

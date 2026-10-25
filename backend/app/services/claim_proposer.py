@@ -6,8 +6,8 @@ from typing import Any
 from google import genai
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.config import CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
-from app.services.gemini import generate_json
+from app.config import CACHE_DIR, DEEPSEEK_API_KEY, GEMINI_API_KEY, GEMINI_MODEL
+from app.services.gemini import generate_json_result
 from app.services.framework import get_skills
 from app.services.json_cache import write_json_cache
 
@@ -151,11 +151,18 @@ def propose_claims(
     contents = prompt
     last_error: Exception | None = None
     for attempt in range(2):
-        response_text = generate_json(client, contents)
+        # A malformed Gemini answer is retried on the fallback provider when configured,
+        # not re-asked of the model that just failed schema validation.
+        prefer = "deepseek" if attempt and DEEPSEEK_API_KEY else "gemini"
+        result = generate_json_result(client, contents, prefer=prefer)
+        response_text = result.text
         try:
             proposal = _lenient_proposal(response_text)
             payload = proposal.model_dump(mode="json")
-            write_json_cache(cache_path, payload)
+            # Cache only primary-provider answers: a fallback answer is outage
+            # survival, and the next run should get Gemini's own output.
+            if result.provider == "gemini":
+                write_json_cache(cache_path, payload)
             return payload["claims"]
         except (ValueError, ValidationError) as exc:
             last_error = exc
@@ -164,4 +171,4 @@ def propose_claims(
                     f"{prompt}\nYour previous output was invalid: {exc}. "
                     "Return corrected JSON only, preserving the schema and citation rules."
                 )
-    raise RuntimeError(f"Gemini returned invalid claim proposals after one retry: {last_error}")
+    raise RuntimeError(f"The claim proposer returned invalid output after one retry: {last_error}")

@@ -258,18 +258,22 @@ def test_gemini_helper_needs_a_key_retries_invalid_json_once_and_caches(tmp_path
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemini.genai, "Client", lambda api_key: object())
     answers = ["not json", '{"requirements": [{"skill_id": "python"}]}']
-    monkeypatch.setattr(gemini, "generate_json", lambda client, contents, model=None: answers.pop(0))
+    monkeypatch.setattr(gemini, "generate_json_result",
+                        lambda client, contents, model=None, prefer="gemini": gemini.GenerationResult(
+                            text=answers.pop(0), provider="gemini"))
     assert gemini.propose_json_items("prompt", "requirements", "jd") == [{"skill_id": "python"}]
     assert gemini.propose_json_items("prompt", "requirements", "jd") == [{"skill_id": "python"}]  # cached
 
-    monkeypatch.setattr(gemini, "generate_json", lambda client, contents, model=None: "[]")
+    monkeypatch.setattr(gemini, "generate_json_result",
+                        lambda client, contents, model=None, prefer="gemini": gemini.GenerationResult(
+                            text="[]", provider="gemini"))
     with pytest.raises(GeminiOutputError):
         gemini.propose_json_items("other prompt", "requirements", "jd")
 
     def offline(client, contents, model=None):
         raise ConnectionError("offline")
 
-    monkeypatch.setattr(gemini, "generate_json", offline)
+    monkeypatch.setattr(gemini, "generate_json_result", offline)
     with pytest.raises(GeminiUnavailableError):
         gemini.propose_json_items("third prompt", "requirements", "jd")
 

@@ -125,7 +125,7 @@ def fake_gemini(monkeypatch, replies: list) -> list[str]:
     monkeypatch.setattr(interview_sessions.config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(interview_sessions.genai, "Client", lambda api_key: object())
 
-    def generate(client, contents):
+    def generate(client, contents, prefer="gemini"):
         sent.append(contents)
         reply = next(queue)
         if isinstance(reply, Exception):

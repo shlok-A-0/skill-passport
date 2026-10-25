@@ -6,8 +6,8 @@ from typing import Any
 from google import genai
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.config import CACHE_DIR, GEMINI_API_KEY, GEMINI_MODEL
-from app.services.gemini import generate_json
+from app.config import CACHE_DIR, DEEPSEEK_API_KEY, GEMINI_API_KEY, GEMINI_MODEL
+from app.services.gemini import generate_json_result
 from app.services.framework import skill_map
 from app.services.json_cache import write_json_cache
 
@@ -206,13 +206,16 @@ def generate_growth_and_kit(
     contents = prompt
     last_error: Exception | None = None
     for attempt in range(2):
-        response_text = generate_json(client, contents)
+        prefer = "deepseek" if attempt and DEEPSEEK_API_KEY else "gemini"
+        result = generate_json_result(client, contents, prefer=prefer)
+        response_text = result.text
         try:
             payload = _usable_items(
                 parse_growth_and_kit(response_text),
                 expected_growth_ids, expected_interview_ids, repo_names,
             )
-            write_json_cache(cache_path, payload)
+            if result.provider == "gemini":
+                write_json_cache(cache_path, payload)
             return payload
         except (ValueError, ValidationError) as exc:
             last_error = exc
