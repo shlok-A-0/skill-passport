@@ -1,0 +1,65 @@
+# Render Blueprint for the Skill Passport API (FastAPI + SQLite on a persistent disk).
+# The frontend is deployed separately on Vercel (see DEPLOY.md).
+services:
+  - type: web
+    runtime: python
+    name: skill-passport-api
+    # Closest Render region to India. Region can't be changed after the service is created.
+    region: singapore
+    # Persistent disks need a paid instance type; free instances can't attach one.
+    plan: 0.5c-512mb
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    # SQLite on one disk: a service with a disk can't run more than one instance.
+    numInstances: 1
+    disk:
+      name: skill-passport-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Fixed settings
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: APP_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: REQUIRE_OWNERSHIP_PROOF
+        value: "true"
+      - key: ALLOW_DEBUG_ENDPOINTS
+        value: "false"
+      - key: ENABLE_CUSTOM_ROLES
+        value: "true"
+      - key: ENABLE_REPORTS
+        value: "true"
+      - key: ENABLE_SQL_DEPTH
+        value: "true"
+      - key: ENABLE_SKILL_DEPTH
+        value: "true"
+      # Required secrets and settings (Render asks for these when the Blueprint is created)
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: GEMINI_JD_MODEL
+        sync: false
+      # JSON object of named recruiter keys, each secret at least 32 characters.
+      - key: RECRUITER_ACCOUNTS
+        sync: false
+      # The Vercel URL, e.g. https://skill-passport.vercel.app (no trailing slash).
+      - key: FRONTEND_ORIGINS
+        sync: false
+      # Optional: DeepSeek fallback when Gemini is unavailable (leave blank to disable).
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        sync: false
+      - key: DEEPSEEK_BASE_URL
+        sync: false
+      # Optional: reverse-proxy IPs whose X-Forwarded-For is trusted for rate limiting.
+      - key: TRUSTED_PROXY_IPS
+        sync: false
